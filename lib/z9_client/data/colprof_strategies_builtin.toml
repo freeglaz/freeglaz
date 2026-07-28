@@ -1,0 +1,206 @@
+# ============================================================================
+# freeglaz — Stratégies colprof builtin
+# ============================================================================
+# Ce fichier définit les presets colprof fournis par défaut avec freeglaz.
+# Il est versionné dans le code (lib/z9_client/data/) pour la transparence.
+#
+# Les utilisateurs ÉTENDENT ces presets via leur fichier personnel :
+#   ~/Documents/freeglaz/colprof_strategies.toml
+# (ne JAMAIS éditer ce fichier builtin — les modifs seraient écrasées aux MAJ)
+#
+# Structure GUI-ready (inspirée du pattern parameters.yaml de ChromIQ) :
+# chaque preset porte tout ce dont un menu déroulant + tooltip + commande
+# éditable a besoin, depuis une source de vérité unique.
+#
+# Champs par preset :
+#   label        : nom affiché (menu déroulant GUI)
+#   flags        : ligne de flags colprof (string éditable — source de vérité)
+#   description  : Markdown, pour le tooltip ⓘ et la doc
+#   recommended_for : contexte d'usage (aide au choix dans le GUI)
+#   tags         : pour filtrage/recherche
+#   builtin      : true (toujours, pour les presets de ce fichier)
+#
+# Note : les presets n'incluent PAS `-nc` — colprof EMBARQUE le .ti3 dans l'ICC
+# (tag targ). Le profil est ainsi AUTO-SUFFISANT : ses mesures embarquées peuvent
+# resservir de source (source_profiles dans Measurements) pour reconstruire/affiner
+# un profil sans réimprimer la charte. ICC un peu plus lourd : voulu, c'est le process.
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# default — baseline, le bon choix dans ~99% des cas
+# ----------------------------------------------------------------------------
+[strategy.default]
+label = "Default (high quality)"
+flags = "-v -qh"
+description = """
+**High-quality colorimetric profile, no gamut mapping.**
+
+The perceptual stays identical to relative colorimetric (no gamut
+compression introduced). This is the expected behavior for a workflow where
+gamut mapping is handled at runtime by the CMM (e.g. your editor in Relative
+Colorimetric + BPC).
+
+Suitable for nearly all real photos, which fit within the device gamut.
+Use by default.
+"""
+recommended_for = "General use, common photos, Relative + BPC workflow"
+tags = ["general", "recommended", "colorimetric"]
+builtin = true
+
+# ----------------------------------------------------------------------------
+# faithful — smoothing minimal, suit les mesures à la lettre
+# ----------------------------------------------------------------------------
+[strategy.faithful]
+label = "Faithful (minimal smoothing)"
+flags = "-v -qh -r 0.1"
+description = """
+**Follows the measurements as closely as possible (minimal smoothing).**
+
+`-r 0.1` sets the expected average deviation of measurements to 0.1% (Argyll
+default: 0.5%). Argyll then does very little smoothing and sticks to the data.
+
+Reserve for **high-confidence** measurements (averaged multi-pass, stable
+spectro, low noise). On noisy measurements, it may transcribe the noise
+into the profile (banding, irregularities).
+"""
+recommended_for = "High-confidence measurements (averaged multi-pass), maximum fidelity"
+tags = ["fidelity", "smoothing", "expert"]
+builtin = true
+
+# ----------------------------------------------------------------------------
+# smooth — smoothing modéré, atténue le bruit de mesure
+# ----------------------------------------------------------------------------
+[strategy.smooth]
+label = "Smooth (moderate smoothing)"
+flags = "-v -qh -r 1.2"
+description = """
+**Moderate smoothing to attenuate measurement noise.**
+
+`-r 1.2` tells Argyll an average deviation of 1.2% (vs 0.5% by default),
+which increases smoothing. Useful if the `default` profile produces visible
+artifacts (banding in gradients, irregular transitions) due to noisy
+measurements or a difficult paper.
+
+Trade-off: too much smoothing can soften real colorimetric details.
+Raise it gradually only if needed.
+"""
+recommended_for = "Noisy measurements, banding/artifacts visible with the default profile"
+tags = ["smoothing", "anti-noise"]
+builtin = true
+
+# ----------------------------------------------------------------------------
+# dark-detail — densifie les nœuds cLUT dans les ombres
+# ----------------------------------------------------------------------------
+[strategy.dark-detail]
+label = "Dark detail (shadow emphasis)"
+flags = "-v -qh -V 2.0"
+description = """
+**Densifies the cLUT nodes in the low lights.**
+
+`-V 2.0` (dark region emphasis, range 1.0–4.0, default 1.0 = none) places
+more interpolation-grid points in the shadows. Improves precision and reduces
+posterization in dark areas.
+
+Does NOT affect the gamut or the black point — only the **interpolation
+precision** in the shadows. Useful for low-key images or if you observe
+banding in the blacks despite BPC being active.
+
+Alternative values to test in R&D: 1.5 (light), 2.5–3.0 (strong).
+"""
+recommended_for = "Low-key images, banding in shadows, prints rich in blacks"
+tags = ["shadows", "low-key", "precision"]
+builtin = true
+
+# ----------------------------------------------------------------------------
+# ultra — quality Ultra, profil de production final
+# ----------------------------------------------------------------------------
+[strategy.ultra]
+label = "Ultra (maximum quality)"
+flags = "-v -qu"
+description = """
+**Maximum profile quality (`-qu` = Ultra).**
+
+A2B/B2A tables at the finest resolution. Computation cost x 3 to 5 vs `-qh`
+(High). The visible quality difference vs High is often marginal, but real
+in critical transitions.
+
+Reserve for the **final production profile**, once the strategy is validated
+in High. Useless for exploratory iterations (too slow).
+"""
+recommended_for = "Final production profile, after validating the strategy in High"
+tags = ["max-quality", "production", "slow"]
+builtin = true
+
+# ----------------------------------------------------------------------------
+# compress-90 — gamut mapping perceptuel doux, en %, sans profil source
+# ----------------------------------------------------------------------------
+[strategy.compress-90]
+label = "Compress 90% (soft perceptual)"
+flags = "-v -qh -s 90"
+description = """
+**Applies a compression perceptual gamut mapping, expressed as a %.**
+
+`-s 90` uses the *percentage* form of the `-s` option (not a source profile).
+Argyll builds a perceptual table that compresses slightly toward the device
+gamut, without depending on a source space.
+
+This is the **honest** alternative to the old `darkroom-rec2020/prophoto/
+adobergb` presets (removed): those used `-S source.icc`, which does nothing
+as long as the image does not fill the source gamut — which never happens with
+real photos. Here, the compression really applies.
+
+Use it if you want a perceptual that differs from the relative (unlike
+`default` where perceptual = relative). Also try 80, 95 to taste.
+"""
+recommended_for = "Wanting a real soft perceptual mapping, distinct from relative"
+tags = ["gamut-mapping", "perceptual", "compression"]
+builtin = true
+
+# ----------------------------------------------------------------------------
+# xyz-clut — cLUT en espace XYZ au lieu de Lab (R&D comparatif)
+# ----------------------------------------------------------------------------
+[strategy.xyz-clut]
+label = "XYZ cLUT (R&D comparison)"
+flags = "-v -qh -a x"
+description = """
+**Builds the profile with a cLUT in XYZ instead of Lab.**
+
+`-a x` (XYZ cLUT) replaces the default algorithm `-a l` (Lab cLUT). The
+profile then works in XYZ. Some practitioners prefer XYZ for output profiles:
+interpolation sometimes smoother in the light gradients and different behavior
+near the white point.
+
+**Comparative / R&D preset**: to compare A/B against `default` (Lab) on the
+same measurements, to see which renders best on a given paper. No universal
+"best" — depends on the device and the paper.
+"""
+recommended_for = "A/B comparison Lab vs XYZ, R&D exploration"
+tags = ["R&D", "comparative", "XYZ", "expert"]
+builtin = true
+
+# ============================================================================
+# NOTE — Pourquoi PAS de preset FWA (compensation azurants optiques)
+# ============================================================================
+# colprof propose `-f [illum]` pour compenser les azurants optiques (OBA/FWA).
+# Ce flag N'EST PAS exposé en preset builtin, par choix éclairé :
+#
+# La compensation FWA a besoin de la signature spectrale de la fluorescence
+# des azurants, qui ABSORBENT dans l'UV (< 400 nm) et réémettent vers 420-450 nm.
+# Or le spectrophotomètre embarqué de la Z9 a une plage utile de 420 à 700 nm
+# (la bande 400 nm est morte/sentinelle — cf.
+# Docs/Note_Mode_Mesure_Spectro_Z9_M0_vs_M2.md) — il ne capte PAS la plage UV
+# d'absorption des OBA.
+#
+# Sans données spectrales < 420 nm, l'algorithme FWA de colprof ne peut pas
+# modéliser correctement la fluorescence. Exposer `-f` donnerait donc une
+# fausse impression de compensation sur des mesures Z9.
+#
+# (C'est un écueil observé dans d'autres GUI colprof qui exposent FWA sans
+#  tenir compte de la plage spectrale réelle de l'instrument.)
+#
+# Pour gérer les OBA, la bonne approche est le choix d'un papier à faible
+# teneur en azurants. NB : le mode de mesure réel de la Z9 (M0/M1/M2) n'est PAS
+# établi — l'hypothèse « M2 » est infirmée (cf.
+# Docs/Note_Mode_Mesure_Spectro_Z9_M0_vs_M2.md) ; le pipeline reste en D50
+# (illuminant -i D50, cohérent avec l'étiquetage CIED), sans UV-cut supposé.
+# ============================================================================

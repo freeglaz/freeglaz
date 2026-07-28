@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>freeglaZ</title>
+<style>
+  html,body{margin:0;padding:0;background:#000;height:100%;overflow:hidden;font-family:system-ui,sans-serif;}
+  #wrap{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#000;cursor:pointer;}
+  canvas{image-rendering:pixelated;image-rendering:crisp-edges;width:min(96vw,900px);aspect-ratio:4/3;background:#001018;box-shadow:0 0 0 3px #05202a;}
+</style>
+</head>
+<body>
+  <div id="wrap"><canvas id="c" width="320" height="240"></canvas></div>
+
+<script>
+/* ============================================================
+   freeglaZ easter egg — Grostrad boot -> cracktro
+   Single self-contained scene. Designed to run inside an overlay.
+   Click anywhere (or Esc) closes: stops audio + posts 'freeglaz-egg-close'.
+   All original, no ROM, GPL-safe.
+   ============================================================ */
+const c=document.getElementById('c'), g=c.getContext('2d');
+const W=c.width,H=c.height; g.imageSmoothingEnabled=false;
+const COL={bg:'#001018',d1:'#0A5063',d2:'#12708a',m1:'#2E8688',m2:'#3fae9e',l1:'#75B3A8',l2:'#a7d8cc',white:'#eafffb',green:'#39d98a',ink:'#bff5e6',bootPaper:'#0000a8',bootInk:'#ffff00'};
+
+/* ---- mirrored Z monogram ---- */
+const MONO=[
+ "............",".111111111..",".111111111..","..1111......","...1111.....",
+ "....1111....",".....1111...","......1111..",".111111111..",".111111111..",
+ "............","............",
+].map(r=>r.split('').map(x=>x==='1'?1:0));
+
+/* ---- full pixel font ---- */
+const FONT={
+ 'A':["01110","10001","10001","11111","10001","10001","10001"],'B':["11110","10001","11110","10001","10001","10001","11110"],
+ 'C':["01111","10000","10000","10000","10000","10000","01111"],'D':["11100","10010","10001","10001","10001","10010","11100"],
+ 'E':["11111","10000","11110","10000","10000","10000","11111"],'F':["11111","10000","11110","10000","10000","10000","10000"],
+ 'G':["01111","10000","10000","10111","10001","10001","01111"],'H':["10001","10001","10001","11111","10001","10001","10001"],
+ 'I':["11111","00100","00100","00100","00100","00100","11111"],'J':["00111","00010","00010","00010","00010","10010","01100"],
+ 'K':["10001","10010","10100","11000","10100","10010","10001"],'L':["10000","10000","10000","10000","10000","10000","11111"],
+ 'M':["10001","11011","10101","10101","10001","10001","10001"],'N':["10001","11001","10101","10011","10001","10001","10001"],
+ 'O':["01110","10001","10001","10001","10001","10001","01110"],'P':["11110","10001","10001","11110","10000","10000","10000"],
+ 'Q':["01110","10001","10001","10001","10101","10010","01101"],'R':["11110","10001","10001","11110","10100","10010","10001"],
+ 'S':["01111","10000","10000","01110","00001","00001","11110"],'T':["11111","00100","00100","00100","00100","00100","00100"],
+ 'U':["10001","10001","10001","10001","10001","10001","01110"],'V':["10001","10001","10001","10001","10001","01010","00100"],
+ 'W':["10001","10001","10001","10101","10101","11011","10001"],'X':["10001","10001","01010","00100","01010","10001","10001"],
+ 'Y':["10001","10001","01010","00100","00100","00100","00100"],'Z':["11111","00010","00100","01000","10000","10000","11111"],
+ '0':["01110","10011","10101","10101","11001","10001","01110"],'1':["00100","01100","00100","00100","00100","00100","01110"],
+ '2':["01110","10001","00001","00110","01000","10000","11111"],'3':["11110","00001","00001","01110","00001","00001","11110"],
+ '4':["00010","00110","01010","10010","11111","00010","00010"],'5':["11111","10000","11110","00001","00001","10001","01110"],
+ '6':["01110","10000","11110","10001","10001","10001","01110"],'7':["11111","00001","00010","00100","01000","01000","01000"],
+ '8':["01110","10001","01110","10001","10001","10001","01110"],'9':["01110","10001","10001","01111","00001","00001","01110"],
+ ' ':["00000","00000","00000","00000","00000","00000","00000"],'.':["00000","00000","00000","00000","00000","00110","00110"],
+ ',':["00000","00000","00000","00000","00110","00110","01100"],'!':["00100","00100","00100","00100","00100","00000","00100"],
+ '?':["01110","10001","00010","00100","00100","00000","00100"],':':["00000","00110","00110","00000","00110","00110","00000"],
+ '-':["00000","00000","00000","11111","00000","00000","00000"],'/':["00001","00010","00100","00100","00100","01000","10000"],
+ '(':["00010","00100","01000","01000","01000","00100","00010"],')':["01000","00100","00010","00010","00010","00100","01000"],
+ '&':["01100","10010","01100","01101","10010","10010","01101"],'"':["01010","01010","01010","00000","00000","00000","00000"],
+ '@':["01110","10001","10111","10101","10111","10000","01110"],
+};
+function glyph(ch){return FONT[ch]||FONT[' '];}
+function drawText(str,x,y,scale,color){g.fillStyle=color;let cx=x;for(const raw of str){const ch=raw.toUpperCase();const gl=glyph(ch);for(let r=0;r<7;r++)for(let col=0;col<5;col++)if(gl[r][col]==='1')g.fillRect(cx+col*scale,y+r*scale,scale,scale);cx+=6*scale;}}
+function textWidth(str,scale){return str.length*6*scale;}
+function drawMono(x,y,scale,fill,edge){for(let r=0;r<MONO.length;r++)for(let col=0;col<MONO[0].length;col++)if(MONO[r][col]){g.fillStyle=fill;g.fillRect(x+col*scale,y+r*scale,scale,scale);}g.fillStyle=edge;const w=MONO[0].length*scale,h=MONO.length*scale;g.fillRect(x-scale,y-scale,w+2*scale,scale);g.fillRect(x-scale,y+h,w+2*scale,scale);g.fillRect(x-scale,y-scale,scale,h+2*scale);g.fillRect(x+w,y-scale,scale,h+2*scale);}
+
+/* ---- audio ---- */
+let AC=null,master=null;
+function initAudio(){if(AC)return;AC=new(window.AudioContext||window.webkitAudioContext)();master=AC.createGain();master.gain.value=0.5;master.connect(AC.destination);}
+function stopAudio(){ if(AC){ try{AC.close();}catch(e){} AC=null; } }
+function tone(f,t,dur,type,vol){const o=AC.createOscillator(),gg=AC.createGain();o.type=type;o.frequency.setValueAtTime(f,t);gg.gain.setValueAtTime(0.0001,t);gg.gain.exponentialRampToValueAtTime(vol,t+0.01);gg.gain.exponentialRampToValueAtTime(0.0001,t+dur);o.connect(gg);gg.connect(master);o.start(t);o.stop(t+dur+0.02);}
+function kick(t){const o=AC.createOscillator(),gg=AC.createGain();o.type='sine';o.frequency.setValueAtTime(150,t);o.frequency.exponentialRampToValueAtTime(50,t+0.12);gg.gain.setValueAtTime(0.6,t);gg.gain.exponentialRampToValueAtTime(0.0001,t+0.16);o.connect(gg);gg.connect(master);o.start(t);o.stop(t+0.18);}
+function noise(t,dur,vol,hp){const n=AC.createBufferSource();const buf=AC.createBuffer(1,Math.max(1,AC.sampleRate*dur),AC.sampleRate);const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;n.buffer=buf;const f=AC.createBiquadFilter();f.type='highpass';f.frequency.value=hp;const gg=AC.createGain();gg.gain.setValueAtTime(vol,t);gg.gain.exponentialRampToValueAtTime(0.0001,t+dur);n.connect(f);f.connect(gg);gg.connect(master);n.start(t);n.stop(t+dur);}
+const snare=t=>noise(t,0.16,0.35,1200),hat=t=>noise(t,0.04,0.16,7000);
+
+/* ---- Amstrad floppy drive synth (adapted: routes into our master gain) ---- */
+const DRIVE_CONFIG={
+  MASTER_VOLUME:0.55,
+  MOTOR_FREQ:85, MOTOR_FILTER_FREQ:250, MOTOR_VOL:0.5,
+  VIBRATION_RATE:8.5, VIBRATION_DEPTH:0.4,
+  CLICK_FILTER_FREQ:3000, CLICK_VOL:0.7, CLICK_MIN_DELAY:100, CLICK_MAX_DELAY:350,
+  ZZZT_FILTER_FREQ:1500, ZZZT_MOD_RATE:50, ZZZT_VOL:0.25,
+  ZZZT_BURST_MIN:200, ZZZT_BURST_MAX:1200, ZZZT_PAUSE_MIN:50, ZZZT_PAUSE_MAX:400
+};
+const Drive={
+  ctx:null, out:null, driveGain:null, nodes:[], timers:[], noiseBuffer:null, playing:false,
+  makeNoise(){ const n=this.ctx.sampleRate*2, b=this.ctx.createBuffer(1,n,this.ctx.sampleRate), d=b.getChannelData(0); for(let i=0;i<n;i++)d[i]=Math.random()*2-1; this.noiseBuffer=b; },
+  start(ctx,outNode){ if(this.playing)return; this.ctx=ctx; this.out=outNode; this.playing=true;
+    this.driveGain=ctx.createGain(); this.driveGain.gain.value=DRIVE_CONFIG.MASTER_VOLUME; this.driveGain.connect(outNode);
+    if(!this.noiseBuffer)this.makeNoise();
+    this._motor(); this._zzzt(); this._clickLoop();
+  },
+  stop(){ if(!this.playing)return; this.playing=false; const now=this.ctx.currentTime;
+    try{ this.driveGain.gain.setValueAtTime(this.driveGain.gain.value,now); this.driveGain.gain.exponentialRampToValueAtTime(0.001,now+0.1);}catch(e){}
+    setTimeout(()=>{ this.nodes.forEach(nd=>{try{nd.stop(0);}catch(e){} try{nd.disconnect();}catch(e){}}); this.nodes=[]; try{this.driveGain.disconnect();}catch(e){} },150);
+    this.timers.forEach(t=>clearTimeout(t)); this.timers=[];
+  },
+  _motor(){ const o=this.ctx.createOscillator(); o.type='triangle'; o.frequency.value=DRIVE_CONFIG.MOTOR_FREQ;
+    const f=this.ctx.createBiquadFilter(); f.type='lowpass'; f.frequency.value=DRIVE_CONFIG.MOTOR_FILTER_FREQ;
+    const gg=this.ctx.createGain(); gg.gain.value=DRIVE_CONFIG.MOTOR_VOL;
+    const lfo=this.ctx.createOscillator(); lfo.type='sine'; lfo.frequency.value=DRIVE_CONFIG.VIBRATION_RATE;
+    const lg=this.ctx.createGain(); lg.gain.value=DRIVE_CONFIG.VIBRATION_DEPTH*DRIVE_CONFIG.MOTOR_VOL;
+    lfo.connect(lg); lg.connect(gg.gain);
+    o.connect(f); f.connect(gg); gg.connect(this.driveGain);
+    o.start(); lfo.start(); this.nodes.push(o,lfo,gg);
+  },
+  _click(){ if(!this.playing)return; const now=this.ctx.currentTime;
+    const src=this.ctx.createBufferSource(); src.buffer=this.noiseBuffer;
+    const f=this.ctx.createBiquadFilter(); f.type='highpass'; f.frequency.value=DRIVE_CONFIG.CLICK_FILTER_FREQ;
+    const gg=this.ctx.createGain(); gg.gain.setValueAtTime(0,now); gg.gain.linearRampToValueAtTime(DRIVE_CONFIG.CLICK_VOL,now+0.002); gg.gain.exponentialRampToValueAtTime(0.001,now+0.04);
+    src.connect(f); f.connect(gg); gg.connect(this.driveGain); src.start(now); src.stop(now+0.05);
+  },
+  _clickLoop(){ if(!this.playing)return; this._click();
+    const d=Math.random()*(DRIVE_CONFIG.CLICK_MAX_DELAY-DRIVE_CONFIG.CLICK_MIN_DELAY)+DRIVE_CONFIG.CLICK_MIN_DELAY;
+    this.timers.push(setTimeout(()=>this._clickLoop(),d));
+  },
+  _zzzt(){ const src=this.ctx.createBufferSource(); src.buffer=this.noiseBuffer; src.loop=true;
+    const f=this.ctx.createBiquadFilter(); f.type='bandpass'; f.frequency.value=DRIVE_CONFIG.ZZZT_FILTER_FREQ; f.Q.value=2.0;
+    const env=this.ctx.createGain(); env.gain.value=0;
+    const mod=this.ctx.createOscillator(); mod.type='square'; mod.frequency.value=DRIVE_CONFIG.ZZZT_MOD_RATE;
+    const final=this.ctx.createGain(); final.gain.value=0;
+    src.connect(f); f.connect(env); env.connect(final); final.connect(this.driveGain);
+    mod.connect(final.gain);
+    src.start(); mod.start(); this.nodes.push(src,mod,final);
+    const burst=()=>{ if(!this.playing)return; const now=this.ctx.currentTime;
+      const bd=(Math.random()*(DRIVE_CONFIG.ZZZT_BURST_MAX-DRIVE_CONFIG.ZZZT_BURST_MIN)+DRIVE_CONFIG.ZZZT_BURST_MIN)/1000;
+      env.gain.setValueAtTime(0,now); env.gain.linearRampToValueAtTime(DRIVE_CONFIG.ZZZT_VOL,now+0.01);
+      env.gain.setValueAtTime(DRIVE_CONFIG.ZZZT_VOL,now+bd-0.01); env.gain.linearRampToValueAtTime(0,now+bd);
+      const pause=Math.random()*(DRIVE_CONFIG.ZZZT_PAUSE_MAX-DRIVE_CONFIG.ZZZT_PAUSE_MIN)+DRIVE_CONFIG.ZZZT_PAUSE_MIN;
+      this.timers.push(setTimeout(burst,(bd*1000)+pause));
+    };
+    this.timers.push(setTimeout(burst,300));
+  }
+};
+function driveStart(){ if(AC&&master) Drive.start(AC,master); }
+function driveStop(){ Drive.stop(); }
+
+function blip(f){ if(!AC)return; tone(f,AC.currentTime,0.02,'square',0.03); }
+const N={A2:110,C3:130.8,D3:146.8,E3:164.8,F3:174.6,G3:196,A3:220,B3:246.9,C4:261.6,D4:293.7,E4:329.6,F4:349.2,G4:392,A4:440,B4:493.9,C5:523.3,D5:587.3,E5:659.3};
+const PH={bass:[[N.A2,0,N.A2,0,N.G3,0,N.E3,0,N.C3,0,N.C3,0,N.D3,0,N.D3,0],[N.A2,0,N.A2,0,N.F3,0,N.F3,0,N.C3,0,N.G3,0,N.D3,0,N.E3,0],[N.A2,0,N.A2,0,N.G3,0,N.E3,0,N.C3,0,N.C3,0,N.D3,0,N.D3,0],[N.C3,0,N.E3,0,N.G3,0,N.A3,0,N.G3,0,N.E3,0,N.D3,0,N.D3,N.E3]],lead:[[N.A4,0,N.C5,N.E5,0,N.B4,0,N.A4,N.G4,0,N.E4,N.G4,0,N.A4,0,0],[N.E5,0,N.D5,N.C5,0,N.B4,0,N.C5,N.A4,0,N.C5,0,N.E5,0,N.D5,0],[N.A4,0,N.C5,N.E5,0,N.B4,0,N.A4,N.G4,0,N.E4,N.G4,0,N.A4,0,0],[N.C5,N.D5,N.E5,0,N.G4,0,N.A4,0,N.E5,0,N.C5,0,N.D5,N.E5,N.D5,N.C5]]};
+let step=0,nextT=0,phrase=0;const STEP=0.135; let musicOn=false;
+function scheduler(){if(!AC||!musicOn)return;while(nextT<AC.currentTime+0.2){const t=nextT,s=step%16;if(s===0)phrase=(phrase+1)%4;if(s%4===0)kick(t);if(s%8===4)snare(t);if(s%2===0)hat(t);if(phrase===3&&s>=12)snare(t);const bs=PH.bass[phrase][s],ls=PH.lead[phrase][s];if(bs)tone(bs,t,STEP*0.9,'triangle',0.26);if(ls)tone(ls,t,STEP*0.8,'square',0.13);nextT+=STEP;step++;}}
+setInterval(scheduler,40);
+
+/* ============ SCENE STATE ============ */
+let phase='attract';        // 'attract' -> 'boot' -> 'load' -> 'cracktro'
+let loadTimer=0; let driveTimer=0;
+let bootStage='print';   // print -> catType -> catRead -> runType
+let subTimer=0, catTyped='', catIdx2=0, catRevealed=0, catDrive=0;
+const CATHEAD=['Drive A: user  0'];
+const CATROWS=[
+  ["FREEGLAZ.BAS","24K","PROFILE .BIN","31K"],
+  ["PATCHGEN.BAS"," 6K","ARGYLL  .BIN","46K"],
+  ["COPPER  .BIN"," 4K","GROCP   .BAS"," 2K"],
+  ["SCROLL  .BAS"," 3K","STRIPOKR.BAS"," 9K"],
+];
+const CATFOOT=['','  OK free'];
+
+let bootLines=[], bootIdx=0, bootChar=0, bootTimer=0, cursorOn=true, cursorTimer=0;
+let typedLine='', typing=null, typeIdx=0, typeTimer=0;
+const SCROLL="                    freeglaZ woz here ...   greetings to the ArgyllCMS crew and Graeme Gill ...   Infinite patch mode ...   16-bit mode ...   GE image-only mode ...   tirage & profilage libre ...   wrap around !                     ";
+let scrollX=W, tSec=0;
+const stars=[];for(let i=0;i<48;i++)stars.push({x:Math.random()*W,y:Math.random()*H,s:Math.random()*1.5+0.3});
+
+const BOOT=[
+ "Grostrad 128K Grocomputer   (v3)","",
+ "@1985 Grostrad Consumer Grolectronics plc",
+ "        and Grocomotive Software Ltd.","",
+ "GROBASIC 1.1","","Ready"
+];
+
+function drawLoad(dt){
+  g.fillStyle=COL.bootPaper; g.fillRect(0,0,W,H);
+  let y=16;
+  for(const line of BOOT){ drawText(line,14,y,1,COL.bootInk); y+=12; }
+  drawText('cat',14,y,1,COL.bootInk); y+=12;
+  for(const h of CATHEAD){ drawText(h,14,y,1,COL.bootInk); y+=12; }
+  y+=2;
+  for(const row of CATROWS){
+    drawText(row[0],14,y,1,COL.bootInk);
+    drawText(row[1],14+textWidth(row[0]+"  ",1),y,1,COL.bootInk);
+    drawText(row[2],150,y,1,COL.bootInk);
+    drawText(row[3],150+textWidth(row[2]+"  ",1),y,1,COL.bootInk);
+    y+=12;
+  }
+  for(const f of CATFOOT){ drawText(f,14,y,1,COL.bootInk); y+=12; }
+  drawText('Ready',14,y,1,COL.bootInk); y+=12;
+  drawText('RUN "freeglaz.bas"',14,y,1,COL.bootInk); y+=12;
+  loadTimer+=dt;
+  driveTimer+=dt;
+  if(!Drive.playing) driveStart();
+  cursorTimer+=dt; if(cursorTimer>26){cursorTimer=0;cursorOn=!cursorOn;}
+  if(cursorOn) g.fillRect(14,y,5,8);
+  if(loadTimer>2200){ driveStop(); phase='cracktro'; musicOn=true; if(AC)nextT=AC.currentTime+0.05; }
+}
+function drawBoot(dt){
+  g.fillStyle=COL.bootPaper; g.fillRect(0,0,W,H);
+  let y=16;
+  // always draw already-revealed BOOT lines
+  const shown = Math.min(bootIdx, BOOT.length);
+  for(let i=0;i<shown;i++){ drawText(BOOT[i],14,y,1,COL.bootInk); y+=12; }
+
+  if(bootStage==='print'){
+    if(bootIdx<BOOT.length){
+      const cur=BOOT[bootIdx].slice(0,bootChar);
+      drawText(cur,14,y,1,COL.bootInk);
+      bootTimer+=dt;
+      if(bootTimer>16){ bootTimer=0; if(bootChar<BOOT[bootIdx].length)bootChar++; else {bootIdx++;bootChar=0;} }
+      y+=12;
+    } else {
+      bootStage='catType'; catTyped=''; catIdx2=0; subTimer=0;
+    }
+    cursorTimer+=dt; if(cursorTimer>26){cursorTimer=0;cursorOn=!cursorOn;}
+    return;
+  }
+
+  // from here BOOT fully printed; y is at the line after "Ready"
+  if(bootStage==='catType'){
+    const target='cat';
+    subTimer+=dt;
+    if(subTimer>90 && catIdx2<target.length){ subTimer=0; catTyped+=target[catIdx2]; catIdx2++; blip(1500+Math.random()*200); }
+    drawText(catTyped,14,y,1,COL.bootInk);
+    cursorTimer+=dt; if(cursorTimer>26){cursorTimer=0;cursorOn=!cursorOn;}
+    if(cursorOn) g.fillRect(14+textWidth(catTyped,1),y-1,5,8);
+    if(catIdx2>=target.length){ bootStage='catRead'; subTimer=0; catRevealed=0; catDrive=0; }
+    return;
+  }
+
+  if(bootStage==='catRead'){
+    // 'cat' line stays
+    drawText('cat',14,y,1,COL.bootInk); y+=12;
+    // reveal catalog rows one by one, with drive-seek blips
+    if(!Drive.playing) driveStart();
+    subTimer+=dt;
+    const totalRows = CATHEAD.length + CATROWS.length + CATFOOT.length;
+    if(subTimer>220 && catRevealed<totalRows){ subTimer=0; catRevealed++; }
+    let rr=0;
+    // header
+    for(const h of CATHEAD){ if(rr<catRevealed){ drawText(h,14,y,1,COL.bootInk); y+=12; } rr++; }
+    y+=2;
+    // two-column rows
+    for(const row of CATROWS){ if(rr<catRevealed){
+      drawText(row[0],14,y,1,COL.bootInk);
+      drawText(row[1],14+textWidth(row[0]+"  ",1),y,1,COL.bootInk);
+      drawText(row[2],150,y,1,COL.bootInk);
+      drawText(row[3],150+textWidth(row[2]+"  ",1),y,1,COL.bootInk);
+      y+=12;
+    } rr++; }
+    // footer
+    for(const f of CATFOOT){ if(rr<catRevealed){ drawText(f,14,y,1,COL.bootInk); y+=12; } rr++; }
+    if(catRevealed>=totalRows){
+      subTimer+=dt; if(subTimer>500){ bootStage='runType'; typing='RUN "freeglaz.bas"'; typeIdx=0; typedLine=''; typeTimer=0; }
+    }
+    return;
+  }
+
+  if(bootStage==='runType'){
+    // redraw cat + catalog statically, then Ready + RUN typing
+    drawText('cat',14,y,1,COL.bootInk); y+=12;
+    for(const h of CATHEAD){ drawText(h,14,y,1,COL.bootInk); y+=12; }
+    y+=2;
+    for(const row of CATROWS){
+      drawText(row[0],14,y,1,COL.bootInk);
+      drawText(row[1],14+textWidth(row[0]+"  ",1),y,1,COL.bootInk);
+      drawText(row[2],150,y,1,COL.bootInk);
+      drawText(row[3],150+textWidth(row[2]+"  ",1),y,1,COL.bootInk);
+      y+=12;
+    }
+    for(const f of CATFOOT){ drawText(f,14,y,1,COL.bootInk); y+=12; }
+    drawText('Ready',14,y,1,COL.bootInk); y+=12;
+    typeTimer+=dt;
+    if(typeTimer>42 && typeIdx<typing.length){ typeTimer=0; typedLine+=typing[typeIdx]; typeIdx++; blip(1500+Math.random()*200); }
+    drawText(typedLine,14,y,1,COL.bootInk);
+    cursorTimer+=dt; if(cursorTimer>26){cursorTimer=0;cursorOn=!cursorOn;}
+    if(cursorOn) g.fillRect(14+textWidth(typedLine,1),y-1,5,8);
+    if(typeIdx>=typing.length){ bootTimer+=dt; if(bootTimer>40){ phase='load'; loadTimer=0; driveTimer=0; } }
+    return;
+  }
+}
+
+function drawCracktro(){
+  g.fillStyle=COL.bg; g.fillRect(0,0,W,H);
+  for(const st of stars){st.x-=st.s;if(st.x<0){st.x=W;st.y=Math.random()*H;}g.fillStyle=st.s>1.2?COL.l2:COL.m1;g.fillRect(st.x|0,st.y|0,1,1);}
+  const cx=W/2;
+  const bars=[COL.d1,COL.d2,COL.m1,COL.m2,COL.l1,COL.green,COL.l1,COL.m2];
+  for(let i=0;i<bars.length;i++){const yy=H/2-30+Math.sin(tSec*2.2+i*0.5)*46;g.globalAlpha=0.5;g.fillStyle=bars[i];g.fillRect(0,yy,W,6);}
+  g.globalAlpha=1;
+  const pulse=1+Math.sin(tSec*3)*0.07,oy=Math.sin(tSec*1.6)*8,sc=Math.max(2,Math.round(3*pulse)),mW=MONO[0].length*sc;
+  drawMono(cx-mW/2,H/2-74+oy,sc,COL.white,COL.green);
+  const word="FREEGLAZ",wScale=3,wW=textWidth(word,wScale);let lx=cx-wW/2;
+  for(let i=0;i<word.length;i++){const ly=H/2-14+Math.sin(tSec*3+i*0.5)*6;drawText(word[i],lx,ly,wScale,i%2?COL.l2:COL.white);lx+=6*wScale;}
+  const tag="TIRAGE & PROFILAGE LIBRE";drawText(tag,cx-textWidth(tag,1)/2,H/2+22,1,COL.m2);
+  scrollX-=1.4;const totalW=SCROLL.length*12;if(scrollX<-totalW)scrollX=W;let sx=scrollX;
+  for(let i=0;i<SCROLL.length;i++){const yy=H-24+Math.sin(tSec*3+i*0.4)*6;if(sx>-14&&sx<W)drawText(SCROLL[i],sx,yy,2,i%3===0?COL.green:COL.ink);sx+=12;}
+  const vu=(step%4===0)?9:(step%2===0?6:3);for(let b=0;b<8;b++){g.fillStyle=b<vu?COL.green:COL.d1;g.fillRect(6+b*4,8,3,6);}
+}
+
+let attractBlink=0, attractOn=true;
+/* pixel-art joystick (Competition Pro 5000 homage): slimmer black base,
+   short shaft, red ball, two round red fire buttons. P = pixel unit. */
+function px(x,y,w,h,col){ g.fillStyle=col; g.fillRect(x,y,w,h); }
+function drawJoystick(cx,cy,P,fireOn){
+  const K=COL.bootPaper;
+  const black='#111116', hi='#3a3a44', lo='#000000', grey='#22222a';
+  const red='#d02323', redHi='#ff6a6a', redLo='#7c1212';
+  const fireLit='#ff3030', ringD='#2a2a30';
+
+  // ===== BASE : narrower & lower (was 32/36 wide, 8/5 tall) =====
+  px(cx-12*P, cy+0*P, 24*P, 5*P, black);
+  px(cx-13*P, cy+2*P, 26*P, 3*P, black);
+  px(cx-12*P, cy+0*P, 24*P, 1*P, hi);       // top bevel
+  px(cx-13*P, cy+5*P, 26*P, 1*P, lo);       // bottom shadow
+  // round outer corners
+  px(cx-13*P, cy+2*P, 1*P,1*P, K); px(cx+12*P, cy+2*P, 1*P,1*P, K);
+  px(cx-12*P, cy+0*P, 1*P,1*P, K); px(cx+11*P, cy+0*P, 1*P,1*P, K);
+  px(cx-13*P, cy+4*P, 1*P,1*P, K); px(cx+12*P, cy+4*P, 1*P,1*P, K);
+
+  // raised centre dome
+  px(cx-4*P, cy-1*P, 8*P, 2*P, grey);
+  px(cx-4*P, cy-1*P, 8*P, 1*P, hi);
+
+  // ===== SHAFT (short) =====
+  px(cx-2*P, cy-6*P, 4*P, 5*P, black);
+  px(cx-2*P, cy-6*P, 1*P, 5*P, hi);
+
+  // ===== RED BALL =====
+  px(cx-4*P, cy-11*P, 8*P, 5*P, red);
+  px(cx-3*P, cy-12*P, 6*P, 1*P, red);
+  px(cx-2*P, cy-10*P, 3*P, 2*P, redHi);
+  px(cx-4*P, cy-7*P, 8*P, 1*P, redLo);
+  px(cx-4*P, cy-11*P, 1*P,1*P, K); px(cx+3*P, cy-11*P, 1*P,1*P, K);
+  px(cx-4*P, cy-7*P, 1*P,1*P, K);  px(cx+3*P, cy-7*P, 1*P,1*P, K);
+
+  // ===== TWO fire buttons (smaller, inside the slimmer base) =====
+  const fb=fireOn?fireLit:red;
+  function fireBtn(bx){
+    px(bx-2*P, cy+1*P, 5*P, 3*P, ringD);
+    px(bx-1*P, cy+1*P, 3*P, 3*P, fb);
+    px(bx-1*P, cy+1*P, 3*P, 1*P, fireOn?'#ffffff':redHi);
+    px(bx-1*P, cy+3*P, 3*P, 1*P, redLo);
+    px(bx-2*P, cy+1*P, 1*P,1*P, K); px(bx+2*P, cy+1*P, 1*P,1*P, K);
+    px(bx-2*P, cy+3*P, 1*P,1*P, K); px(bx+2*P, cy+3*P, 1*P,1*P, K);
+  }
+  fireBtn(cx-8*P);
+  fireBtn(cx+8*P);
+}
+function drawAttract(dt){
+  g.fillStyle=COL.bootPaper; g.fillRect(0,0,W,H);
+  drawText("Grostrad 128K Grocomputer",  (W-textWidth("Grostrad 128K Grocomputer",1))/2, 40, 1, COL.bootInk);
+  drawText("GROBASIC 1.1",               (W-textWidth("GROBASIC 1.1",1))/2, 60, 1, COL.bootInk);
+  attractBlink+=dt; if(attractBlink>450){ attractBlink=0; attractOn=!attractOn; }
+  // pixel joystick, centred; fire button blinks
+  drawJoystick(W/2, H/2+30, 4, attractOn);
+  const t2="click on fire to start";
+  drawText(t2, (W-textWidth(t2,1))/2, H-34, 1, COL.l1);
+}
+let last=0;
+function frame(ts){ requestAnimationFrame(frame); const dt=ts-last; last=ts; tSec=ts/1000;
+  if(phase==='attract') drawAttract(dt); else if(phase==='boot') drawBoot(dt); else if(phase==='load') drawLoad(dt); else drawCracktro();
+}
+requestAnimationFrame(frame);
+
+/* ---- lifecycle ---- */
+function startScene(){
+  initAudio();
+  if(AC && AC.resume) AC.resume();   // real in-frame gesture -> unlocks audio everywhere
+  phase='boot';
+}
+function closeEgg(){ musicOn=false; driveStop(); stopAudio(); try{ window.parent.postMessage('freeglaz-egg-close','*'); }catch(e){} }
+
+/* Single universal click handler:
+   - on the attract screen, the click is the required in-frame user gesture:
+     it unlocks the AudioContext (works on Chrome, Safari/WebKit, mobile...) and
+     starts the boot. It does NOT close.
+   - once the scene is running, any click closes. */
+document.getElementById('wrap').addEventListener('click', function(){
+  if(phase==='attract'){ startScene(); return; }
+  closeEgg();
+});
+window.addEventListener('keydown', e=>{ if(e.key==='Escape'){ if(phase==='attract') startScene(); else closeEgg(); } });
+
+</script>
+</body>
+</html>

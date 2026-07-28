@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <title>freeglaz Print</title>
+  <script>
+    // Apply the glaz theme before the 1st paint. Consistent with useTheme.js:
+    // localStorage key 'freeglaz.theme', 3 light themes, default 'mist'. Any value
+    // off the list (including the old 'deep'/'dark') falls back to 'mist'.
+    (function () {
+      try {
+        var v = localStorage.getItem('freeglaz.theme');
+        var themes = ['mist', 'tide', 'neutral'];
+        document.documentElement.setAttribute('data-theme', themes.indexOf(v) >= 0 ? v : 'mist');
+      } catch (e) { document.documentElement.setAttribute('data-theme', 'mist'); }
+    })();
+  </script>
+  <script>
+    // ULTIMATE safety net (before the bundle): catches a global error
+    // (module load/parse, async error) that the React ErrorBoundary CANNOT
+    // catch (it lives IN the bundle; if the bundle fails to load, React never
+    // mounts → empty #root → blank). If #root is still empty ~1.2s after an
+    // error, we show a VISIBLE message (hardcoded styles) + Reload. Works
+    // without DevTools (useful in the WebKitGTK webview). Does not interfere if the app mounts fine.
+    (function () {
+      var lastError = null;
+      function record(msg) { lastError = msg; }
+      window.addEventListener('error', function (e) {
+        record((e && (e.message || (e.error && e.error.stack))) || 'Unknown error');
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        record('Unhandled promise: ' + ((e && e.reason && (e.reason.stack || e.reason.message)) || e.reason));
+      });
+      setTimeout(function () {
+        var root = document.getElementById('root');
+        if (!lastError || (root && root.childNodes.length > 0)) return;  // app mounted → nothing
+        document.documentElement.setAttribute('data-theme', 'mist');
+        root.innerHTML =
+          '<div role="alert" style="position:fixed;inset:0;display:flex;flex-direction:column;'
+          + 'align-items:center;justify-content:center;gap:16px;padding:32px;text-align:center;'
+          + 'background:#0b1417;color:#e8eef0;font-family:system-ui,sans-serif;z-index:2147483647">'
+          + '<div style="font-size:18px;font-weight:600">Une erreur est survenue au chargement</div>'
+          + '<div style="font-size:13px;color:#9fb0b5">A loading error occurred.</div>'
+          + '<pre style="max-width:760px;max-height:40vh;overflow:auto;margin:0;font:12px ui-monospace,monospace;'
+          + 'color:#9fb0b5;text-align:left;white-space:pre-wrap;word-break:break-word;background:#11201f;'
+          + 'border:1px solid #1e3330;border-radius:8px;padding:12px"></pre>'
+          + '<button type="button" onclick="window.location.reload()" style="background:#0096D6;color:#fff;'
+          + 'border:none;border-radius:8px;padding:10px 22px;font-size:14px;font-weight:600;cursor:pointer">'
+          + 'Recharger / Reload</button></div>';
+        root.querySelector('pre').textContent = String(lastError);
+      }, 1200);
+    })();
+  </script>
+</head>
+<body class="bg-bg">
+  <div id="root"></div>
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>

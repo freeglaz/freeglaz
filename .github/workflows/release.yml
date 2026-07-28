@@ -1,0 +1,55 @@
+name: release
+
+# Builds the front with a pinned Node, assembles a tarball made of the TRACKED
+# source + the freshly built webapp/frontend/dist (which is gitignored, so it
+# only exists inside the release artifact), and attaches it to a GitHub Release.
+# The end user downloads this tarball and never needs Node/npm.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write   # create/attach the Release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: webapp/frontend/.nvmrc
+
+      - name: Build front
+        working-directory: webapp/frontend
+        run: |
+          npm ci
+          npm run build
+          test -f dist/index.html   # guard: build must not be empty
+
+      - name: Assemble tarball (tracked source + injected dist)
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          STAGING="freeglaz-${VERSION}"
+          # git archive ships ONLY tracked files → excludes .git/, node_modules/,
+          # .venv/ and the gitignored webapp/frontend/dist. We then inject the
+          # built dist at the exact relative path FRONTEND_DIST expects
+          # (webapp/frontend/dist, next to webapp/backend/main.py).
+          git archive --prefix="${STAGING}/" HEAD | tar -x
+          mkdir -p "${STAGING}/webapp/frontend/dist"
+          cp -R webapp/frontend/dist/. "${STAGING}/webapp/frontend/dist/"
+          tar -czf "${STAGING}.tar.gz" "${STAGING}"
+          echo "TARBALL=${STAGING}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Verify the built front is in the tarball
+        run: |
+          tar -tzf "$TARBALL" | grep -q "/webapp/frontend/dist/index.html" \
+            || { echo "::error::built front missing from tarball"; exit 1; }
+          tar -tzf "$TARBALL" | grep -q "/webapp/frontend/dist/assets/" \
+            || { echo "::error::built assets missing from tarball"; exit 1; }
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" "$TARBALL" --generate-notes

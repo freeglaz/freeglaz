@@ -1,0 +1,43 @@
+name: ci
+
+# Portability guard: on a CLEAN runner (no system libvips), the DOCUMENTED
+# install (`uv sync`, which pulls `pyvips[binary]`) must give a working preview
+# pipeline — bundled libvips + large-TIFF thumbnail + embedded ICC. This is the
+# check that was missing when pyvips was adopted (the dev machine had a stray
+# brew libvips, masking whether the bundled wheel actually works standalone).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  preview-smoke:
+    name: preview portability (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # Guarantee the runner has NO system libvips, so `uv sync` builds the
+      # bundled (ABI) wheel — exactly the documented user path. Best-effort:
+      # the runners don't ship libvips, but we remove it if a future image does.
+      - name: Ensure no system libvips
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get remove -y 'libvips*' 2>/dev/null || true
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            brew uninstall --ignore-dependencies vips 2>/dev/null || true
+          fi
+          echo "system libvips (if any) removed"
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install the documented way (uv sync → bundled pyvips)
+        run: uv sync
+
+      - name: Preview portability smoke test
+        run: uv run python scripts/ci_preview_smoke.py

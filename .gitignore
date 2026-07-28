@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.mypy_cache/
+
+# uv
+
+# Node
+node_modules/
+# Bundles GÉNÉRÉS = artefacts de build, JAMAIS en VCS (régénérés au build) :
+# le bundle Vite (frontend) ET les bundles applicatifs (.app etc.).
+webapp/frontend/dist/
+webapp/dist/
+*.log
+.cache/
+
+# Env & secrets
+.env
+.env.local
+*.pem
+*.key
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Test oracle local non publié (conservé hors dépôt).
+webapp/backend/tests/test_sol_ti3.py
+
+# freeglaz specific
+sessions/
+*.icc.bak*
+freeglaz.bak*
+multipass_chart.py.bak*
+
+# Cache local utilisateur (jamais commit)
+# (~/Documents/freeglaz/ est hors projet, pas concerné)
+
+# freeglaz binary artifacts (lourds, jamais à committer)
+reference/
+printer.log*
+*.tif
+*.tiff
+*.prn
+*.pdf
+*.ppm
+*.ti3
+*.bin
+
+# ICC files à la racine (les ICC dans lib/z9_client/assets/ sont OK)
+/*.icc
+
+# Logs et dumps
+*.log
+
+# Runtime data webapp (généré par l'app, données utilisateur perso)
+webapp/data/
+!webapp/data/.gitkeep
+
+# Claude Code internal
+.claude/
+
+# Sorties runtime SOL (CGATS mesurés)
+out/
+
+# Backups locaux (jamais en VCS)
+*.bak

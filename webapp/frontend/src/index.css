@@ -1,0 +1,228 @@
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;450;500;600;700&family=Spline+Sans+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ───────────────────────────────────────────────────────────────────────
+   freeglaZ design system — tokens glaz (4 thèmes via data-theme sur <html>).
+   Source : freeglaz/ds-theme.css (handoff design, 14/06/2026).
+
+   Règle : aucun composant ne hardcode de couleur — toujours var(--token).
+   Les anciens noms (--border-soft, --text-strong, --success…) sont conservés
+   comme ALIAS des tokens DS canoniques (migration douce des classes : ils
+   suivent le thème actif par indirection var()). (--hp-blue : retiré, plus
+   aucun usage — tout est passé à --accent.)
+   ─────────────────────────────────────────────────────────────────────── */
+:root {
+  /* ── spectre glaz (ancres de marque, invariantes par thème) ── */
+  --abyss: oklch(33% 0.055 232);
+  --deepc: oklch(45% 0.078 216);
+  --glazc: oklch(57% 0.082 197);
+  --seac:  oklch(68% 0.072 182);
+  --foamc: oklch(86% 0.036 182);
+
+  /* ── type ── */
+  --serif: 'Bricolage Grotesque', system-ui, sans-serif;
+  --ui:    'Hanken Grotesk', system-ui, sans-serif;
+  --mono:  'Spline Sans Mono', ui-monospace, monospace;
+
+  /* ── échelles ── */
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px;
+  --r1:6px; --r2:10px; --r3:14px; --r4:20px; --rp:999px;
+  --t-micro:10.5px; --t-tiny:11.5px; --t-sm:12.5px; --t-base:14px; --t-lg:17px; --t-xl:22px; --t-2xl:30px;
+
+  /* ── alias legacy → tokens DS (résolus dynamiquement selon data-theme) ── */
+  --border-soft:   var(--line);
+  --border-strong: var(--line-strong);
+  --text-strong:   var(--text);
+  --success:       var(--ok);
+  --icc-ok:        var(--ok);
+  --icc-warn:      var(--warn);
+  --icc-warn-deep: var(--warn);
+  --sunken-deep:   var(--sunken);
+
+  /* viewer : scène neutre sombre (jugement couleur), volontairement non thémée */
+  --viewer-bg:     oklch(20% 0.006 220);
+
+  /* HP origin : bleu HP Ingenium — DONNÉE sémantique (dénote l'origine HP),
+     pas du chrome. Constant (référence nominale HP), pas un résidu #0096D6. */
+  --hp-origin:     #0096D6;
+
+  /* Fond data-viz neutre clair — INTENTION (jugement colorimétrique), gris
+     achromatique CONSTANT, volontairement NON thémé. Cf. VIZ_NEUTRAL_BG (3D). */
+  --viz-surface:   #E0E0E0;
+}
+
+/* ════ mist — Brume claire (défaut) ════ */
+:root,
+[data-theme="mist"] {
+  --bg:oklch(97.5% 0.006 200);
+  --surface:#ffffff;
+  --surface-2:oklch(94.5% 0.008 200);
+  --sunken:oklch(92% 0.01 200);
+  --line:oklch(90% 0.008 205);
+  --line-strong:oklch(83% 0.012 205);
+  --text:oklch(25% 0.014 222);
+  --text-muted:oklch(45% 0.012 220);
+  --text-faint:oklch(62% 0.012 215);
+  --accent:oklch(50% 0.085 205);
+  --accent-press:oklch(44% 0.088 210);
+  --accent-soft:oklch(50% 0.085 205 / 0.10);
+  --on-accent:#ffffff;
+  --ok:oklch(56% 0.10 165); --warn:oklch(70% 0.10 75); --danger:oklch(58% 0.15 28);
+  --shadow-sm:0 1px 2px rgba(20,40,50,0.06);
+  --shadow-md:0 4px 16px rgba(20,40,50,0.10);
+  --shadow-lg:0 18px 44px rgba(20,40,50,0.16);
+  --grad:linear-gradient(135deg,var(--glazc),var(--seac) 70%,var(--foamc));
+}
+
+/* ════ tide — Marée montante (clair tonique, teal moyen) ════ */
+[data-theme="tide"] {
+  --bg:oklch(94% 0.022 192);
+  --surface:oklch(98% 0.012 190);
+  --surface-2:oklch(91% 0.028 190);
+  --sunken:oklch(88% 0.032 190);
+  --line:oklch(85% 0.03 190);
+  --line-strong:oklch(76% 0.04 190);
+  --text:oklch(28% 0.04 215);
+  --text-muted:oklch(46% 0.035 205);
+  --text-faint:oklch(60% 0.03 200);
+  --accent:oklch(52% 0.09 200);
+  --accent-press:oklch(46% 0.092 205);
+  --accent-soft:oklch(52% 0.09 200 / 0.12);
+  --on-accent:#ffffff;
+  --ok:oklch(54% 0.11 165); --warn:oklch(68% 0.11 72); --danger:oklch(56% 0.15 28);
+  --shadow-sm:0 1px 2px rgba(20,55,60,0.07);
+  --shadow-md:0 4px 16px rgba(20,55,60,0.12);
+  --shadow-lg:0 18px 44px rgba(20,55,60,0.18);
+  --grad:linear-gradient(135deg,var(--glazc),var(--seac) 70%,var(--foamc));
+}
+
+/* ════ neutral — gris quasi-achromatique (puristes photo) ════ */
+[data-theme="neutral"] {
+  --bg:oklch(96% 0.002 220);
+  --surface:#ffffff;
+  --surface-2:oklch(93.5% 0.003 220);
+  --sunken:oklch(91% 0.004 220);
+  --line:oklch(89% 0.004 220);
+  --line-strong:oklch(80% 0.005 220);
+  --text:oklch(24% 0.006 220);
+  --text-muted:oklch(46% 0.005 220);
+  --text-faint:oklch(64% 0.005 220);
+  --accent:oklch(48% 0.045 210);
+  --accent-press:oklch(42% 0.05 212);
+  --accent-soft:oklch(48% 0.045 210 / 0.09);
+  --on-accent:#ffffff;
+  --ok:oklch(54% 0.07 165); --warn:oklch(68% 0.08 75); --danger:oklch(56% 0.13 28);
+  --shadow-sm:0 1px 2px rgba(0,0,0,0.05);
+  --shadow-md:0 4px 16px rgba(0,0,0,0.08);
+  --shadow-lg:0 18px 44px rgba(0,0,0,0.13);
+  --grad:linear-gradient(135deg,oklch(55% 0.04 210),oklch(72% 0.03 200) 70%,oklch(88% 0.015 200));
+}
+
+html, body, #root { height: 100%; }
+/* App-shell : le DOCUMENT ne scrolle jamais (seules les régions internes le font,
+   via leur propre overflow-y-auto). Borne le scroll + coupe le rubber-band WebKit
+   (sinon, en fenêtre native, on scrolle au-dessus/en-dessous de l'app = tout décalé). */
+html, body { overflow: hidden; overscroll-behavior: none; }
+body {
+  font-family: var(--ui);
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+  transition: background .3s;
+}
+
+/* Subtle dotted backdrop for viewer */
+.viewer-dots {
+  background-image: radial-gradient(rgba(255,255,255,0.05) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+/* Hide scrollbars in the sidebar — cleaner look */
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* ───────────────────────────────────────────────────────────────────────
+   Detail panel animations (Inc 15 P1.D).
+   ─────────────────────────────────────────────────────────────────────── */
+@keyframes slidein-right {
+  from { transform: translateX(40px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+@keyframes fadein {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.animate-slidein { animation: slidein-right 250ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-fadein  { animation: fadein 150ms ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-slidein, .animate-fadein { animation: none; }
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   Focus visible global — WCAG 2.4.7 (Inc 13 a11y audit).
+   Tailwind base supprime l'outline navigateur par défaut, donc on
+   restaure un focus visible explicite couleur accent (glaz), uniquement
+   pour la navigation clavier (focus-visible, pas focus souris).
+   ─────────────────────────────────────────────────────────────────────── */
+:focus { outline: none; }
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   freeglaZ design system — composants (portés de freeglaz/ds-theme.css).
+   Étape 2 : couche centrale réutilisable. Les boutons bruts (pas de primitive
+   Button — 72 usages) et les écrans denses (cartes, tableau Mesures, états
+   vides/chargement) adoptent ces classes lors de l'alignement écran par écran.
+   Couleur via tokens → correct sur les 4 thèmes, dont --on-accent (texte sur
+   accent : clair en mist/tide/neutral, SOMBRE en deep).
+   ─────────────────────────────────────────────────────────────────────── */
+.h-display{ font-family:var(--serif); font-weight:600; letter-spacing:-0.02em; }
+.mono{ font-family:var(--mono); font-variant-numeric:tabular-nums; }
+.eyebrow{ font-family:var(--mono); font-size:var(--t-tiny); letter-spacing:0.14em; text-transform:uppercase; color:var(--accent); }
+
+/* boutons */
+.btn{ font-family:var(--ui); font-size:var(--t-sm); font-weight:600; letter-spacing:-0.005em;
+  border-radius:var(--r1); padding:9px 16px; border:1px solid transparent; cursor:pointer;
+  display:inline-flex; align-items:center; justify-content:center; gap:7px;
+  transition:background .12s,border-color .12s,opacity .12s; }
+.btn-primary{ background:var(--accent); color:var(--on-accent); box-shadow:var(--shadow-sm); }
+.btn-primary:hover{ background:var(--accent-press); }
+.btn-secondary{ background:transparent; color:var(--text); border-color:var(--line-strong); }
+.btn-secondary:hover{ background:var(--surface-2); }
+.btn-ghost{ background:transparent; color:var(--text-muted); }
+.btn-ghost:hover{ background:var(--surface-2); color:var(--text); }
+.btn-danger{ background:var(--danger); color:#fff; }
+.btn[disabled], .btn:disabled{ opacity:0.45; cursor:not-allowed; box-shadow:none; }
+.btn-sm{ padding:6px 11px; font-size:var(--t-tiny); }
+
+/* carte */
+.card{ background:var(--surface); border:1px solid var(--line); border-radius:var(--r3); }
+
+/* tableau dense (motif Mesures) */
+.table{ width:100%; border-collapse:collapse; font-size:var(--t-sm); }
+.table th{ text-align:left; font-size:var(--t-micro); font-weight:600; letter-spacing:0.06em; text-transform:uppercase;
+  color:var(--text-faint); padding:8px 12px; border-bottom:1px solid var(--line-strong); white-space:nowrap; }
+.table td{ padding:8px 12px; border-bottom:1px solid var(--line); color:var(--text); white-space:nowrap; }
+.table td.num{ font-family:var(--mono); font-variant-numeric:tabular-nums; text-align:right; }
+.table tbody tr:hover{ background:var(--surface-2); }
+
+/* champ natif (input/select/textarea) */
+.input{ width:100%; padding:9px 12px; background:var(--surface); border:1px solid var(--line-strong);
+  border-radius:var(--r1); font-family:var(--ui); font-size:var(--t-sm); color:var(--text); outline:none; }
+.input:focus{ border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+.input.mono{ font-family:var(--mono); }
+
+/* états vide / chargement */
+.state{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:40px 20px; text-align:center; color:var(--text-muted); }
+.state .ic{ width:52px; height:52px; border-radius:var(--r3); background:var(--sunken); display:flex; align-items:center; justify-content:center; color:var(--text-faint); }
+.skel{ background:linear-gradient(90deg,var(--sunken),var(--surface-2),var(--sunken)); background-size:200% 100%; animation:sh 1.4s ease-in-out infinite; border-radius:var(--r1); }
+@keyframes sh{ 0%{background-position:200% 0} 100%{background-position:-200% 0} }

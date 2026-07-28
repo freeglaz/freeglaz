@@ -1,0 +1,7 @@
+# Windows batch launchers must use CRLF so cmd.exe parses them correctly.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# POSIX launcher/shell scripts stay LF regardless of the checkout platform.
+*.command text eol=lf
+*.sh       text eol=lf

@@ -402,10 +402,16 @@ def export_icc(
     # Fallback: ``{mediaid}_{ge_state}.icc`` if the desc tag is absent
     # or the ICC read fails.
     desc = _read_icc_desc(icc_bytes)
-    fname = (
-        f"{_sanitize_icc_filename(desc)}.icc"
-        if desc else f"{mediaid}_{ge_state}.icc"
-    )
+    if desc:
+        base = _sanitize_icc_filename(desc)
+        # The Z9 firmware rewrites the desc tag with the stored filename,
+        # extension included, so `desc` may already end in `.icc` — strip it
+        # so the download is `name.icc`, not `name.icc.icc`.
+        if base.lower().endswith(".icc"):
+            base = base[:-4] or "profile"
+        fname = f"{base}.icc"
+    else:
+        fname = f"{mediaid}_{ge_state}.icc"
     return Response(
         content=icc_bytes,
         media_type="application/vnd.iccprofile",

@@ -102,6 +102,38 @@ def test_export_icc_filename_from_desc_tag():
     # "sRGB_IEC61966-2.1" (space → underscore, dot/dash OK)
     cd = r.headers["content-disposition"]
     assert "sRGB_IEC61966-2.1.icc" in cd
+
+
+def test_export_icc_filename_no_double_extension(monkeypatch):
+    """Regression: the Z9 firmware rewrites the desc tag with the stored
+    filename (extension included), so a desc that already ends in ``.icc``
+    must yield ``name.icc``, not ``name.icc.icc``."""
+    from webapp.backend.routes import papers as papers_routes
+    monkeypatch.setattr(papers_routes, "_read_icc_desc",
+                        lambda _b: "hpz9_canson-photolustre-rc_ge-on.icc")
+
+    sRGB_path = (
+        Path(__file__).parents[3]
+        / "lib" / "z9_client" / "assets" / "sRGB_IEC61966-2.1.icc"
+    )
+    sRGB_bytes = sRGB_path.read_bytes()
+
+    paper = MagicMock()
+
+    def _fake_export(ref, output_path, **kwargs):
+        Path(output_path).write_bytes(sRGB_bytes)
+        return {"output_path": output_path, "size_bytes": len(sRGB_bytes)}
+
+    paper.export_icc.side_effect = _fake_export
+    z9 = SimpleNamespace(paper=paper, host="192.168.1.50")
+
+    app.dependency_overrides[get_z9] = lambda: z9
+    with TestClient(app) as client:
+        r = client.get(f"/api/papers/{MID}/icc/off")
+    assert r.status_code == 200
+    cd = r.headers["content-disposition"]
+    assert "hpz9_canson-photolustre-rc_ge-on.icc" in cd
+    assert ".icc.icc" not in cd
     # No more MEDIAID in the filename when desc is readable
     assert MID not in cd
 

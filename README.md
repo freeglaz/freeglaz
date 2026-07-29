@@ -113,6 +113,11 @@ The printer address is configured in the app on first launch (Settings →
 Printers); no configuration file is required for normal use. A `.env` is a
 development override. The backend listens on `127.0.0.1`.
 
+## Usage
+
+The **[User Guide](Docs/USER_GUIDE.md)** covers day-to-day use: printing, papers,
+color calibration, and building custom ICC profiles.
+
 ## Platforms
 
 - macOS — tested.

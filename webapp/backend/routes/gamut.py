@@ -240,12 +240,3 @@ def get_lut_scatter(
                 to_cleanup.unlink()
             except OSError:
                 pass
-
-
-@router.get("/gamut/references")
-def list_references() -> dict:
-    """List of available references + current value from Settings."""
-    return {
-        "available": REFERENCE_NAMES,
-        "default": settings_store.get("inspection.gamut_reference") or "sRGB",
-    }

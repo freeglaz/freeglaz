@@ -30,12 +30,10 @@ Profiles screen endpoints (consumes the store):
 - POST /api/profiles/repo               → upload ICC into a repo category
 - DELETE /api/profiles/repo/{...}       → delete a repo profile
 - PATCH /api/profiles/repo/{...}        → rename/move within the repo
-- POST /api/profiles/mirror/copy-to-repo → copy a mirror profile to the repo
 - POST /api/profiles/sync               → trigger store.sync_mirror
 
 Architectural guardrail: no endpoint writes to or deletes in
-``mirror/``. Only the sync does. ``copy-to-repo`` reads the
-mirror and writes the repo — never the reverse.
+``mirror/``. Only the sync does — the mirror is read-only for the app.
 """
 import hashlib
 import json
@@ -727,90 +725,6 @@ def patch_repo_profile(body: PatchRepoBody) -> dict:
     }
 
 
-# ─── POST /api/profiles/mirror/copy-to-repo ───────────────────────────
-
-
-class CopyToRepoBody(BaseModel):
-    source_path: str = Field(
-        ..., description="Absolute path of a mirror profile",
-    )
-    target_category: str = Field(
-        "printers", description="printers | displays | workingspaces",
-    )
-    target_device: Optional[str] = Field(
-        None, description="device name (printers only, default = 'Z9')",
-    )
-    target_filename: Optional[str] = Field(
-        None, description="target filename (.icc). Default: source name.",
-    )
-    display_name: Optional[str] = Field(None)
-
-
-@router.post("/mirror/copy-to-repo")
-def copy_mirror_to_repo(body: CopyToRepoBody) -> dict:
-    """Copy a profile from the mirror (read-only) to the repo (read/write).
-
-    Preserves the ICC bit-identical. The meta records the origin
-    ``mirror_copy`` + the source path. Refused if destination occupied.
-    """
-    src = Path(body.source_path).resolve()
-    mirror_root = _cache.mirror_dir().resolve()
-    try:
-        src.relative_to(mirror_root)
-    except ValueError:
-        raise HTTPException(
-            403, detail="source_path is not in the mirror",
-        )
-    if not src.exists() or not src.is_file():
-        raise HTTPException(404, detail=f"Source not found: {src}")
-
-    if body.target_category not in _REPO_CATEGORIES:
-        raise HTTPException(422, detail="invalid target_category")
-    target_dev = body.target_device
-    if body.target_category == "printers":
-        target_dev = target_dev or "Z9"
-        _safe_segment(target_dev, "target_device")
-    elif target_dev:
-        raise HTTPException(
-            422, detail="target_device valid only for printers",
-        )
-    target_filename = body.target_filename or src.name
-    _safe_filename(target_filename, "target_filename")
-    if not target_filename.lower().endswith(".icc"):
-        raise HTTPException(422, detail="target_filename must end with .icc")
-
-    data = src.read_bytes()
-    _validate_icc_bytes(data)
-
-    root = _resolve_repo_root(body.target_category)
-    dest_dir = root / target_dev if target_dev else root
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = _ensure_under(dest_dir / target_filename, _cache.repo_dir())
-    if dest.exists():
-        raise HTTPException(409, detail="Destination already occupied")
-    dest.write_bytes(data)
-
-    md5 = _md5_bytes(data)
-    _write_repo_meta(dest, {
-        "display_name": body.display_name or dest.stem,
-        "md5": md5,
-        "size_bytes": len(data),
-        "imported_at": _now_iso(),
-        "origin": "mirror_copy",
-        "origin_detail": str(src),
-    })
-
-    return {
-        "ok": True,
-        "absolute_path": str(dest),
-        "category": body.target_category,
-        "device": target_dev,
-        "filename": target_filename,
-        "md5": md5,
-        "size_bytes": len(data),
-    }
-
-
 # ─── POST /api/profiles/mirror/copy-to-z9 ─────────────────────────────
 
 
@@ -931,11 +845,6 @@ def trigger_sync(request: Request, force: bool = False) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Part B — Refinement "Redo with Argyll"
-# ═══════════════════════════════════════════════════════════════════════
-
-
-# ═══════════════════════════════════════════════════════════════════════
 # Part A — CRUD of the "personal Z9" space per paper (repo/z9/)
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -972,7 +881,7 @@ def _z9_to_grouped() -> list[dict]:
 
 @router.get("/z9")
 def get_z9_profiles() -> dict:
-    """Tree of the personal Z9 space: serial → paper → refined profiles.
+    """Tree of the personal Z9 space: serial → paper → filed profiles.
 
     Pure filesystem read (no Z9 call). This is what the future Profiles
     screen will consume for the per-paper space.
@@ -1005,7 +914,7 @@ class RangeZ9Body(BaseModel):
     notes: Optional[str] = Field(None, description="layer 3 (free notes)")
     name: Optional[str] = Field(
         None, max_length=63,
-        description="CHOSEN name at refine (optional) — same policy as the "
+        description="CHOSEN name when filing (optional) — same policy as the "
                     "path-A build: if provided, filename = exact slugify(name) + desc = name, "
                     "ASCII/length validated + collision refusal (409). Absent = auto label.",
     )
@@ -1020,7 +929,7 @@ class RangeZ9Body(BaseModel):
 def range_z9_profile(body: RangeZ9Body) -> dict:
     """File a variant into repo/z9/<serial>/papers/<media_id>/.
 
-    Reads the scratch variant (produced by POST /refine), validates the ICC
+    Reads the scratch variant (an ICC produced by the profiling build), validates the ICC
     signature, writes the profile + its 3-layer sidecar (name anti-collision).
     Does not delete the scratch source (the caller cleans up its working folder).
     """

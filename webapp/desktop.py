@@ -130,6 +130,97 @@ def _set_macos_app_name(name: str = "freeglaz") -> None:
         logger.debug("App name not set (%s: %s).", type(exc).__name__, exc)
 
 
+def _install_macos_open_handler(api, window) -> None:
+    """macOS only, best-effort: handle a TIFF dropped on the Dock icon (or
+    "Open With…" / a launch-by-open).
+
+    A file dropped on the app icon reaches the app as an "open documents" request
+    that AppKit routes to the NSApplication delegate's ``application:openFile:``.
+    pywebview's delegate does not implement it, so AppKit shows a "cannot open
+    files in that format" dialog. We therefore install a thin PROXY delegate: it
+    implements ``application:openFile:`` (stores the path on ``api`` + fires the
+    payload-less ``freeglaz:open-file`` event; the frontend then pulls the bytes
+    via ``api.take_dropped_file()``) and forwards every other message to
+    pywebview's original delegate. Info.plist declares the TIFF document type
+    (see freeglaz.spec) so the Dock accepts the drop.
+
+    Cooperating with AppKit's own open handler this way is timing-independent —
+    unlike installing a competing raw AppleEvent handler, which AppKit overrides
+    with its default during launch. Best-effort: any failure is swallowed (debug
+    log); launching the window NEVER depends on it. PyObjC is pulled in by the
+    desktop extra on macOS. Non-macOS is a no-op."""
+    if sys.platform != "darwin":
+        return
+    try:
+        import threading
+
+        import objc
+        from AppKit import NSApplication
+        from Foundation import NSObject
+
+        def _deliver(path) -> None:
+            if not path:
+                return
+            # application:openFile: runs on the MAIN thread. window.evaluate_js
+            # is BLOCKING (it posts JS to the WKWebView on the main thread and
+            # waits) → calling it here would deadlock the main thread on itself
+            # (endless beachball). Store the path (instant) and fire the notify
+            # from a background thread so this callback returns to AppKit at once;
+            # the JS then runs once the main thread is free.
+            api._pending_drop = str(path)
+
+            def _notify() -> None:
+                try:
+                    window.evaluate_js(
+                        "window.dispatchEvent(new CustomEvent('freeglaz:open-file'))")
+                except Exception as exc:  # noqa: BLE001 — best-effort
+                    logger.debug("open-file notify failed (%s: %s)",
+                                 type(exc).__name__, exc)
+
+            threading.Thread(target=_notify, daemon=True).start()
+
+        app = NSApplication.sharedApplication()
+        original = app.delegate()
+
+        class _OpenFileProxy(NSObject):
+            def initWithTarget_(self, target):
+                this = objc.super(_OpenFileProxy, self).init()
+                if this is None:
+                    return None
+                this._target = target
+                return this
+
+            # freeglaz prints one image (no nesting) → singular openFile is
+            # enough; AppKit calls it once per file. Defined in an NSObject
+            # subclass so PyObjC infers the correct BOOL signature for this
+            # known AppKit selector (a manually-added method would not).
+            def application_openFile_(self, sender, filename):
+                _deliver(filename)
+                return True
+
+            # Fast-forward every other delegate message to pywebview's delegate.
+            def respondsToSelector_(self, sel):
+                if objc.super(_OpenFileProxy, self).respondsToSelector_(sel):
+                    return True
+                t = self._target
+                return bool(t is not None and t.respondsToSelector_(sel))
+
+            def forwardingTargetForSelector_(self, sel):
+                return self._target
+
+        proxy = _OpenFileProxy.alloc().initWithTarget_(original)
+        app.setDelegate_(proxy)
+        # setDelegate_ keeps only a WEAK reference → keep the proxy AND the
+        # original (the proxy forwards to it) alive for the app's lifetime.
+        api._ae_delegate = proxy
+        api._ae_delegate_original = original
+        logger.debug("macOS Dock open-file handler installed (delegate proxy; "
+                     "original present: %s).", original is not None)
+    except Exception as exc:  # noqa: BLE001 — best-effort, never blocking
+        logger.debug("open-file handler not installed (%s: %s)",
+                     type(exc).__name__, exc)
+
+
 class _DesktopFileApi:
     """JS-exposed API (``window.pywebview.api``) for NATIVE file I/O in the desktop
     window.
@@ -144,6 +235,7 @@ class _DesktopFileApi:
 
     def __init__(self) -> None:
         self._window = None   # set right after create_window (create_file_dialog is a window method)
+        self._pending_drop = None  # path of a file dropped on the Dock icon (macOS), pulled by the frontend
 
     def save_file(self, filename: str, content_b64: str):
         """Write base64 ``content_b64`` to a user-chosen path (native SAVE dialog).
@@ -169,6 +261,29 @@ class _DesktopFileApi:
             logger.warning("save_file failed (%s): %s", path, exc)
             return None
         return path
+
+    def take_dropped_file(self):
+        """Return ``{'name','content_b64'}`` for a file dropped on the Dock icon
+        (macOS), then clear it. ``None`` if there is no pending drop.
+
+        Same payload shape as ``open_file``: the frontend reuses its load path.
+        The heavy bytes travel through the js_api bridge (like ``open_file``),
+        not through an injected JS string — the notification event carries no
+        payload (see ``_install_macos_open_handler`` in this module)."""
+        import base64
+        import os
+        path = self._pending_drop
+        self._pending_drop = None
+        if not path:
+            return None
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError as exc:
+            logger.warning("take_dropped_file failed (%s): %s", path, exc)
+            return None
+        return {"name": os.path.basename(path),
+                "content_b64": base64.b64encode(data).decode("ascii")}
 
     def open_file(self):
         """Open a file (native OPEN dialog). Returns ``{'name','content_b64'}`` or ``None``."""
@@ -251,8 +366,13 @@ def main(argv: list[str] | None = None) -> int:
     if debug:
         logger.info("FREEGLAZ_DEBUG: WebKit DevTools enabled (right-click → Inspect).")
     # func= runs once the Cocoa app has started → the moment NSApplication is
-    # alive to set the Dock icon (macOS). No-op elsewhere. Kept in try/except.
-    webview.start(func=_set_macos_dock_icon, debug=debug)
+    # alive to set the Dock icon AND register the Dock open-file handler (macOS).
+    # No-op elsewhere; both are best-effort (swallow failures internally).
+    def _on_cocoa_started():
+        _set_macos_dock_icon()
+        _install_macos_open_handler(api, window)
+
+    webview.start(func=_on_cocoa_started, debug=debug)
 
     # Window close → clean backend shutdown.
     logger.info("Window closed — shutting down the backend.")

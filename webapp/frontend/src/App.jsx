@@ -12,6 +12,7 @@ import { useFileLoader } from './hooks/useFileLoader.js';
 import { useTheme } from './hooks/useTheme.js';
 import { useQueue } from './hooks/useQueue.js';
 import { useRoute } from './hooks/useRoute.js';
+import { takeDroppedFile } from './lib/fileIO.js';
 import TopNav from './components/TopNav/TopNav.jsx';
 import PapersPage from './components/Papers/PapersPage.jsx';
 import SettingsPage from './components/Settings/SettingsPage.jsx';
@@ -91,6 +92,8 @@ export default function App() {
   const { path, navigate } = useRoute();
   const { status, stale, reconnect } = useStatus();
   const { file, error, load, loadFromId, clear, updatePreview, loading: fileLoading } = useFileLoader();
+  const loadRef = useRef(load);   // stable handle for the Dock-drop listener (registered once, below)
+  loadRef.current = load;
   const queue                  = useQueue();
   const [queueOpen, setQueueOpen] = useState(false);
   const queueTriggerRef           = useRef(null);
@@ -109,6 +112,20 @@ export default function App() {
     loadFromId(bootFileId, bootName);
     window.history.replaceState(null, '', window.location.pathname);
   }, [loadFromId]);
+
+  // Desktop/macOS: a TIFF dropped on the Dock icon. The native side (webapp/
+  // desktop.py) stored the file and fired `freeglaz:open-file`; we pull the
+  // bytes and feed them to the SAME loader as a drag into the window. Registered
+  // once; inert in a browser, where the event never fires.
+  useEffect(() => {
+    async function onOpenFile() {
+      const dropped = await takeDroppedFile();
+      if (!dropped) return;
+      loadRef.current(new File([dropped.bytes], dropped.name, { type: 'image/tiff' }));
+    }
+    window.addEventListener('freeglaz:open-file', onOpenFile);
+    return () => window.removeEventListener('freeglaz:open-file', onOpenFile);
+  }, []);
 
   // P4: Z9 wake-up. waking=true during the operation (blocks the button),
   // wakeNotice carries the post-operation toast (success or failure).

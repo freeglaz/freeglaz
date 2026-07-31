@@ -94,4 +94,21 @@ export async function openFile() {
   return { name: r.name, bytes, text: () => new TextDecoder().decode(bytes) };
 }
 
+/**
+ * Pull a file dropped on the Dock icon (desktop/macOS). The native side stored
+ * it and fired a `freeglaz:open-file` event; this reads it back through the same
+ * js_api bridge as {@link openFile}.
+ * @returns {Promise<{name:string, bytes:Uint8Array}|null>} null if no pending drop.
+ */
+export async function takeDroppedFile() {
+  const api = typeof window !== 'undefined' && window.pywebview?.api;
+  if (!api?.take_dropped_file) return null;
+  const r = await api.take_dropped_file();
+  if (!r) return null;
+  const bin = atob(r.content_b64 || '');
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return { name: r.name, bytes };
+}
+
 export const isDesktop = _isDesktop;

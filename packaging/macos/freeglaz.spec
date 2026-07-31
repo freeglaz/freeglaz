@@ -144,5 +144,16 @@ app = BUNDLE(
         "LSMinimumSystemVersion": "11.0",
         # Single-window utility: no Dock-less agent, keep it a normal app.
         "LSApplicationCategoryType": "public.app-category.graphics-design",
+        # Accept a TIFF dropped on the Dock icon (or "Open With"). TIFF only,
+        # matching the web app's upload gate. The desktop layer receives the
+        # kAEOpenDocuments event and loads the file (see webapp/desktop.py).
+        "CFBundleDocumentTypes": [
+            {
+                "CFBundleTypeName": "TIFF image",
+                "CFBundleTypeRole": "Viewer",
+                "LSHandlerRank": "Alternate",
+                "LSItemContentTypes": ["public.tiff"],
+            }
+        ],
     },
 )

@@ -53,3 +53,38 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release create "$GITHUB_REF_NAME" "$TARBALL" --generate-notes
+
+  # Standalone macOS app (Apple Silicon), attached to the same Release so Mac
+  # users can download a .dmg and skip the Homebrew/uv/Terminal setup. Runs
+  # AFTER the Release exists (needs: release), then uploads the .dmg to it.
+  # Unsigned + ad-hoc signed (no Apple Developer account, no secrets); the user
+  # clears the quarantine flag once (see Docs/INSTALL_app_macos.md).
+  macos-app:
+    name: macOS .app (arm64)
+    needs: release
+    runs-on: macos-latest   # Apple Silicon (arm64)
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: webapp/frontend/.nvmrc
+
+      # Syncs deps, builds the frontend, runs PyInstaller, ad-hoc signs, and
+      # leaves dist/freeglaz.app + dist/freeglaz.dmg.
+      - name: Build the standalone .app + .dmg
+        run: ./packaging/macos/build_app.command
+
+      - name: Name the artifact (version + arch)
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          DMG="freeglaz-${VERSION}-macos-arm64.dmg"
+          cp dist/freeglaz.dmg "$DMG"
+          echo "DMG=$DMG" >> "$GITHUB_ENV"
+
+      - name: Attach the .dmg to the Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" "$DMG" --clobber

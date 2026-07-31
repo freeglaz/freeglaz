@@ -192,6 +192,7 @@ def _dashboard_to_status(
     activity_name: Optional[str] = None,
     activity_progress_pct: Optional[float] = None,
     argyll: Optional[ArgyllStatus] = None,
+    demo: bool = False,
 ) -> Status:
     """Map a raw dashboard (= what device.status() returns) to our
     Pydantic Status. Factored to serve both GET /api/status and the SSE
@@ -229,6 +230,7 @@ def _dashboard_to_status(
             progress_pct=activity_progress_pct,
         ),
         argyll=argyll,
+        demo=demo,
     )
 
 
@@ -256,6 +258,7 @@ def get_status(request: Request, z9: Optional[Z9Client] = Depends(get_z9)) -> St
         activity_name=activity["activity_name"],
         activity_progress_pct=activity["activity_progress_pct"],
         argyll=argyll,
+        demo=getattr(request.app.state, "demo", False),
     )
 
 
@@ -302,6 +305,9 @@ async def stream_status_events(request: Request) -> EventSourceResponse:
     z9 = getattr(request.app.state, "z9", None)
     caps_cache = request.app.state.capabilities_cache
     argyll = _app_argyll(request)
+    # Constant for the life of this stream: enabling/leaving demo swaps the
+    # client + restarts the subscribers, which ends this stream (client reconnects).
+    demo = getattr(request.app.state, "demo", False)
 
     # Per-client queue → a slow client does not block the subscriber nor
     # the other clients. maxsize=64 large to absorb a burst.
@@ -350,6 +356,7 @@ async def stream_status_events(request: Request) -> EventSourceResponse:
                             activity_name=d.get("activity_name"),
                             activity_progress_pct=d.get("activity_progress_pct"),
                             argyll=argyll,
+                            demo=demo,
                         ),
                     )
                     yield {"event": event_type, "data": status.model_dump_json()}

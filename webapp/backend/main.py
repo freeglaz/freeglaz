@@ -109,6 +109,44 @@ FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 logger = logging.getLogger(__name__)
 
 
+async def start_z9_subscribers(app: FastAPI) -> None:
+    """Start the status + jobs subscribers against ``app.state.z9`` (if set).
+
+    Shared by the lifespan (startup) and the demo-mode hot swap
+    (``POST /api/printers/demo``). No-op subscribers when ``z9`` is None."""
+    if app.state.z9 is not None:
+        sub = Z9StatusPollSubscriber(app.state.z9)
+        try:
+            await sub.start()
+            app.state.z9_status_subscriber = sub
+        except Exception:  # noqa: BLE001
+            logger.exception("Z9StatusPollSubscriber start failed — SSE disabled")
+            app.state.z9_status_subscriber = None
+    else:
+        app.state.z9_status_subscriber = None
+
+    if app.state.z9 is not None:
+        jobs_sub = Z9JobsSubscriber(app.state.z9)
+        try:
+            await jobs_sub.start()
+            app.state.z9_jobs_subscriber = jobs_sub
+        except Exception:  # noqa: BLE001
+            logger.exception("Z9JobsSubscriber start failed — /api/jobs will be empty")
+            app.state.z9_jobs_subscriber = None
+    else:
+        app.state.z9_jobs_subscriber = None
+
+
+async def stop_z9_subscribers(app: FastAPI) -> None:
+    """Stop the status + jobs subscribers (order: network services first)."""
+    if getattr(app.state, "z9_jobs_subscriber", None) is not None:
+        await app.state.z9_jobs_subscriber.stop()
+        app.state.z9_jobs_subscriber = None
+    if getattr(app.state, "z9_status_subscriber", None) is not None:
+        await app.state.z9_status_subscriber.stop()
+        app.state.z9_status_subscriber = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Create the shared Z9Client, the capabilities cache, and manage upload storage."""
@@ -155,6 +193,7 @@ async def lifespan(app: FastAPI):
     app.state.capabilities_cache = {}
     app.state.paper_icc_cache = {}
     app.state.job_store = JobStore()
+    app.state.demo = False  # flipped by POST /api/printers/demo (offline demo)
     app.state.use_mock_print = os.getenv("FREEGLAZ_MOCK_PRINT") == "1"
     if app.state.use_mock_print:
         logger.warning("FREEGLAZ_MOCK_PRINT=1 → mock worker enabled (no send to the Z9)")
@@ -172,45 +211,18 @@ async def lifespan(app: FastAPI):
     except Exception:  # noqa: BLE001 — never block startup on a cleanup failure
         logger.exception("scan session boot cleanup failed")
 
-    # Start the Z9 events subscriber if the Z9 is configured. Must have
-    # FINISHED its initial fetch (await start()) before the yield, otherwise
-    # the first HTTP requests could get an empty snapshot.
-    # (In tests, app.state.z9 is None → subscribers naturally not started.)
-    if app.state.z9 is not None:
-        sub = Z9StatusPollSubscriber(app.state.z9)
-        try:
-            await sub.start()
-            app.state.z9_status_subscriber = sub
-        except Exception:  # noqa: BLE001
-            logger.exception("Z9StatusPollSubscriber start failed — SSE disabled")
-            app.state.z9_status_subscriber = None
-    else:
-        app.state.z9_status_subscriber = None
-
-    # Job queue subscriber (Phase 2). Non-blocking: start just launches
-    # the task, the first tick happens after poll_interval. The initial
-    # snapshot is empty until the 1st successful poll (~3 s) — acceptable
-    # for the UI which will briefly show "Chargement...".
-    if app.state.z9 is not None:
-        jobs_sub = Z9JobsSubscriber(app.state.z9)
-        try:
-            await jobs_sub.start()
-            app.state.z9_jobs_subscriber = jobs_sub
-        except Exception:  # noqa: BLE001
-            logger.exception("Z9JobsSubscriber start failed — /api/jobs renverra vide")
-            app.state.z9_jobs_subscriber = None
-    else:
-        app.state.z9_jobs_subscriber = None
+    # Status + jobs subscribers (shared helper with the demo hot swap). Must
+    # FINISH the initial fetch (await start()) before the yield, otherwise the
+    # first HTTP requests could get an empty snapshot. In tests, app.state.z9 is
+    # None → subscribers naturally not started.
+    await start_z9_subscribers(app)
 
     yield
 
     # Shutdown: stop the subscribers BEFORE cancel_all of the jobs (the
     # subscribers don't touch files, but we keep a consistent order
     # — network services first, then local state, then files).
-    if app.state.z9_jobs_subscriber is not None:
-        await app.state.z9_jobs_subscriber.stop()
-    if app.state.z9_status_subscriber is not None:
-        await app.state.z9_status_subscriber.stop()
+    await stop_z9_subscribers(app)
     # We cancel the running jobs BEFORE cleaning up files: the real worker
     # (5b) reads the sources at send time, so the order matters.
     await app.state.job_store.cancel_all()

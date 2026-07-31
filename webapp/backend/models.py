@@ -117,6 +117,10 @@ class Status(BaseModel):
     # not yet resolved. Drives a non-blocking frontend warning banner.
     argyll: Optional[ArgyllStatus] = None
 
+    # Offline demo mode (mock Z9). True → the frontend shows a demo badge and an
+    # "exit demo" affordance. Flipped by POST /api/printers/demo.
+    demo: bool = False
+
 
 class PrintParams(BaseModel):
     """User print parameters — **without** file identifier.

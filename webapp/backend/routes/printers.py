@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from lib.z9_client import cache, printer_probe
@@ -122,3 +122,53 @@ def delete_printer(serial: str) -> dict:
     if not cache.remove_printer(serial):
         raise HTTPException(404, detail=f"unknown printer: {serial}")
     return {"removed": serial}
+
+
+# ─── Offline demo mode (mock Z9) ──────────────────────────────────────────
+# Two POST endpoints (not a DELETE — it would collide with DELETE /{serial}).
+async def _swap_z9(app, new_client, *, demo: bool, mock_print: bool) -> None:
+    """Hot-swap app.state.z9 + restart the subscribers against it. The app has
+    'no hot re-pointing' for real printers (a printer change needs a restart);
+    demo mode is the one controlled runtime swap."""
+    from webapp.backend.main import start_z9_subscribers, stop_z9_subscribers
+    await stop_z9_subscribers(app)
+    old = getattr(app.state, "z9", None)
+    if old is not None:
+        try:
+            old.close()
+        except Exception:  # noqa: BLE001 — best-effort
+            pass
+    app.state.z9 = new_client
+    app.state.demo = demo
+    app.state.use_mock_print = mock_print
+    app.state.capabilities_cache = {}
+    app.state.paper_icc_cache = {}
+    await start_z9_subscribers(app)
+
+
+@router.post("/demo")
+async def enable_demo(request: Request) -> dict:
+    """Enable offline DEMO mode: a MockZ9Client (curated canned data) replaces the
+    Z9 client so the Print screen works without a printer. Printing is simulated
+    (mock worker, nothing sent). Idempotent."""
+    import logging
+    from webapp.backend.services.mock_z9 import MockZ9Client
+    await _swap_z9(request.app, MockZ9Client(), demo=True, mock_print=True)
+    logging.getLogger(__name__).info("Demo mode enabled (mock Z9)")
+    return {"demo": True}
+
+
+@router.post("/demo/exit")
+async def disable_demo(request: Request) -> dict:
+    """Leave demo mode: rebuild the real Z9 client from config (or None)."""
+    import logging
+    import os
+    from lib.z9_client import Z9Client, Z9Error
+    try:
+        client = Z9Client.from_env()
+    except Z9Error:
+        client = None
+    mock_print = os.getenv("FREEGLAZ_MOCK_PRINT") == "1"
+    await _swap_z9(request.app, client, demo=False, mock_print=mock_print)
+    logging.getLogger(__name__).info("Demo mode disabled")
+    return {"demo": False}

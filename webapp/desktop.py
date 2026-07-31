@@ -137,36 +137,40 @@ def _install_macos_open_handler(api, window) -> None:
     A file dropped on the app icon reaches the app as an "open documents" request
     that AppKit routes to the NSApplication delegate's ``application:openFile:``.
     pywebview's delegate does not implement it, so AppKit shows a "cannot open
-    files in that format" dialog. We therefore install a thin PROXY delegate: it
-    implements ``application:openFile:`` (stores the path on ``api`` + fires the
-    payload-less ``freeglaz:open-file`` event; the frontend then pulls the bytes
-    via ``api.take_dropped_file()``) and forwards every other message to
-    pywebview's original delegate. Info.plist declares the TIFF document type
-    (see freeglaz.spec) so the Dock accepts the drop.
+    files in that format" dialog.
 
-    Cooperating with AppKit's own open handler this way is timing-independent —
-    unlike installing a competing raw AppleEvent handler, which AppKit overrides
-    with its default during launch. Best-effort: any failure is swallowed (debug
-    log); launching the window NEVER depends on it. PyObjC is pulled in by the
-    desktop extra on macOS. Non-macOS is a no-op."""
+    We add ``application:openFile:`` to pywebview's delegate CLASS (not the
+    instance). An earlier attempt swapped the delegate INSTANCE for a proxy, but
+    pywebview re-sets its own delegate during startup on the main thread — racing
+    the (background-thread) install and often winning, so the proxy was dropped
+    and the dialog came back. Adding the method to the class is immune to that:
+    whichever instance of that class is the delegate, AppKit finds the method.
+
+    On the drop the method stores the path on ``api`` and fires the payload-less
+    ``freeglaz:open-file`` event; the frontend pulls the bytes via
+    ``api.take_dropped_file()``. Info.plist declares the TIFF document type (see
+    freeglaz.spec) so the Dock accepts the drop.
+
+    Best-effort: any failure is swallowed; launching the window NEVER depends on
+    it. PyObjC is pulled in by the desktop extra on macOS. Non-macOS is a no-op."""
     if sys.platform != "darwin":
         return
     try:
         import threading
+        import time
 
         import objc
         from AppKit import NSApplication
-        from Foundation import NSObject
 
         def _deliver(path) -> None:
             if not path:
                 return
+            logger.info("Dock open-file: received %s", path)
             # application:openFile: runs on the MAIN thread. window.evaluate_js
             # is BLOCKING (it posts JS to the WKWebView on the main thread and
             # waits) → calling it here would deadlock the main thread on itself
             # (endless beachball). Store the path (instant) and fire the notify
-            # from a background thread so this callback returns to AppKit at once;
-            # the JS then runs once the main thread is free.
+            # from a background thread so this callback returns to AppKit at once.
             api._pending_drop = str(path)
 
             def _notify() -> None:
@@ -179,46 +183,40 @@ def _install_macos_open_handler(api, window) -> None:
 
             threading.Thread(target=_notify, daemon=True).start()
 
+        def _application_openFile_(self, sender, filename):  # noqa: N802
+            _deliver(filename)
+            return True
+
         app = NSApplication.sharedApplication()
-        original = app.delegate()
 
-        class _OpenFileProxy(NSObject):
-            def initWithTarget_(self, target):
-                this = objc.super(_OpenFileProxy, self).init()
-                if this is None:
-                    return None
-                this._target = target
-                return this
+        # func may run before pywebview has set its app delegate → poll briefly.
+        delegate = None
+        for _ in range(100):          # ~10 s at most
+            delegate = app.delegate()
+            if delegate is not None:
+                break
+            time.sleep(0.1)
+        if delegate is None:
+            logger.info("Dock open-file: no app delegate after wait; not installed.")
+            return
 
-            # freeglaz prints one image (no nesting) → singular openFile is
-            # enough; AppKit calls it once per file. Defined in an NSObject
-            # subclass so PyObjC infers the correct BOOL signature for this
-            # known AppKit selector (a manually-added method would not).
-            def application_openFile_(self, sender, filename):
-                _deliver(filename)
-                return True
-
-            # Fast-forward every other delegate message to pywebview's delegate.
-            def respondsToSelector_(self, sel):
-                if objc.super(_OpenFileProxy, self).respondsToSelector_(sel):
-                    return True
-                t = self._target
-                return bool(t is not None and t.respondsToSelector_(sel))
-
-            def forwardingTargetForSelector_(self, sel):
-                return self._target
-
-        proxy = _OpenFileProxy.alloc().initWithTarget_(original)
-        app.setDelegate_(proxy)
-        # setDelegate_ keeps only a WEAK reference → keep the proxy AND the
-        # original (the proxy forwards to it) alive for the app's lifetime.
-        api._ae_delegate = proxy
-        api._ae_delegate_original = original
-        logger.debug("macOS Dock open-file handler installed (delegate proxy; "
-                     "original present: %s).", original is not None)
+        cls = type(delegate)
+        if delegate.respondsToSelector_("application:openFile:"):
+            logger.info("Dock open-file: %s already handles openFile.", cls.__name__)
+        else:
+            # BOOL return + (NSApplication*, NSString*) args → "c@:@@".
+            objc.classAddMethods(cls, [
+                objc.selector(_application_openFile_,
+                              selector=b"application:openFile:",
+                              signature=b"c@:@@"),
+            ])
+            logger.info("Dock open-file: handler added to delegate class %s.",
+                        cls.__name__)
+        # Keep the callable referenced (it closes over api/window/_deliver).
+        api._open_file_impl = _application_openFile_
     except Exception as exc:  # noqa: BLE001 — best-effort, never blocking
-        logger.debug("open-file handler not installed (%s: %s)",
-                     type(exc).__name__, exc)
+        logger.info("Dock open-file: not installed (%s: %s).",
+                    type(exc).__name__, exc)
 
 
 class _DesktopFileApi:

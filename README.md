@@ -103,7 +103,8 @@ profiling logic.
 A release install needs no Node or build step; building from source additionally
 needs Node.js 22 to build the web UI. Guides:
 
-- macOS, from a release — [`Docs/INSTALL_tarball_macos.md`](Docs/INSTALL_tarball_macos.md)
+- **macOS — the app (easiest, Apple Silicon)** — [`Docs/INSTALL_app_macos.md`](Docs/INSTALL_app_macos.md): download the `.dmg`, drag to Applications, no Terminal.
+- macOS, from a release (CLI / browser, or Intel) — [`Docs/INSTALL_tarball_macos.md`](Docs/INSTALL_tarball_macos.md)
 - Linux, from a release — [`Docs/INSTALL_tarball_linux.md`](Docs/INSTALL_tarball_linux.md)
 - Windows, from a release (experimental) — [`Docs/INSTALL_tarball_windows.md`](Docs/INSTALL_tarball_windows.md)
 - macOS, from source (contributors) — [`Docs/INSTALL_source_macos.md`](Docs/INSTALL_source_macos.md)

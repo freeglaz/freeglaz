@@ -53,10 +53,12 @@ from typing import Optional
 
 from PIL import Image, ImageDraw
 
+from webapp.backend.paths import data_dir
+
 logger = logging.getLogger(__name__)
 
 # Default path of the thumbnails folder, monkeypatchable in tests.
-DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+DATA_DIR = data_dir()
 PREVIEWS_DIR = DATA_DIR / "job_previews"
 
 MAX_SIDE_PX = 512

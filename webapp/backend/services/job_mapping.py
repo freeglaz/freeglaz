@@ -44,11 +44,13 @@ import threading
 from pathlib import Path
 from typing import Optional
 
+from webapp.backend.paths import data_dir
+
 logger = logging.getLogger(__name__)
 
 # Default path, monkeypatchable in tests to avoid polluting
 # the prod file during pytest tests.
-DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+DATA_DIR = data_dir()
 MAPPING_FILE = DATA_DIR / "job_mapping.json"
 
 # Module-level lock — all writes go through it to

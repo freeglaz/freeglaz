@@ -39,9 +39,11 @@ import threading
 from pathlib import Path
 from typing import Optional
 
+from webapp.backend.paths import data_dir
+
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+DATA_DIR = data_dir()
 FAVORITES_FILE = DATA_DIR / "paper_favorites.json"
 NOTES_FILE = DATA_DIR / "paper_notes.json"
 

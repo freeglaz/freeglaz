@@ -29,11 +29,12 @@ import threading
 from pathlib import Path
 from typing import Any, Optional
 
+from webapp.backend.paths import data_dir
+
 logger = logging.getLogger(__name__)
 
 
-# webapp/backend/services/settings_store.py → webapp/data/
-_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+_DATA_DIR = data_dir()
 _SETTINGS_FILE = _DATA_DIR / "settings.json"
 
 

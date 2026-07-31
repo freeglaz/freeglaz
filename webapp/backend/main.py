@@ -28,6 +28,7 @@ from fastapi.staticfiles import StaticFiles
 
 from lib.z9_client import Z9Client, Z9Error
 
+from webapp.backend.paths import data_dir
 from webapp.backend.routes import charts as charts_routes
 from webapp.backend.routes import files as files_routes
 from webapp.backend.routes import gamut as gamut_routes
@@ -59,7 +60,7 @@ from webapp.backend.services.loop_watchdog import LoopWatchdog
 # - Rotation: 10 MB max per file, keep 3 backups (~40 MB total).
 # - Format: ISO timestamp + level + module + message.
 
-_LOG_DIR = Path(__file__).resolve().parent.parent / "data"
+_LOG_DIR = data_dir()
 LOG_FILE = _LOG_DIR / "freeglaz.log"
 
 

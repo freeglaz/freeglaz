@@ -13,12 +13,18 @@
 
 import glob
 import importlib.util
+import tomllib
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 # SPECPATH is the directory of this spec (packaging/macos). Repo root is 2 up.
 ROOT = Path(SPECPATH).resolve().parents[1]
+
+# Single source of truth for the version: read it from pyproject.toml so the
+# .app's CFBundle version never drifts from the project version on a release.
+with open(ROOT / "pyproject.toml", "rb") as _f:
+    VERSION = tomllib.load(_f)["project"]["version"]
 
 # Locate pyvips_binary's SELF-CONTAINED libvips (only /usr/lib + system-
 # framework deps). We bundle this one and load it in ABI mode; see
@@ -138,8 +144,8 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "freeglaz",
         "CFBundleDisplayName": "freeglaz",
-        "CFBundleShortVersionString": "0.1.1",
-        "CFBundleVersion": "0.1.1",
+        "CFBundleShortVersionString": VERSION,
+        "CFBundleVersion": VERSION,
         "NSHighResolutionCapable": True,
         "LSMinimumSystemVersion": "11.0",
         # Single-window utility: no Dock-less agent, keep it a normal app.

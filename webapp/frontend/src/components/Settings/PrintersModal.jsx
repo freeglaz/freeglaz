@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Printer, Plus, Pencil, Trash2, CheckCircle2, AlertTriangle, Loader2, Check } from 'lucide-react';
+import { Printer, Plus, Pencil, Trash2, CheckCircle2, AlertTriangle, Loader2, Check, MonitorPlay } from 'lucide-react';
 import * as api from '../../api/client.js';
 import Modal from '../wizards/shared/Modal.jsx';
 import ModalHeader from '../wizards/shared/ModalHeader.jsx';
@@ -249,6 +249,20 @@ function AddPrinter({ hasPrinters, onAdded, onFirstAdded }) {
   const [name, setName] = useState('');
   const [adminPwd, setAdminPwd] = useState('');
   const [saving, setSaving] = useState(false);
+  const [demoLoading, setDemoLoading] = useState(false);
+
+  // Offline demo: swap in the mock Z9 (hot, no restart), then reload. Enabling
+  // demo restarts the backend subscribers, but the EXISTING status SSE stays
+  // bound to the old one → a reload gets a fresh stream that reflects demo mode.
+  const tryDemo = async () => {
+    setDemoLoading(true);
+    try {
+      await api.enableDemo();
+      window.location.reload();
+    } catch {
+      setDemoLoading(false);
+    }
+  };
 
   const reset = () => { setIp(''); setResult(null); setName(''); setAdminPwd(''); setReveal(false); };
 
@@ -278,10 +292,19 @@ function AddPrinter({ hasPrinters, onAdded, onFirstAdded }) {
 
   if (!reveal) {
     return (
-      <button className="btn-secondary text-sm px-3.5 py-2 inline-flex items-center gap-1.5"
-              onClick={() => setReveal(true)}>
-        <Plus size={15}/> {t('settings.printers.add_button')}
-      </button>
+      <div className="flex items-center gap-3 flex-wrap">
+        <button className="btn-secondary text-sm px-3.5 py-2 inline-flex items-center gap-1.5"
+                onClick={() => setReveal(true)}>
+          <Plus size={15}/> {t('settings.printers.add_button')}
+        </button>
+        <span className="text-xs text-text-muted">{t('settings.printers.demo_or')}</span>
+        <button className="btn-secondary text-sm px-3.5 py-2 inline-flex items-center gap-1.5"
+                disabled={demoLoading} onClick={tryDemo}
+                title={t('settings.printers.demo_hint')}>
+          {demoLoading ? <Loader2 size={15} className="animate-spin"/> : <MonitorPlay size={15}/>}
+          {t('settings.printers.demo_button')}
+        </button>
+      </div>
     );
   }
 

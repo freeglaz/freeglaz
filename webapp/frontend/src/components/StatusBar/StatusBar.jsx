@@ -30,6 +30,9 @@ export default function StatusBar({
   onOpenCalibrationPaper,
   // global "Profiling in progress" badge
   onOpenProfilingWizard,
+  // offline demo mode (mock Z9)
+  demo = false,
+  onExitDemo,
 }) {
   const { t } = useTranslation();
   const calibrationJob = useCurrentCalibration();
@@ -59,9 +62,20 @@ export default function StatusBar({
       <div className="flex items-center gap-2">
         <span className={`w-2 h-2 rounded-full ${dotColor}`}/>
         <span className="text-xs font-medium text-text-strong">HP DesignJet Z9</span>
+        {demo && (
+          <span className="px-1.5 py-0.5 rounded bg-accent/15 text-accent font-semibold text-tiny uppercase tracking-wide">
+            {t('settings.printers.demo_badge')}
+          </span>
+        )}
         <span>· {label}</span>
         {act && (
           <span className="text-accent font-medium">· {activityLabel}</span>
+        )}
+        {demo && onExitDemo && (
+          <button className="text-text-faint hover:text-text-strong underline decoration-dotted decoration-from-font"
+                  onClick={onExitDemo}>
+            {t('settings.printers.demo_exit')}
+          </button>
         )}
       </div>
       <WakeButton

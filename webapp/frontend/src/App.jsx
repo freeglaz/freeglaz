@@ -23,7 +23,7 @@ import MesuresPage from './components/Mesures/MesuresPage.jsx';
 import Splash from './components/Splash/Splash.jsx';
 import { LoadedPaperProvider } from './hooks/useLoadedPaper.js';
 import { deriveUIState, isWorkerActive, UIState } from './lib/state-machine.js';
-import { postPrint, postPrintCancel, wakeZ9 } from './api/client.js';
+import { postPrint, postPrintCancel, wakeZ9, disableDemo } from './api/client.js';
 import { uiGEToBackend } from './api/mappings.js';
 import { rollCenterX, isCenteredX } from './lib/placement.js';
 
@@ -153,6 +153,17 @@ export default function App() {
       autoOpenedRef.current = false;     // reconfigured → re-armable if it becomes empty again
     }
   }, [unconfigured]);
+
+  // Leave offline demo mode → back to the real client (or onboarding if none).
+  // Reload for the same reason as entering demo: the existing status SSE stays
+  // bound to the old subscriber, so a fresh page gets the post-demo state.
+  const handleExitDemo = async () => {
+    try {
+      await disableDemo();
+    } finally {
+      window.location.reload();
+    }
+  };
 
   const handleWake = async () => {
     if (waking) return;
@@ -611,7 +622,9 @@ export default function App() {
         onOpenProfilingWizard={(job) => {
           window.location.hash = `#profile=${job.mediaid}`;
           if (path !== '/papers') navigate('/papers');
-        }}/>
+        }}
+        demo={status?.demo === true}
+        onExitDemo={handleExitDemo}/>
       {/* Drag-drop error toast, minimal */}
       {error && (
         <div

@@ -241,6 +241,15 @@ export const deletePrinter = (serial) =>
   USE_MOCKS ? Promise.resolve({ removed: serial })
             : http(`/api/printers/${encodeURIComponent(serial)}`, { method: 'DELETE' });
 
+// Offline demo mode (mock Z9) — hot swap, no printer needed.
+export const enableDemo = () =>
+  USE_MOCKS ? Promise.resolve({ demo: true })
+            : http('/api/printers/demo', { method: 'POST' });
+
+export const disableDemo = () =>
+  USE_MOCKS ? Promise.resolve({ demo: false })
+            : http('/api/printers/demo/exit', { method: 'POST' });
+
 /**
  * POST /api/print/{jobId}/cancel.
  *

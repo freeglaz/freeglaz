@@ -312,6 +312,9 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"Preferred port (default {DEFAULT_PORT}; auto-free if taken)")
     parser.add_argument("--mock", action="store_true",
                         help="Mock mode (no Z9 send) — FREEGLAZ_MOCK_PRINT=1")
+    parser.add_argument("file", nargs="?", default=None,
+                        help="Optional TIFF to open on launch (file manager "
+                             "'Open With…' passes it here — Linux/Flatpak).")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO)
@@ -353,7 +356,27 @@ def main(argv: list[str] | None = None) -> int:
     # → exports never navigate the webview (the app-freezing bug #22). Browser mode
     # never sees this object (window.pywebview absent).
     api = _DesktopFileApi()
-    window = webview.create_window("freeglaz Print", f"http://{HOST}:{port}/",
+    # Open-on-launch (file manager "Open With…", Linux/Flatpak): upload the file
+    # and boot the window straight onto it, reusing the existing ?file_id=… path
+    # (same as `freeglaz open`). Best-effort — a failure just opens the app empty.
+    boot_query = ""
+    if args.file:
+        try:
+            import requests
+            with open(args.file, "rb") as f:
+                resp = requests.post(
+                    f"http://{HOST}:{port}/api/files",
+                    files={"file": (os.path.basename(args.file), f, "image/tiff")},
+                    timeout=30)
+            fid = resp.json().get("file_id") if resp.ok else None
+            if fid:
+                from urllib.parse import quote
+                boot_query = f"?file_id={fid}&name={quote(os.path.basename(args.file))}"
+            else:
+                logger.warning("Open-on-launch rejected %s: %s", args.file, resp.text[:200])
+        except Exception as exc:  # noqa: BLE001 — never block launch on this
+            logger.warning("Open-on-launch failed (%s): %s", args.file, exc)
+    window = webview.create_window("freeglaz Print", f"http://{HOST}:{port}/{boot_query}",
                                    width=1600, height=1000, min_size=(1024, 700),
                                    maximized=True, js_api=api)
     api._window = window

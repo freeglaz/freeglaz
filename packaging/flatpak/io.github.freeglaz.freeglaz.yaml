@@ -1,28 +1,32 @@
-# Flatpak manifest for freeglaz — SCAFFOLD (needs iteration on a Linux build).
+# Flatpak manifest for freeglaz — self-contained (deps + libvips + ArgyllCMS
+# bundled, zero external dependency). Built and validated on Fedora 42 / GNOME 50.
 #
 # Build (on Linux):
-#   flatpak install flathub org.gnome.Platform//50 org.gnome.Sdk//50
-#   flatpak-builder --user --install --force-clean build-dir \
-#       packaging/flatpak/io.github.freeglaz.freeglaz.yaml
+#   flatpak install flathub org.gnome.Platform//50 org.gnome.Sdk//50 org.flatpak.Builder
+#   flatpak run org.flatpak.Builder --user --install --force-clean \
+#       build-dir packaging/flatpak/io.github.freeglaz.freeglaz.yaml
 #   flatpak run io.github.freeglaz.freeglaz
 #
-# TWO parts still need work before it builds (see packaging/flatpak/README.md):
-#   1. python3-deps.yaml — generate from uv.lock (offline pinned wheels).
-#   2. Argyll + freeglaz source URLs/sha256 — pin them.
+# To refresh python3-deps.yaml (new lock), see packaging/flatpak/README.md §2 —
+# the --prefer-wheels / --ignore-installed flags there are REQUIRED (compiled
+# packages must use wheels; packages present in the SDK, e.g. lxml, must be
+# forced into /app).
 app-id: io.github.freeglaz.freeglaz
 runtime: org.gnome.Platform
-runtime-version: '50'          # GNOME 50 (ships WebKitGTK, which pywebview needs)
+runtime-version: '50'          # GNOME 50 ships WebKitGTK (pywebview) + libtiff/jpeg/png (Argyll)
 sdk: org.gnome.Sdk
 command: freeglaz
 
 finish-args:
   - --share=network            # reach the Z9 over the network
   - --socket=wayland
-  - --socket=fallback-x11      # desktop.py forces GDK_BACKEND=x11 (Wayland crash workaround)
+  # X11 (not fallback-x11): desktop.py forces GDK_BACKEND=x11 (Wayland-crash
+  # workaround), so the X socket must be exposed even on a Wayland session.
+  - --socket=x11
   - --share=ipc
   - --device=dri               # GPU for WebKitGTK compositing
   - --filesystem=xdg-documents # ~/Documents/freeglaz (user-facing profiles/backups)
-  # File open/save go through the portals (file chooser) → no broad fs access needed.
+  # File open/save go through the portals (file chooser) → no broad fs access.
 
 cleanup:
   - /include
@@ -31,9 +35,12 @@ cleanup:
   - '*.la'
 
 modules:
-  # 1) ArgyllCMS — BUNDLED so the user needs zero external dependency. Prebuilt
-  #    relocatable Linux binaries. If they fail to load (missing libtiff/jpeg/png
-  #    or X11 from the runtime), either add those as modules or build from source.
+  # Python dependencies — generated from uv.lock (see README §2). Pinned wheels,
+  # offline build.
+  - python3-deps.yaml
+
+  # ArgyllCMS — BUNDLED (prebuilt relocatable Linux binaries; all deps resolve
+  # against the GNOME runtime). The user needs no external install.
   - name: argyll
     buildsystem: simple
     build-commands:
@@ -41,37 +48,30 @@ modules:
       - cp -r bin ref /app/argyll/
     sources:
       - type: archive
-        # TODO: pin the current Argyll version + its sha256.
-        url: https://www.argyllcms.com/Argyll_V3.3.0_linux_x86_64_bin.tgz
-        sha256: 0000000000000000000000000000000000000000000000000000000000000000
+        url: https://www.argyllcms.com/Argyll_V3.5.0_linux_x86_64_bin.tgz
+        sha256: 0d1da052de22396f4141c5ca3ee0c17a434bc142048a327dd86565a9f20d0c13
         strip-components: 1
 
-  # 2) Python dependencies — generated from uv.lock (exact pins, offline wheels).
-  #    Run:  python3 packaging/flatpak/gen_python_deps.py > packaging/flatpak/python3-deps.yaml
-  - python3-deps.yaml
-
-  # 3) freeglaz itself — from the release tarball (the built frontend is inside,
-  #    so no Node is needed at build time).
+  # freeglaz itself — from the release tarball (the built frontend is inside, so
+  # no Node at build time). The launcher points FREEGLAZ_ARGYLL_ROOT at /app/argyll
+  # and FREEGLAZ_DATA_DIR at the writable XDG data dir (see freeglaz-launcher.sh).
   - name: freeglaz
     buildsystem: simple
     build-commands:
       - mkdir -p /app/share/freeglaz
       - cp -r lib webapp freeglaz /app/share/freeglaz/
       - install -Dm755 packaging/flatpak/freeglaz-launcher.sh /app/bin/freeglaz
-      - install -Dm644 packaging/flatpak/${FLATPAK_ID}.desktop
-          /app/share/applications/${FLATPAK_ID}.desktop
-      - install -Dm644 packaging/flatpak/${FLATPAK_ID}.metainfo.xml
-          /app/share/metainfo/${FLATPAK_ID}.metainfo.xml
+      - install -Dm644 packaging/flatpak/io.github.freeglaz.freeglaz.desktop
+          /app/share/applications/io.github.freeglaz.freeglaz.desktop
+      - install -Dm644 packaging/flatpak/io.github.freeglaz.freeglaz.metainfo.xml
+          /app/share/metainfo/io.github.freeglaz.freeglaz.metainfo.xml
       - install -Dm644 webapp/icons/freeglaz.svg
-          /app/share/icons/hicolor/scalable/apps/${FLATPAK_ID}.svg
+          /app/share/icons/hicolor/scalable/apps/io.github.freeglaz.freeglaz.svg
     sources:
       - type: archive
-        # TODO: bump to the release being packaged + its sha256.
         url: https://github.com/freeglaz/freeglaz/releases/download/v0.1.4/freeglaz-0.1.4.tar.gz
-        sha256: 0000000000000000000000000000000000000000000000000000000000000000
+        sha256: e3330973edfb35593ffff9d591ae5b834401607ad47f9b33a09499b005f31ac0
         strip-components: 1
-      # The manifest dir is also a source so the build can install the .desktop /
-      # metainfo / launcher shipped next to it.
       - type: dir
         path: .
         dest: packaging/flatpak

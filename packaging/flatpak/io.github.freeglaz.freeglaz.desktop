@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=freeglaz
+GenericName=Photo printing & ICC profiling
+Comment=Drive an HP DesignJet Z9 — printing and custom ICC color profiling
+Exec=freeglaz %f
+Icon=io.github.freeglaz.freeglaz
+Terminal=false
+Categories=Graphics;Photography;2DGraphics;
+MimeType=image/tiff;
+Keywords=print;printer;icc;color;profiling;designjet;photo;hp;
+StartupNotify=true
+# pywebview/GTK sets the window class; adjust if the taskbar icon does not group.
+StartupWMClass=freeglaz

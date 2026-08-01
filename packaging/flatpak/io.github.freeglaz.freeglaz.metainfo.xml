@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream metadata — required by Flathub. Validate with:
+     flatpak run org.freedesktop.appstream-glib validate <this file> -->
+<component type="desktop-application">
+  <id>io.github.freeglaz.freeglaz</id>
+
+  <name>freeglaz</name>
+  <summary>Drive an HP DesignJet Z9: printing and ICC color profiling</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <developer id="io.github.freeglaz">
+    <name>The freeglaz contributors</name>
+  </developer>
+
+  <description>
+    <p>
+      freeglaz is an open toolkit that drives an HP DesignJet Z9 for printing and
+      ICC color profiling — native and custom (the latter via ArgyllCMS, which is
+      bundled) — without the vendor's proprietary utilities.
+    </p>
+    <p>Highlights:</p>
+    <ul>
+      <li>OS- and driver-independent pipeline: freeglaz drives the Z9 over its network interfaces.</li>
+      <li>Colorimetric non-interference: a 16-bit file is carried byte for byte to the printer's engine, no conversion.</li>
+      <li>Gloss Enhancer restricted to the image area.</li>
+      <li>Custom ICC profiling via ArgyllCMS, and the printer's built-in profiling.</li>
+      <li>A demo mode to explore the app without a printer.</li>
+    </ul>
+    <p>
+      freeglaz distributes no HP code. It is not affiliated with HP; HP and
+      DesignJet are trademarks of their respective owners.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">io.github.freeglaz.freeglaz.desktop</launchable>
+
+  <url type="homepage">https://github.com/freeglaz/freeglaz</url>
+  <url type="bugtracker">https://github.com/freeglaz/freeglaz/issues</url>
+  <url type="vcs-browser">https://github.com/freeglaz/freeglaz</url>
+
+  <!-- Screenshots must be reachable HTTPS URLs at review time. These point at
+       the images already tracked in the repo (raw GitHub). -->
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/freeglaz/freeglaz/main/Docs/img/print.png</image>
+      <caption>The Print screen — loaded paper, print parameters, live ink levels</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/freeglaz/freeglaz/main/Docs/img/profiling-wizard.png</image>
+      <caption>Choosing a profiling path — built-in or ArgyllCMS</caption>
+    </screenshot>
+  </screenshots>
+
+  <categories>
+    <category>Graphics</category>
+    <category>Photography</category>
+  </categories>
+
+  <keywords>
+    <keyword>print</keyword>
+    <keyword>ICC</keyword>
+    <keyword>color</keyword>
+    <keyword>profiling</keyword>
+    <keyword>DesignJet</keyword>
+  </keywords>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="0.1.4" date="2026-08-01">
+      <description>
+        <p>Offline demo mode; macOS app packaging. First Flatpak packaging.</p>
+      </description>
+    </release>
+  </releases>
+</component>

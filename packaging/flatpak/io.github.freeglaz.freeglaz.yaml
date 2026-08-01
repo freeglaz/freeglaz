@@ -1,18 +1,17 @@
 # Flatpak manifest for freeglaz — SCAFFOLD (needs iteration on a Linux build).
 #
 # Build (on Linux):
-#   flatpak install flathub org.gnome.Platform//47 org.gnome.Sdk//47
+#   flatpak install flathub org.gnome.Platform//50 org.gnome.Sdk//50
 #   flatpak-builder --user --install --force-clean build-dir \
 #       packaging/flatpak/io.github.freeglaz.freeglaz.yaml
 #   flatpak run io.github.freeglaz.freeglaz
 #
-# THREE parts still need work before it builds (see packaging/flatpak/README.md):
-#   1. runtime-version + confirm WebKitGTK is in the GNOME runtime.
-#   2. python3-deps.yaml — generate from uv.lock (offline pinned wheels).
-#   3. Argyll + freeglaz source URLs/sha256 — pin them.
+# TWO parts still need work before it builds (see packaging/flatpak/README.md):
+#   1. python3-deps.yaml — generate from uv.lock (offline pinned wheels).
+#   2. Argyll + freeglaz source URLs/sha256 — pin them.
 app-id: io.github.freeglaz.freeglaz
 runtime: org.gnome.Platform
-runtime-version: '47'          # TODO: use the current stable; confirm it ships WebKitGTK
+runtime-version: '50'          # GNOME 50 (ships WebKitGTK, which pywebview needs)
 sdk: org.gnome.Sdk
 command: freeglaz
 

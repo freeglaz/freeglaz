@@ -5,9 +5,9 @@ Software / KDE Discover** in one click — no terminal, no dependencies (ArgyllC
 is bundled). The GNOME runtime provides GTK + WebKitGTK (what pywebview needs).
 
 > **Status: scaffold.** A Flatpak builds only on Linux (`flatpak-builder`). The
-> files here are the structure + metadata; three parts still need to be filled
-> and the whole thing iterated on a real Linux build (§2–§4). The manifest has
-> `TODO`/placeholder `sha256` on purpose.
+> files here are the structure + metadata; two parts still need to be filled
+> (the Python deps §2 and the source `sha256` §3) and the whole thing iterated on
+> a real Linux build. The manifest has placeholder `sha256` on purpose.
 
 ## Files
 
@@ -20,7 +20,7 @@ is bundled). The GNOME runtime provides GTK + WebKitGTK (what pywebview needs).
 ## 1. Prerequisites (Linux)
 
 ```bash
-flatpak install flathub org.gnome.Platform//47 org.gnome.Sdk//47
+flatpak install flathub org.gnome.Platform//50 org.gnome.Sdk//50
 # flatpak-builder + the pip generator:
 sudo dnf install flatpak-builder            # Fedora  (or: apt install flatpak-builder)
 pip install req2flatpak                     # or use flatpak-pip-generator (below)
@@ -37,7 +37,7 @@ uv export --frozen --no-emit-project --extra desktop --format requirements-txt \
     > packaging/flatpak/requirements-linux.txt
 
 # Turn them into a Flatpak module (flatpak-pip-generator from flatpak-builder-tools):
-python flatpak-pip-generator --runtime=org.gnome.Sdk//47 \
+python flatpak-pip-generator --runtime=org.gnome.Sdk//50 \
     --requirements-file packaging/flatpak/requirements-linux.txt \
     --output packaging/flatpak/python3-deps
 ```

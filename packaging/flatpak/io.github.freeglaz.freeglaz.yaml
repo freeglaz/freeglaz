@@ -20,9 +20,9 @@ command: freeglaz
 finish-args:
   - --share=network            # reach the Z9 over the network
   - --socket=wayland
-  # X11 (not fallback-x11): desktop.py forces GDK_BACKEND=x11 (Wayland-crash
-  # workaround), so the X socket must be exposed even on a Wayland session.
-  - --socket=x11
+  # Native Wayland (the launcher sets GDK_BACKEND=wayland +
+  # WEBKIT_DISABLE_DMABUF_RENDERER=1). fallback-x11 covers X11-only sessions.
+  - --socket=fallback-x11
   - --share=ipc
   - --device=dri               # GPU for WebKitGTK compositing
   - --filesystem=xdg-documents # ~/Documents/freeglaz (user-facing profiles/backups)

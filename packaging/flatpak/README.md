@@ -69,9 +69,11 @@ module cache.
 
 ### Notes / gotchas that are already handled in the manifest
 
-- **X11, not fallback-x11.** `desktop.py` forces `GDK_BACKEND=x11` (a Wayland-crash
-  workaround), so the manifest exposes `--socket=x11` (fallback-x11 would hide the
-  X socket on a Wayland session → "cannot open display").
+- **Wayland-native.** `desktop.py` forces `GDK_BACKEND=x11` (a WebKitGTK/NVIDIA
+  Wayland-crash workaround for the tarball install). The launcher overrides it to
+  Wayland and sets `WEBKIT_DISABLE_DMABUF_RENDERER=1`, which fixes that crash in
+  the GNOME runtime — so the manifest needs only `--socket=fallback-x11`
+  (Flathub-preferred), not the broad `--socket=x11`.
 - **libvips** comes from the `pyvips-binary` wheel — loads fine in the runtime.
 - **ArgyllCMS V3.5.0** prebuilt binaries: all shared-lib deps resolve against the
   GNOME runtime; `FREEGLAZ_ARGYLL_ROOT=/app/argyll` (set by the launcher).

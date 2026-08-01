@@ -17,7 +17,7 @@ freeglaz is in active beta. Feedback is welcome:
 > **macOS (Apple Silicon) — download the app.** A ready-to-run build is attached
 > to each release: get `freeglaz-<version>-macos-arm64.dmg` from the
 > [**Releases**](../../releases) page, drag it to Applications, clear the
-> quarantine flag once. No Homebrew, no Terminal for everyday printing. Steps:
+> quarantine flag once. Steps:
 > [`Docs/INSTALL_app_macos.md`](Docs/INSTALL_app_macos.md).
 
 ![The freeglaz Print screen — loaded paper, print parameters, live ink levels](Docs/img/print.png)

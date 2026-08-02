@@ -1,6 +1,6 @@
 [project]
 name = "freeglazcli"
-version = "0.1.4"
+version = "0.1.5"
 description = "Open CLI and web app to drive the HP DesignJet Z9: printing, calibration and custom ICC color profiling."
 readme = "README.md"
 license = "GPL-3.0-or-later"

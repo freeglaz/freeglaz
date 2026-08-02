@@ -20,6 +20,12 @@ freeglaz is in active beta. Feedback is welcome:
 > quarantine flag once. Steps:
 > [`Docs/INSTALL_app_macos.md`](Docs/INSTALL_app_macos.md).
 
+> **Linux — download the Flatpak.** A self-contained bundle (deps, libvips and
+> ArgyllCMS all included) is attached to each release: get
+> `freeglaz-<version>-x86_64.flatpak` from the [**Releases**](../../releases) page,
+> then `flatpak install --user freeglaz-<version>-x86_64.flatpak`. Steps:
+> [`Docs/INSTALL_flatpak_linux.md`](Docs/INSTALL_flatpak_linux.md). Flathub coming.
+
 ![The freeglaz Print screen — loaded paper, print parameters, live ink levels](Docs/img/print.png)
 
 ## What freeglaz does
@@ -110,8 +116,9 @@ A release install needs no Node or build step; building from source additionally
 needs Node.js 22 to build the web UI. Guides:
 
 - **macOS — the app (easiest, Apple Silicon)** — [`Docs/INSTALL_app_macos.md`](Docs/INSTALL_app_macos.md): download the `.dmg`, drag to Applications, no Terminal.
+- **Linux — the Flatpak (easiest, self-contained)** — [`Docs/INSTALL_flatpak_linux.md`](Docs/INSTALL_flatpak_linux.md): download the `.flatpak`, `flatpak install`, ArgyllCMS included.
 - macOS, from a release (CLI / browser, or Intel) — [`Docs/INSTALL_tarball_macos.md`](Docs/INSTALL_tarball_macos.md)
-- Linux, from a release — [`Docs/INSTALL_tarball_linux.md`](Docs/INSTALL_tarball_linux.md)
+- Linux, from a release (CLI / browser) — [`Docs/INSTALL_tarball_linux.md`](Docs/INSTALL_tarball_linux.md)
 - Windows, from a release (experimental) — [`Docs/INSTALL_tarball_windows.md`](Docs/INSTALL_tarball_windows.md)
 - macOS, from source (contributors) — [`Docs/INSTALL_source_macos.md`](Docs/INSTALL_source_macos.md)
 - Linux, from source (contributors) — [`Docs/INSTALL_source_linux.md`](Docs/INSTALL_source_linux.md)
@@ -134,9 +141,10 @@ color calibration, and building custom ICC profiles.
 
 ## Dependency
 
-ArgyllCMS is required and never bundled. It is a system dependency installed
-separately (Homebrew on macOS, the distribution's package manager on Linux); see
-the install guides.
+ArgyllCMS is the color engine for the custom profiling path. The **Linux Flatpak
+bundles it** — nothing to install. The macOS app and the tarball/source installs
+need it as a separate system dependency (Homebrew on macOS, the distribution's
+package manager on Linux); see the install guides.
 
 ## License
 

@@ -88,3 +88,52 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$GITHUB_REF_NAME" "$DMG" --clobber
+
+  # Self-contained Linux Flatpak bundle (deps + libvips + ArgyllCMS), attached to
+  # the same Release so Linux users can `flatpak install` a single file without
+  # building it. Runs AFTER the Release exists; points the manifest at this tag's
+  # tarball, builds in the Flatpak GNOME container, then uploads the bundle.
+  flatpak:
+    name: Flatpak bundle (x86_64)
+    needs: release
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48-x86_64
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Point the manifest at this release's tarball
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/freeglaz-${VERSION}.tar.gz"
+          curl -fsSL -o /tmp/fg.tgz "$URL"
+          SHA=$(sha256sum /tmp/fg.tgz | cut -d' ' -f1)
+          python3 - "$URL" "$SHA" <<'PY'
+          import re, sys
+          url, sha = sys.argv[1], sys.argv[2]
+          p = "packaging/flatpak/io.github.freeglaz.freeglaz.yaml"
+          s = open(p).read()
+          # Replace the freeglaz release-tarball url + the sha256 on the next line
+          # (the Argyll source has an argyllcms.com url, so it is not matched).
+          s = re.sub(
+              r"(url:\s*)https://github\.com/\S+/releases/\S+(\s*\n\s*sha256:\s*)[0-9a-f]{64}",
+              lambda m: m.group(1) + url + m.group(2) + sha, s)
+          open(p, "w").write(s)
+          PY
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: freeglaz-${{ env.VERSION }}-x86_64.flatpak
+          manifest-path: packaging/flatpak/io.github.freeglaz.freeglaz.yaml
+          cache: false
+          upload-artifact: false
+
+      - name: Attach the .flatpak to the Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          command -v gh >/dev/null 2>&1 || dnf install -y gh
+          gh release upload "$GITHUB_REF_NAME" "freeglaz-${VERSION}-x86_64.flatpak" \
+            --clobber --repo "$GITHUB_REPOSITORY"

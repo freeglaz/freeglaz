@@ -25,4 +25,4 @@ Kept in sync with pyproject by ``tests/test_version.py`` — a forgotten bump fa
 the suite. Bump both on each release.
 """
 
-__version__ = "0.1.5"
+__version__ = "0.1.6"

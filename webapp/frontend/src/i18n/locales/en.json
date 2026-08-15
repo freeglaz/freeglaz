@@ -705,6 +705,10 @@
   },
   "settings": {
     "title": "Settings",
+    "about": {
+      "section_title": "About",
+      "version_label": "freeglaz version"
+    },
     "language_label": "Language",
     "language_hint": "Your choice is stored in this browser.",
     "theme_label": "Theme",

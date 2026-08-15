@@ -163,6 +163,11 @@ export const getStatus = () =>
   USE_MOCKS ? mocks.getStatus()
             : http('/api/status').then(mapStatus);
 
+// Backend health — also carries the freeglaz version (shown in Settings).
+export const getHealth = () =>
+  USE_MOCKS ? Promise.resolve({ ok: true, version: 'dev' })
+            : http('/api/health');
+
 export const postFile = async (file) => {
   if (USE_MOCKS) return mocks.postFile(file);
   const form = new FormData();

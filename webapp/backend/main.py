@@ -29,6 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from lib.z9_client import Z9Client, Z9Error
 
 from webapp.backend.paths import data_dir
+from webapp.backend.version import __version__
 from webapp.backend.routes import charts as charts_routes
 from webapp.backend.routes import files as files_routes
 from webapp.backend.routes import gamut as gamut_routes
@@ -242,7 +243,7 @@ async def lifespan(app: FastAPI):
     logger.info("Stopping freeglaz backend")
 
 
-app = FastAPI(title="freeglaz Print", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="freeglaz Print", version=__version__, lifespan=lifespan)
 app.include_router(status_routes.router)
 app.include_router(files_routes.router)
 app.include_router(printing_routes.router)
@@ -261,9 +262,11 @@ app.include_router(charts_routes.router)
 @app.get("/api/health")
 async def health(request: Request) -> dict:
     """Trivial endpoint to check that the backend is running. Also carries the
-    Argyll availability (static per session) for monitoring / diagnostics."""
+    freeglaz version (shown in Settings) and the Argyll availability (static per
+    session) for monitoring / diagnostics."""
     argyll = getattr(request.app.state, "argyll", None)
-    return {"ok": True, "argyll": argyll.model_dump() if argyll else None}
+    return {"ok": True, "version": __version__,
+            "argyll": argyll.model_dump() if argyll else None}
 
 
 # ═════════════════════════════════════════════════════════════════════════

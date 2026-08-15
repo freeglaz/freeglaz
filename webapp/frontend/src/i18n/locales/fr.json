@@ -705,6 +705,10 @@
   },
   "settings": {
     "title": "Paramètres",
+    "about": {
+      "section_title": "À propos",
+      "version_label": "Version de freeglaz"
+    },
     "language_label": "Langue",
     "language_hint": "Le choix est mémorisé dans ce navigateur.",
     "theme_label": "Thème",

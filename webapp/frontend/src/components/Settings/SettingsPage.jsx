@@ -6,6 +6,7 @@ import ThemeSwitcher from './ThemeSwitcher.jsx';
 import GamutSettings from './GamutSettings.jsx';
 import ArgyllSettings from './ArgyllSettings.jsx';
 import PrintersModal from './PrintersModal.jsx';
+import AboutSettings from './AboutSettings.jsx';
 
 /**
  * Settings page.
@@ -58,6 +59,14 @@ export default function SettingsPage() {
                   onClick={() => setPrintersOpen(true)}>
             <Printer size={15}/> {t('settings.printers.manage_button')}
           </button>
+        </div>
+
+        <div className="bg-surface border border-border-soft rounded-xl p-5 max-w-2xl">
+          <h2 className="text-xs2 font-semibold uppercase tracking-wider
+                         text-accent mb-4 font-mono">
+            {t('settings.about.section_title')}
+          </h2>
+          <AboutSettings/>
         </div>
       </div>
 

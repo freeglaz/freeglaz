@@ -482,6 +482,12 @@ def _ti3_scanned_at(ti3_name: str):
 
 class PrintChartBody(BaseModel):
     quality: str = "HIGH"
+    # Optional placement nudge, same semantics as the print screen's PrintParams.
+    # Diagnostic: on some machines the hardcoded ROLL left margin clips the chart's
+    # left edge/fiducial (reported on a Z9+ Pro wide carriage) — a positive
+    # offset_x_mm lets a user find the correction empirically without a rebuild.
+    offset_x_mm: float = 0.0
+    offset_y_mm: float = 0.0
 
 
 @router.post("/{chart_id}/print")
@@ -526,7 +532,8 @@ def print_chart(chart_id: str, body: PrintChartBody, request: Request,
     # _build_lib_job → PrintOps.send. Same path as refine_print_job.
     info = TiffInfo.from_path(tiff)
     gloss = "FULLPAGE" if (cm.get("gloss_enhancer") == "FULLPAGE") else "OFF"
-    params = PrintParams(gloss_enhancer=gloss, quality=body.quality, rendermode="COLOR")
+    params = PrintParams(gloss_enhancer=gloss, quality=body.quality, rendermode="COLOR",
+                         offset_x_mm=body.offset_x_mm, offset_y_mm=body.offset_y_mm)
     geometry = print_geometry.compute_geometry(loaded, params, info.width_mm, info.height_mm)
     g_blocking, _ = print_geometry.detect_geometry_issues(geometry, geometry.media_source)
     if g_blocking:

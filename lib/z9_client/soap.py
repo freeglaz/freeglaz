@@ -56,6 +56,8 @@ CRITICAL NOTES (constraints of the Z9 SOAP dialect):
      every 10s with the OperationId received in the response.
 """
 
+import logging
+import os
 import re
 import socket
 import xml.etree.ElementTree as ET
@@ -69,6 +71,15 @@ from .exceptions import (
     Z9SOAPFault,
     Z9ProtocolError,
 )
+
+logger = logging.getLogger(__name__)
+
+# Raw SOAP tracing: set FREEGLAZ_SOAP_DEBUG=1 to log every SOAP request envelope
+# and response body (INFO level → lands in freeglaz.log). OFF by default — the
+# frequent status/paper SOAP calls would otherwise flood the log. Used to
+# diagnose model-specific firmware behaviour (e.g. the Z9 Pro profiling failures)
+# without a Wireshark capture. Never enabled in normal operation.
+_SOAP_DEBUG = os.getenv("FREEGLAZ_SOAP_DEBUG") == "1"
 
 
 # ─── Z9 SOAP service constants ───────────────────────────────────────
@@ -293,6 +304,9 @@ class SOAPClient:
         }
         body = envelope.encode("utf-8")
 
+        if _SOAP_DEBUG:
+            logger.info("SOAP → %s SOAPAction=%s\n%s", url, soap_action, envelope)
+
         try:
             response = self._session.post(
                 url,
@@ -306,6 +320,10 @@ class SOAPClient:
             raise Z9ConnectionError(f"SOAP cannot reach {self.host}:{port}: {e}")
         except requests.exceptions.RequestException as e:
             raise Z9ConnectionError(f"SOAP network error: {e}")
+
+        if _SOAP_DEBUG:
+            logger.info("SOAP ← HTTP %d from %s\n%s",
+                        response.status_code, url, response.text)
 
         if response.status_code >= 400:
             raise Z9ProtocolError(

@@ -598,7 +598,8 @@ class PrintOps:
         The produced PDF has:
           - 16-bit RGB image placed according to the freeglaz formula
           - Embedded ICC profile (identical to the image's and the OutputIntent's)
-          - MediaBox = TrimBox = sheet dimensions
+          - MediaBox = TrimBox = PAPERWIDTH x sheet height (width = content +
+            margins, matching the PJL PAPERWIDTH; height = sheet dimension)
           - XMP with GTS_PDFXVersion = PDF/X-4
 
         :param job: PrintJob (must be validated beforehand via job.validate())
@@ -995,7 +996,16 @@ class PrintOps:
         """
         margin_bottom_mm = MECHANICAL_MARGINS_MM[job.media_source]["bottom"]
 
-        page_w_pt = mm_to_pt(job.sheet_w_mm)
+        # MediaBox width = PAPERWIDTH (content + margins), NOT the media width.
+        # This mirrors build_prn's PAPERWIDTH (offset_x + image_w + right margin),
+        # so the PDF page box and the PJL PAPERWIDTH describe the same width. When
+        # the media is narrower than the platen (e.g. a 24" roll on a Z9 Pro 64"
+        # platen) a media-width MediaBox disagreed with the PJL PAPERWIDTH, which
+        # shifted the image relative to the (correctly placed) Gloss Enhancer.
+        right_margin_mm = MECHANICAL_MARGINS_MM[job.media_source]["right"]
+        paperwidth_mm = job.offset_x_mm + job.image_w_mm + right_margin_mm
+
+        page_w_pt = mm_to_pt(paperwidth_mm)
         page_h_pt = mm_to_pt(job.sheet_h_mm)
         img_w_pt = mm_to_pt(job.image_w_mm)
         img_h_pt = mm_to_pt(job.image_h_mm)

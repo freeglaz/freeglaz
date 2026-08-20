@@ -40,12 +40,15 @@ Colorization: each Lab vertex is converted to sRGB (relative colorimetric
 intent toward sRGB IEC 61966-2-1, clamp [0,1] without specific damping —
 gamut mapping delegated to lcms2).
 
-Disk cache: ``webapp/data/gamut/<md5>_device_<intent>.json`` +
-references under ``webapp/data/gamut/_refs/<name>_<intent>.json``.
+Disk cache under ``<data>/gamut/`` where ``<data>`` is ``FREEGLAZ_DATA_DIR``
+when set (writable XDG dir on read-only installs like the Flatpak), else
+``webapp/data`` next to the package: ``<data>/gamut/<md5>_device_<intent>.json``
++ references under ``<data>/gamut/_refs/<name>_<intent>.json``.
 """
 import hashlib
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -99,7 +102,15 @@ def _ref_profile_paths() -> dict:
 
 
 def _cache_dir() -> Path:
-    p = Path(__file__).resolve().parent.parent.parent / "webapp" / "data" / "gamut"
+    # Writable runtime data. Mirrors webapp.backend.paths.data_dir() WITHOUT
+    # importing webapp (keep lib/ independent): honour FREEGLAZ_DATA_DIR when set
+    # — read-only installs (the Flatpak) point it at the writable XDG data dir —
+    # else fall back to webapp/data next to the package (dev / macOS .app).
+    env = os.environ.get("FREEGLAZ_DATA_DIR")
+    base = Path(env).expanduser() if env else (
+        Path(__file__).resolve().parent.parent.parent / "webapp" / "data"
+    )
+    p = base / "gamut"
     p.mkdir(parents=True, exist_ok=True)
     (p / "_refs").mkdir(parents=True, exist_ok=True)
     return p

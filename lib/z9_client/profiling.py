@@ -800,10 +800,16 @@ class ProfilingOps:
         *,
         descriptor: Optional[str] = None,
         xyz_correction: bool = True,
+        cxf_measurement: str = "M0",
         on_step=None,
     ) -> ExtractCgatsResult:
         """Extract the CGATS measurements embedded in a Z9 firmware ICC
         profile (CIED tag) and convert them to an Argyll CTI3.
+
+        Also reads i1Profiler / X-Rite V4 profiles that store their spectral
+        measurements in the ``CxF `` tag (CxF3) instead of CIED/targ — enabling
+        an external-i1 open profiling path (e.g. on a Z9 Pro whose embedded
+        spectro is locked). ``cxf_measurement`` picks the M0/M1/M2 condition.
 
         :param icc_path: path to the ICC file (typically Z9 firmware)
         :param output_path: output .ti3 path. If None: <basename>.ti3
@@ -851,6 +857,7 @@ class ProfilingOps:
         #    variant only has targ until it has been passed back through
         #    freeglaz).
         cied = None
+        cxf = None
         measure_tag = None
         for sig, off, sz in tags:
             if sig == 'CIED':
@@ -863,21 +870,38 @@ class ProfilingOps:
                     cied = (off, sz)
                     measure_tag = 'targ'
                     break
-
+        # CxF fallback: i1Profiler / X-Rite store the measurements in the 'CxF '
+        # tag (CxF3 zlib XML), not CIED/targ. Read that too so an external-i1
+        # profile (e.g. from a Z9 Pro with a locked embedded spectro) is usable.
         if cied is None:
+            for sig, off, sz in tags:
+                if sig.rstrip() == 'CxF':
+                    cxf = (off, sz)
+                    measure_tag = 'CxF'
+                    break
+
+        if cied is None and cxf is None:
             raise ValueError(
-                f"Measurement tag (CIED or targ) not found in {icc_path.name}. "
-                f"This profile contains no embedded CGATS/CTI3 data. "
+                f"Measurement tag (CIED, targ or CxF) not found in {icc_path.name}. "
+                f"This profile contains no embedded CGATS/CTI3/CxF data. "
                 f"Tags present: {[t[0] for t in tags]}"
             )
 
+        src = cied if cied is not None else cxf
         _step(2, n_total_steps, 'cied-found',
-              cied_offset=cied[0], cied_size=cied[1],
+              cied_offset=src[0], cied_size=src[1],
               measure_tag=measure_tag,
               n_tags=len(tags))
 
-        # 3. Extract and parse the measurements text (HP CGATS.17 or Argyll CTI3)
-        cgats_text = extract_cied_text(icc_bytes, cied[0], cied[1])
+        # 3. Extract and parse the measurements text (HP CGATS.17 / Argyll CTI3 /
+        #    i1Profiler CxF3 -> synthesized HP-style CGATS.17)
+        if measure_tag == 'CxF':
+            from .cxf import cxf_to_cgats17
+            cgats_text = cxf_to_cgats17(
+                icc_bytes, cxf[0], cxf[1],
+                measurement=cxf_measurement, descriptor=descriptor or "freeglaz from CxF")
+        else:
+            cgats_text = extract_cied_text(icc_bytes, cied[0], cied[1])
         parsed = parse_cgats_data(cgats_text)
         is_native_cti3 = cgats_text.lstrip().startswith('CTI3')
 

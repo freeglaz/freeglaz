@@ -379,6 +379,38 @@ export function subscribePrintJob(jobId, onEvent) {
   return { close: () => clearInterval(tick) };
 }
 
+// ─── Convert (DeviceLink, JALON 1 socle) ────────────────────────────────────
+// Simulated detection: uploaded mock files carry an embedded profile so the UI
+// can exercise the "source space + TRC" panel. Toggle window.__z9.noSourceIcc
+// to test the "image without ICC → cannot convert" path.
+export async function getConvertSourceInfo(fileId) {
+  await sleep(80);
+  if (!_files.get(fileId)) throw new Error('file not found');
+  if (typeof window !== 'undefined' && window.__z9?.noSourceIcc) {
+    return { has_profile: false };
+  }
+  return {
+    has_profile: true,
+    color_space: 'RGB ',
+    pcs: 'Lab ',
+    trc: {
+      family: { auto: 'gamma_2_2', override: null, effective: 'gamma_2_2' },
+      per_channel: {},
+      consistent_across_channels: true,
+      primary_family_label: 'Gamma 2.2',
+    },
+  };
+}
+
+// Mock conversion: returns a tiny placeholder blob + a filename, mirroring the
+// { blob, filename } shape the real client resolves to.
+export async function postConvert(body) {
+  await sleep(300);
+  if (!_files.get(body.file_id)) throw new Error('file not found');
+  const blob = new Blob([_PLACEHOLDER_SVG], { type: 'image/tiff' });
+  return { blob, filename: `converted_${body.intent || 'ir'}.tif` };
+}
+
 // ─── DEV helpers ──────────────────────────────────────────────────────────
 // Exposed on window to tinker from the console during implementation.
 if (typeof window !== 'undefined') {

@@ -20,6 +20,7 @@ import PrintersModal from './components/Settings/PrintersModal.jsx';
 import LogsPage from './components/Logs/LogsPage.jsx';
 import ProfilesPage from './components/Profiles/ProfilesPage.jsx';
 import MesuresPage from './components/Mesures/MesuresPage.jsx';
+import ConvertPage from './components/Convert/ConvertPage.jsx';
 import Splash from './components/Splash/Splash.jsx';
 import { LoadedPaperProvider } from './hooks/useLoadedPaper.js';
 import { deriveUIState, isWorkerActive, UIState } from './lib/state-machine.js';
@@ -488,6 +489,7 @@ export default function App() {
   // Simple routing Print / Papers / Settings.
   // StatusBar + JobQueuePanel + ConfirmModals stay common to the 3
   // pages (the user keeps access to the current queue).
+  const isConvertRoute = path === '/convert';
   const isPapersRoute = path === '/papers';
   const isMesuresRoute = path === '/mesures';
   const isProfilsRoute = path === '/profils';
@@ -555,7 +557,11 @@ export default function App() {
         onNavigate={navigate}
         state={state}/>
       <div className="flex-1 flex min-h-0">
-        {isSettingsRoute ? (
+        {isConvertRoute ? (
+          <ConvertPage
+            paper={status?.paper}
+            offline={(status?.alerts || []).some((a) => a.code === 'Z9_UNREACHABLE')}/>
+        ) : isSettingsRoute ? (
           <SettingsPage/>
         ) : isLogsRoute ? (
           <LogsPage/>

@@ -60,6 +60,7 @@ from pathlib import Path
 __all__ = [
     "ArgyllNotFound",
     "REQUIRED_BINARIES",
+    "OPTIONAL_BINARIES",
     "find_argyll_binary",
     "resolve_argyll_binary",
     "find_argyll_ref_dir",
@@ -71,6 +72,12 @@ __all__ = [
 # generation) + colprof (profile build) are the core; spec2cie (spectral→XYZ,
 # official CIE table) + profcheck (profile validation) are used by build/verify.
 REQUIRED_BINARIES = ("targen", "colprof", "spec2cie", "profcheck")
+
+# Binaries used by the OPTIONAL DeviceLink conversion module (collink = build a
+# DeviceLink, cctiff = apply it). Resolved ON DEMAND via find_argyll_binary and
+# NEVER gate check_argyll's ``ok`` — a freeglaz install without them prints and
+# profiles perfectly; only the Convert module needs them.
+OPTIONAL_BINARIES = ("collink", "cctiff")
 
 
 class ArgyllNotFound(RuntimeError):
@@ -280,11 +287,16 @@ def check_argyll() -> dict:
     if not ref_ok:
         missing.append("ref")
 
+    # Optional binaries (DeviceLink conversion): reported but NON-FATAL — they
+    # never enter `missing` nor affect `ok`. Absence only disables Convert.
+    optional = {name: find_argyll_binary(name) for name in OPTIONAL_BINARIES}
+
     return {
         "ok": bin_ok and ref_ok,
         "bin_ok": bin_ok,
         "bin_dir": bin_dir,
         "binaries": binaries,
+        "optional": optional,
         "ref_ok": ref_ok,
         "ref_dir": ref_dir,
         "missing": missing,

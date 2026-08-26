@@ -215,6 +215,44 @@ export const postPrint = (body) =>
                 body: JSON.stringify({ file_id: body.file_id, params: body.params || {} }),
               });
 
+// ─── Convert (DeviceLink, JALON 1 socle) ────────────────────────────────────
+// Upstream, bypassable stage: converts a dropped image toward the loaded
+// paper's device via an Argyll DeviceLink and writes a device TIFF to disk.
+
+// Detected source space + TRC of the dropped image's embedded ICC (Étape 2).
+export const getConvertSourceInfo = (fileId) =>
+  USE_MOCKS ? mocks.getConvertSourceInfo(fileId)
+            : http(`/api/convert/source-info?file_id=${encodeURIComponent(fileId)}`);
+
+// Run the conversion. On success the backend streams a device TIFF; we resolve
+// to { blob, filename } so the caller can trigger a browser download. On failure
+// we mirror http()'s error contract (err.status + err.detail).
+export async function postConvert(body) {
+  if (USE_MOCKS) return mocks.postConvert(body);
+  const r = await fetch(BASE + '/api/convert', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      file_id: body.file_id,
+      intent: body.intent,
+      quality: body.quality,
+      gloss_enhancer: body.gloss_enhancer,
+    }),
+  });
+  if (!r.ok) {
+    let detail;
+    try { detail = (await r.json()).detail; } catch { /* non-JSON body */ }
+    const err = new Error(typeof detail === 'string' ? detail : `HTTP ${r.status} on /api/convert`);
+    err.status = r.status;
+    err.detail = detail;
+    throw err;
+  }
+  const blob = await r.blob();
+  const cd = r.headers.get('Content-Disposition') || '';
+  const m = /filename="?([^";]+)"?/.exec(cd);
+  return { blob, filename: m ? m[1] : `converted_${body.intent || 'ir'}.tif` };
+}
+
 // ─── Known printers (IP configuration) ──────────────────────────────────────
 // Config (not a machine operation) → no Z9 auth. In mocks: inline stubs.
 

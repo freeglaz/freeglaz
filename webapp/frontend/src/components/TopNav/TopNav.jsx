@@ -33,7 +33,8 @@ export default function TopNav({ path, onNavigate, state }) {
       setEggOpen(true);
     }
   };
-  const isPrint    = path !== '/papers' && path !== '/logs' && path !== '/settings' && path !== '/profils' && path !== '/mesures';
+  const isConvert  = path === '/convert';
+  const isPrint    = path !== '/convert' && path !== '/papers' && path !== '/logs' && path !== '/settings' && path !== '/profils' && path !== '/mesures';
   const isPapers   = path === '/papers';
   const isMesures  = path === '/mesures';
   const isProfils  = path === '/profils';
@@ -69,6 +70,10 @@ export default function TopNav({ path, onNavigate, state }) {
       {/* Tabs — adapt under constraint (horizontal scroll, never wrapping);
           the logo stays priority. */}
       <nav className="flex items-center gap-0.5 min-w-0 overflow-x-auto no-scrollbar">
+        <NavTab
+          label={t('nav.convert')}
+          active={isConvert}
+          onClick={() => onNavigate('/convert')}/>
         <NavTab
           label={t('nav.print')}
           active={isPrint}

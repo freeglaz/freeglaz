@@ -59,6 +59,7 @@
     "viewcond_desc_pc": "Critical print evaluation environment (ISO-3664 P1)",
     "viewcond_desc_pe": "Print evaluation environment (CIE 116-1995)",
     "viewcond_desc_pm": "Évaluation de tirage avec adaptation partielle des tons moyens. mtaf 0.7, Wxyz2 D50. Destiné aux papiers contenant des azurants optiques (FWA/OBE) observés dans un environnement au point blanc nettement plus chaud que celui du papier : le point blanc reste celui du papier, mais les tons moyens sont partiellement adaptés au point blanc plus chaud, réduisant possiblement l'écart visuel. Note (Gill) : cette situation se présente rarement en visualisation réelle de tels médias ; et c'est un piège d'évaluer un papier riche en FWA/OBE dans des conditions de proofing standard, dont le surround gris spectralement plat accentue artificiellement la différence de point blanc.",
+    "viewcond_note": "Un raffinement, pas un réglage fort : effet subtil à marginal (quelques niveaux au plus), surtout sur les intentions perceptuelles avec du contenu saturé — quasi nul en colorimétrique relatif, voire nul sur certains profils.",
     "dest_loaded": "Destination : papier chargé — {{paper}}",
     "dest_no_paper": "Aucun papier chargé — chargez un papier dans la Z9 pour résoudre le profil de destination.",
     "run_button": "Convertir et enregistrer sur disque",

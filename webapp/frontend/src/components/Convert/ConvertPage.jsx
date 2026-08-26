@@ -241,6 +241,9 @@ export default function ConvertPage({ paper, offline }) {
             <p className="text-xs2 text-text-muted mt-1.5 max-w-xl">
               {t(`convert.viewcond_desc_${destViewcond}`)}
             </p>
+            <p className="text-xs2 text-text-faint italic mt-1 max-w-xl">
+              {t('convert.viewcond_note')}
+            </p>
           </div>
         )}
 

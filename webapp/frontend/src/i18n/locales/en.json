@@ -59,6 +59,7 @@
     "viewcond_desc_pc": "Critical print evaluation environment (ISO-3664 P1)",
     "viewcond_desc_pe": "Print evaluation environment (CIE 116-1995)",
     "viewcond_desc_pm": "Print evaluation with partial Mid-tone adaptation. mtaf 0.7, Wxyz2 D50. Intended for papers containing FWA/OBE brighteners viewed in an environment with a noticeably warmer white point than the paper: the white point stays that of the paper, but mid-tones are partially adapted to the warmer white point, possibly reducing visual discrepancy. Note (Gill): this situation doesn't often arise in real-world viewing of such media; and it is a trap to evaluate FWA/OBE-rich paper under standard proofing conditions, whose spectrally flat grey surround unnaturally emphasizes the white-point difference.",
+    "viewcond_note": "A refinement, not a strong control: expect a subtle-to-marginal effect (a few levels at most), mostly on the perceptual intents with saturated content — near-zero with relative colorimetric, and it can be nil on some profiles.",
     "dest_loaded": "Destination: loaded paper — {{paper}}",
     "dest_no_paper": "No paper loaded — load a paper in the Z9 to resolve the destination profile.",
     "run_button": "Convert and save on disk",

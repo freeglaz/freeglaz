@@ -47,6 +47,25 @@ def test_tiff_upload_info_preview_roundtrip(sample_tiff_path):
     Image.open(io.BytesIO(r.content)).verify()
 
 
+def test_tiff_without_icc_is_accepted_and_printable(tmp_path):
+    """JALON 2 (volet 1): a valid RGB TIFF WITHOUT an embedded ICC is uploaded
+    (no more 415 no_icc), reports has_icc=False + a non-blocking warning, and
+    stays printable (no blocking issue). The print tags the paper resident."""
+    p = tmp_path / "no_icc.tif"
+    Image.new("RGB", (64, 64), color=(180, 90, 30)).save(p, format="TIFF", dpi=(300, 300))
+    c = _client()
+    with open(p, "rb") as f:
+        r = c.post("/api/files", files={"file": ("no_icc.tif", f, "image/tiff")})
+    assert r.status_code == 200, r.text          # was 415 no_icc before JALON 2
+    fid = r.json()["file_id"]
+
+    info = c.get(f"/api/files/{fid}/info").json()
+    assert info["has_icc"] is False
+    assert info["is_printable"] is True
+    assert info["blocking_issues"] == []
+    assert any("ICC" in w for w in info["warnings"])
+
+
 def test_pdf_upload_is_rejected(sample_pdf_path):
     """The webapp is TIFF-only: a PDF upload is refused at the gate (by content,
     not extension) with a structured code. The PDF *inspection* helper still

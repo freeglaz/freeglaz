@@ -116,11 +116,17 @@ def convert(body: ConvertBody, request: Request,
         # external images) before collink. Colorimetry is preserved untouched.
         (tmp / "source.icc").write_bytes(devicelink.normalize_icc_for_argyll(src_icc))
         (tmp / "dest.icc").write_bytes(devicelink.normalize_icc_for_argyll(dest_icc))
+        # VOLET 2: tag the device output with the loaded paper's profile so it
+        # opens colour-managed in an editor. We embed the ORIGINAL resident (not
+        # the Argyll-normalized copy) — full metadata/name, and editors read v4
+        # fine. Pure assignment: cctiff -e leaves the device pixels intact.
+        (tmp / "paper.icc").write_bytes(dest_icc)
         try:
             devicelink.run_collink(
                 tmp / "source.icc", tmp / "dest.icc", tmp / "link.icc",
                 intent=body.intent, quality=body.quality)
-            devicelink.apply_cctiff(tmp / "link.icc", src_tiff, dev_tiff)
+            devicelink.apply_cctiff(tmp / "link.icc", src_tiff, dev_tiff,
+                                    embed_icc=tmp / "paper.icc")
         except ArgyllNotFound as e:
             raise HTTPException(
                 503,

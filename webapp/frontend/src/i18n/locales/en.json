@@ -246,7 +246,7 @@
     "icc_tooltip_unknown_default": "Paper ICC profile not resolved — the Z9 may be unreachable.",
     "icc_tooltip_none_head": "No ICC profile in this file.",
     "icc_tooltip_none_body": "Unlike OS pipelines (macOS ColorSync, Windows WCS), freeglaZ does not assume sRGB automatically — rendering may be unpredictable.",
-    "icc_tooltip_none_advice": "For a reliable result, export your file with an embedded ICC profile.",
+    "icc_tooltip_none_advice": "It can still be printed: it will be tagged to the loaded paper's resident profile (OutputIntent = resident) and printed as-is, without colour management — correct for a test chart or an already-device file. To colour-manage a photo, run it through the Convert tab first.",
     "margins_label": "margins {{x}} × {{y}} mm",
     "overflow_label": "overflow +{{x}} × +{{y}} mm"
   },

@@ -17,10 +17,18 @@
 """Strict input gate for the webapp file upload — single-page RGB TIFF only.
 
 The webapp GUI accepts ONLY what the print pipeline has been characterised and
-validated for, end to end: a single-page, RGB, 8- or 16-bit TIFF with an
-embedded ICC profile. Everything else — PDF, CMYK/grayscale/other colour model,
-alpha/extra channels, multi-page, float/32-bit, or a missing ICC — is rejected
-cleanly and early, with a message that tells the user what to export instead.
+validated for, end to end: a single-page, RGB, 8- or 16-bit TIFF. Everything
+else — PDF, CMYK/grayscale/other colour model, alpha/extra channels, multi-page,
+or float/32-bit — is rejected cleanly and early, with a message that tells the
+user what to export instead.
+
+A MISSING embedded ICC is NOT rejected here (JALON 2): the print pipeline tags
+the loaded paper's resident + OutputIntent resident = identity, so the input
+profile has no incidence — a chart (raw device values) must be printable without
+one. The absence is surfaced downstream as a non-blocking warning
+(``file_inspector`` "No embedded ICC profile" + the ICC 'none' badge), not a
+gate refusal. The Convert tab keeps its OWN source-profile requirement (it reads
+the source space) — that guard lives in the convert route, not here.
 
 No fallback conversion: freeglaz never silently reinterprets colour (CMYK->RGB,
 alpha flatten, default ICC…). We reject, we do not transform.
@@ -66,8 +74,9 @@ def validate_tiff_upload(path: Path) -> None:
 
     Contract (all required): TIFF magic bytes, exactly one page (IFD),
     PhotometricInterpretation == RGB, SamplesPerPixel == 3 with no extra
-    channel, dtype uint8 or uint16, and an embedded ICC profile. The checks run
-    in this order so the message points at the most relevant single reason.
+    channel, dtype uint8 or uint16. An embedded ICC is NOT required (a missing
+    one is a downstream warning, cf. module docstring). The checks run in this
+    order so the message points at the most relevant single reason.
     """
     with open(path, "rb") as fh:
         head = fh.read(4)
@@ -91,7 +100,6 @@ def validate_tiff_upload(path: Path) -> None:
             samples = int(page.samplesperpixel)
             extrasamples = tuple(page.extrasamples or ())
             dtype = page.dtype
-            has_icc = 34675 in page.tags
     except WebappInputRejected:
         raise
     except Exception as e:  # noqa: BLE001 — any parse failure = not a usable TIFF
@@ -132,9 +140,5 @@ def validate_tiff_upload(path: Path) -> None:
             "Unsupported bit depth. Export at 8 or 16 bits per channel "
             "(16-bit recommended).",
         )
-    if not has_icc:
-        raise WebappInputRejected(
-            "no_icc",
-            "This TIFF has no embedded ICC profile. Export with the paper "
-            "profile embedded.",
-        )
+    # NOTE: a missing embedded ICC is deliberately NOT rejected (JALON 2) — it is
+    # a non-blocking downstream warning. See the module docstring.

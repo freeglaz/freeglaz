@@ -94,15 +94,24 @@ def run_collink(source_icc, dest_icc, out_icc, *,
     return out
 
 
-def apply_cctiff(link_icc, in_tiff, out_tiff, *, timeout: int = 600) -> Path:
+def apply_cctiff(link_icc, in_tiff, out_tiff, *, embed_icc=None,
+                 timeout: int = 600) -> Path:
     """Apply a DeviceLink to a TIFF via ``cctiff`` (16-bit integer path).
 
+    :param embed_icc: optional profile to EMBED in the output (``cctiff -e``).
+        This is a pure ASSIGNMENT — the device pixels are the DeviceLink output,
+        unchanged; ``-e`` only writes the ICC tag (proven pixel-identical). Used
+        to tag the device TIFF with the loaded paper's profile so it opens
+        colour-managed in an editor.
     :return: Path of the produced device TIFF.
     :raises ArgyllNotFound: cctiff not installed.
     :raises RuntimeError: cctiff failed.
     """
     cctiff = resolve_argyll_binary("cctiff")
-    argv = [cctiff, str(link_icc), str(in_tiff), str(out_tiff)]
+    argv = [cctiff]
+    if embed_icc is not None:
+        argv += ["-e", str(embed_icc)]
+    argv += [str(link_icc), str(in_tiff), str(out_tiff)]
     try:
         proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:

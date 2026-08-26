@@ -104,7 +104,6 @@ def test_accepts_real_editor_export():
 
 @pytest.mark.parametrize("make,expected_code", [
     (_tiff_cmyk,                                   "not_rgb"),
-    (lambda p: _tiff_rgb(p, np.uint16, with_icc=False), "no_icc"),
     (_tiff_5channel,                               "channels"),
     (_tiff_multipage,                              "multipage"),
     (lambda p: _tiff_rgb(p, np.float32),           "bad_depth"),
@@ -116,6 +115,15 @@ def test_rejects_nonconforming_tiff(tmp_path, make, expected_code):
         validate_tiff_upload(p)
     assert exc.value.code == expected_code
     assert exc.value.message  # a user-facing sentence is always present
+
+
+def test_accepts_rgb_without_icc(tmp_path):
+    """JALON 2: a valid RGB TIFF WITHOUT an embedded ICC is accepted (no more
+    'no_icc' refusal). The print tags the paper resident anyway — a chart must be
+    printable without a source profile. The absence is a downstream warning."""
+    p = tmp_path / "no_icc.tif"
+    _tiff_rgb(p, np.uint16, with_icc=False)
+    validate_tiff_upload(p)  # does not raise
 
 
 def test_rejects_pdf_renamed_tif(tmp_path):

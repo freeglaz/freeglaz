@@ -6,13 +6,29 @@ Covers the deterministic, hardware-independent surface of the route:
     → 400, no Z9 configured → 409). The actual collink/cctiff run needs a Z9 +
     Argyll and is exercised live, not here.
 """
+import hashlib
 from pathlib import Path
 
+import numpy as np
+import pytest
 from PIL import Image
 from fastapi.testclient import TestClient
 
 from webapp.backend.main import app
 from webapp.backend.services import file_storage
+
+_ASSETS = Path(__file__).resolve().parents[3] / "lib" / "z9_client" / "assets"
+
+
+def _argyll_convert_available() -> bool:
+    from lib.z9_client.argyll import find_argyll_binary
+    return bool(find_argyll_binary("collink") and find_argyll_binary("cctiff"))
+
+
+def _pixel_hash(tiff_path) -> str:
+    Image.MAX_IMAGE_PIXELS = None
+    arr = np.asarray(Image.open(tiff_path))
+    return hashlib.sha256(np.ascontiguousarray(arr).tobytes()).hexdigest()
 
 
 def _client() -> TestClient:
@@ -139,6 +155,39 @@ def test_normalize_v2_profile_unchanged():
           / "lib" / "z9_client" / "assets" / "sRGB_IEC61966-2.1.icc").read_bytes()
     assert v2[8] == 2
     assert devicelink.normalize_icc_for_argyll(v2) == v2
+
+
+@pytest.mark.skipif(not _argyll_convert_available(),
+                    reason="collink/cctiff not installed")
+def test_cctiff_embed_tags_device_without_changing_pixels(tmp_path):
+    """JALON 2 (volet 2): embedding the paper profile (cctiff -e) is a pure
+    ASSIGNMENT — the device pixels are byte-identical with and without -e, and
+    only the -e output carries the ICC. Uses two bundled v2 assets as
+    source/dest; no Z9 needed."""
+    from lib.z9_client import devicelink
+
+    src_icc = _ASSETS / "sRGB_IEC61966-2.1.icc"
+    dst_icc = _ASSETS / "ClayRGB-elle-V2-g22.icc"
+    # deterministic little RGB gradient (no ICC needed: the link defines source)
+    g = np.zeros((16, 16, 3), np.uint8)
+    g[..., 0] = np.arange(16, dtype=np.uint8)[None, :] * 16
+    g[..., 1] = np.arange(16, dtype=np.uint8)[:, None] * 16
+    g[..., 2] = 128
+    in_tif = tmp_path / "in.tif"
+    Image.fromarray(g).save(in_tif, format="TIFF")
+
+    link = tmp_path / "link.icc"
+    devicelink.run_collink(src_icc, dst_icc, link, intent="r", quality="l")
+
+    plain = tmp_path / "plain.tif"
+    tagged = tmp_path / "tagged.tif"
+    devicelink.apply_cctiff(link, in_tif, plain)
+    devicelink.apply_cctiff(link, in_tif, tagged, embed_icc=dst_icc)
+
+    # Same device pixels, tag added only to the -e output
+    assert _pixel_hash(plain) == _pixel_hash(tagged)
+    assert Image.open(tagged).info.get("icc_profile")
+    assert not Image.open(plain).info.get("icc_profile")
 
 
 def test_convert_without_z9_configured_409(sample_tiff_path):

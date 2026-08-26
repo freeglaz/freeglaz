@@ -50,6 +50,8 @@
     "ge_help": "Quelle caractérisation résidente du papier chargé sert de destination : GE ON (gloss enhancer appliqué) ou GE OFF. Les deux n'ont pas la même colorimétrie — choisissez celle correspondant à la façon dont vous imprimerez réellement.",
     "ge_off": "GE OFF",
     "ge_on": "GE ON",
+    "image_aware_label": "Gamut image-aware",
+    "image_aware_help": "Indépendant de l'intention. Off : mapping sur le gamut complet du profil source (défaut). On : mapping sur le seul gamut réellement occupé par l'image (extrait via tiffgamut) — ne comprime que ce qui déborde vraiment du gamut du papier et laisse tranquilles les couleurs déjà imprimables. Utile quand le perceptuel décale sinon toute l'image.",
     "dest_loaded": "Destination : papier chargé — {{paper}}",
     "dest_no_paper": "Aucun papier chargé — chargez un papier dans la Z9 pour résoudre le profil de destination.",
     "run_button": "Convertir et enregistrer sur disque",

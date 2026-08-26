@@ -6,6 +6,7 @@ import { getConvertSourceInfo, postConvert, getFilePreviewUrl } from '../../api/
 import Field from '../ui/Field.jsx';
 import Label from '../ui/Label.jsx';
 import Segmented from '../ui/Segmented.jsx';
+import Toggle from '../ui/Toggle.jsx';
 import Badge from '../ui/Badge.jsx';
 
 /**
@@ -30,6 +31,7 @@ export default function ConvertPage({ paper, offline }) {
   const [intent, setIntent] = useState('r');            // collink -i choice: r | p | lp
   const [quality, setQuality] = useState('h');          // l | m | h | u
   const [ge, setGe] = useState('OFF');                   // FULLPAGE | OFF (resident selection)
+  const [imageAware, setImageAware] = useState(false);   // image-aware axis (orthogonal to intent)
 
   const [converting, setConverting] = useState(false);
   const [convertError, setConvertError] = useState(null);
@@ -67,7 +69,7 @@ export default function ConvertPage({ paper, offline }) {
     setDone(null);
     try {
       const { blob, filename } = await postConvert({
-        file_id: fileId, intent, quality, gloss_enhancer: ge,
+        file_id: fileId, intent, quality, gloss_enhancer: ge, image_aware: imageAware,
       });
       // Trigger a browser download of the device TIFF.
       const url = URL.createObjectURL(blob);
@@ -88,7 +90,7 @@ export default function ConvertPage({ paper, offline }) {
     } finally {
       setConverting(false);
     }
-  }, [fileId, intent, quality, ge, t]);
+  }, [fileId, intent, quality, ge, imageAware, t]);
 
   const noPaper = !paper;
   const noSourceProfile = sourceInfo && sourceInfo.has_profile === false;
@@ -199,6 +201,19 @@ export default function ConvertPage({ paper, offline }) {
                 value={ge}
                 onChange={setGe}/>
             </Field>
+          </div>
+        )}
+
+        {/* Image-aware — orthogonal axis to the intent (independent toggle) */}
+        {file && sourceInfo?.has_profile && (
+          <div className="mt-4 flex items-start gap-3">
+            <div className="pt-0.5">
+              <Toggle on={imageAware} onChange={setImageAware}/>
+            </div>
+            <div>
+              <div className="text-sm font-medium text-text-strong">{t('convert.image_aware_label')}</div>
+              <div className="text-xs2 text-text-muted mt-0.5 max-w-xl">{t('convert.image_aware_help')}</div>
+            </div>
           </div>
         )}
 

@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from lib.z9_client import devicelink
+from lib.z9_client import devicelink, tiffgamut
 from lib.z9_client.argyll import ArgyllNotFound
 from lib.z9_client.exceptions import Z9Error
 from lib.z9_client.inspect import HpProprietaryDecoder, analyze_trc
@@ -39,6 +39,8 @@ class ConvertBody(BaseModel):
     intent: str = "r"                  # collink -i choice: r | p | lp (→ -ir/-ip/-ilp)
     quality: str = "h"                 # l | m | h | u
     gloss_enhancer: str                # GE state selecting the paper's resident (same vocab as print)
+    image_aware: bool = False          # image-aware axis (orthogonal to intent): map the image's
+                                       # OWN occupied gamut (tiffgamut) instead of the full source gamut
 
 
 def _source_profile_summary(icc_bytes: bytes) -> dict:
@@ -109,7 +111,8 @@ def convert(body: ConvertBody, request: Request,
 
     # 3. DeviceLink (collink -G) + apply (cctiff) → device TIFF on disk
     storage_dir = file_storage.get_storage(body.file_id)
-    dev_tiff = storage_dir / f"converted_{body.intent}_{body.quality}.tif"
+    ia_tag = "_ia" if body.image_aware else ""
+    dev_tiff = storage_dir / f"converted_{body.intent}_{body.quality}{ia_tag}.tif"
     with tempfile.TemporaryDirectory(prefix="freeglaz_convert_") as tmp:
         tmp = Path(tmp)
         # Argyll is v2-only: normalize both profiles (v4 sources are common on
@@ -122,9 +125,15 @@ def convert(body: ConvertBody, request: Request,
         # fine. Pure assignment: cctiff -e leaves the device pixels intact.
         (tmp / "paper.icc").write_bytes(dest_icc)
         try:
+            # Image-aware (orthogonal to intent): restrict the mapping to the
+            # gamut the image actually occupies. Ephemeral, recomputed per job.
+            image_gam = None
+            if body.image_aware:
+                image_gam = tmp / "image.gam"
+                tiffgamut.run_tiffgamut(tmp / "source.icc", src_tiff, image_gam)
             devicelink.run_collink(
                 tmp / "source.icc", tmp / "dest.icc", tmp / "link.icc",
-                intent=body.intent, quality=body.quality)
+                intent=body.intent, quality=body.quality, image_gam=image_gam)
             devicelink.apply_cctiff(tmp / "link.icc", src_tiff, dev_tiff,
                                     embed_icc=tmp / "paper.icc")
         except ArgyllNotFound as e:
@@ -135,9 +144,10 @@ def convert(body: ConvertBody, request: Request,
         except (ValueError, RuntimeError) as e:
             raise HTTPException(500, detail=f"conversion failed: {e}")
 
-    logger.info("Convert: %s → device via -G -i%s -q%s (GE=%s, paper=%s)",
-                body.file_id, body.intent, body.quality, body.gloss_enhancer, loaded.id)
+    logger.info("Convert: %s → device via -G%s -i%s -q%s (GE=%s, paper=%s)",
+                body.file_id, " <image.gam>" if body.image_aware else "",
+                body.intent, body.quality, body.gloss_enhancer, loaded.id)
     return FileResponse(
         str(dev_tiff), media_type="image/tiff",
-        filename=f"converted_{body.intent}.tif",
+        filename=f"converted_{body.intent}{ia_tag}.tif",
     )

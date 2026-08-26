@@ -50,6 +50,8 @@
     "ge_help": "Which resident characterization of the loaded paper is used as the destination: GE ON (gloss enhancer applied) or GE OFF. The two do not have the same colour — pick the one matching how you will actually print.",
     "ge_off": "GE OFF",
     "ge_on": "GE ON",
+    "image_aware_label": "Image-aware gamut",
+    "image_aware_help": "Independent of the intent. Off: map the full source-profile gamut (default). On: map only the gamut the image actually occupies (extracted with tiffgamut) — compresses just what really falls out of the paper's gamut and leaves already-printable colours alone. Useful when the perceptual intent otherwise shifts the whole image.",
     "dest_loaded": "Destination: loaded paper — {{paper}}",
     "dest_no_paper": "No paper loaded — load a paper in the Z9 to resolve the destination profile.",
     "run_button": "Convert and save on disk",

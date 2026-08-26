@@ -408,7 +408,8 @@ export async function postConvert(body) {
   await sleep(300);
   if (!_files.get(body.file_id)) throw new Error('file not found');
   const blob = new Blob([_PLACEHOLDER_SVG], { type: 'image/tiff' });
-  return { blob, filename: `converted_${body.intent || 'r'}.tif` };
+  const ia = body.image_aware ? '_ia' : '';
+  return { blob, filename: `converted_${body.intent || 'r'}${ia}.tif` };
 }
 
 // ─── DEV helpers ──────────────────────────────────────────────────────────

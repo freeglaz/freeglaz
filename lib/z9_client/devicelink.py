@@ -48,37 +48,50 @@ ALLOWED_QUALITIES = ("l", "m", "h", "u")
 
 
 def build_collink_argv(collink_bin: str, source_icc, dest_icc, out_icc, *,
-                       intent: str = "r", quality: str = "h") -> list[str]:
+                       intent: str = "r", quality: str = "h",
+                       image_gam=None) -> list[str]:
     """Build the ``collink -G`` argv (source profile → dest profile → DeviceLink).
 
     :param collink_bin: resolved collink executable path.
+    :param image_gam: optional image gamut surface (``.gam``) — the IMAGE-AWARE
+        axis. When given, ``-G`` maps from the gamut actually occupied by the
+        image (``collink -G <image.gam>``) instead of the full source-profile
+        gamut. The ``.gam`` MUST be in CIECAM02 Jab (``tiffgamut -pj``): a
+        default Lab gamut makes collink abort ("Failed to make gamut map
+        transform"). When None → full source gamut (unchanged JALON 1 behaviour).
     :raises ValueError: unknown intent / quality.
     """
     if intent not in ALLOWED_INTENTS:
         raise ValueError(f"unknown intent {intent!r}; expected {ALLOWED_INTENTS}")
     if quality not in ALLOWED_QUALITIES:
         raise ValueError(f"unknown quality {quality!r}; expected {ALLOWED_QUALITIES}")
+    # ``-G`` alone → source gamut = full source profile. ``-G <image.gam>`` →
+    # source gamut = the image's occupied gamut (image-aware). Orthogonal to
+    # intent (works for r/p/lp).
+    gmap = ["-G"] if image_gam is None else ["-G", str(image_gam)]
     return [
         collink_bin, "-v",
         f"-q{quality}",
-        "-G",                # bypass B2A, invert A2B
+        *gmap,
         f"-i{intent}",
         str(source_icc), str(dest_icc), str(out_icc),
     ]
 
 
 def run_collink(source_icc, dest_icc, out_icc, *,
-                intent: str = "r", quality: str = "h",
+                intent: str = "r", quality: str = "h", image_gam=None,
                 timeout: int = 600) -> Path:
     """Generate a DeviceLink .icc from (source, dest) via ``collink -G``.
 
+    :param image_gam: optional image gamut ``.gam`` (image-aware axis, cf.
+        ``build_collink_argv``).
     :return: Path of the produced DeviceLink.
     :raises ArgyllNotFound: collink not installed.
     :raises RuntimeError: collink failed (stderr surfaced).
     """
     collink = resolve_argyll_binary("collink")
     argv = build_collink_argv(collink, source_icc, dest_icc, out_icc,
-                              intent=intent, quality=quality)
+                              intent=intent, quality=quality, image_gam=image_gam)
     try:
         proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:

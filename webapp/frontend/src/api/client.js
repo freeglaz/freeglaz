@@ -237,6 +237,7 @@ export async function postConvert(body) {
       intent: body.intent,
       quality: body.quality,
       gloss_enhancer: body.gloss_enhancer,
+      image_aware: body.image_aware,
     }),
   });
   if (!r.ok) {

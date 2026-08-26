@@ -93,6 +93,56 @@ def test_convert_refuses_image_without_source_profile():
     assert r.json()["detail"]["code"] == "no_source_profile"
 
 
+def _tiffgamut_available() -> bool:
+    from lib.z9_client.argyll import find_argyll_binary
+    return bool(find_argyll_binary("tiffgamut") and find_argyll_binary("collink"))
+
+
+def test_collink_argv_image_gam_axis():
+    """JALON 3: image-aware = a ``.gam`` passed to ``-G`` (``-G <image.gam>``);
+    off = bare ``-G``. Orthogonal to the intent (argv-level, no binary)."""
+    from lib.z9_client import devicelink
+
+    # image-aware ON: the gam is the token right after -G
+    on = devicelink.build_collink_argv("collink", "s.icc", "d.icc", "o.icc",
+                                       intent="p", image_gam="img.gam")
+    assert "-G" in on
+    assert on[on.index("-G") + 1] == "img.gam"
+    assert "-ip" in on                      # intent independent of the gam
+
+    # image-aware OFF (JALON 1 behaviour): bare -G, no gam token
+    off = devicelink.build_collink_argv("collink", "s.icc", "d.icc", "o.icc",
+                                        intent="p")
+    assert "-G" in off
+    assert not any(str(a).endswith(".gam") for a in off)
+
+
+@pytest.mark.skipif(not _tiffgamut_available(),
+                    reason="tiffgamut/collink not installed")
+def test_image_aware_extracts_gam_and_feeds_collink(tmp_path):
+    """JALON 3 end-to-end: tiffgamut extracts the image gamut, collink -G
+    consumes it and builds a DeviceLink. Bundled v2 assets, no Z9."""
+    from lib.z9_client import devicelink, tiffgamut
+
+    src_icc = _ASSETS / "sRGB_IEC61966-2.1.icc"
+    dst_icc = _ASSETS / "ClayRGB-elle-V2-g22.icc"
+    g = np.zeros((16, 16, 3), np.uint8)
+    g[..., 0] = np.arange(16, dtype=np.uint8)[None, :] * 16
+    g[..., 1] = np.arange(16, dtype=np.uint8)[:, None] * 16
+    g[..., 2] = 200
+    tif = tmp_path / "in.tif"
+    Image.fromarray(g).save(tif, format="TIFF")
+
+    gam = tmp_path / "image.gam"
+    tiffgamut.run_tiffgamut(src_icc, tif, gam)
+    assert gam.exists() and gam.stat().st_size > 0
+
+    link = tmp_path / "link.icc"
+    devicelink.run_collink(src_icc, dst_icc, link,
+                           intent="p", quality="l", image_gam=gam)
+    assert link.exists() and link.stat().st_size > 0
+
+
 def test_collink_argv_intent_token_is_single_i():
     """Regression: the collink intent flag is ``-i`` + the bare choice (``-ir``),
     NOT ``-iir``. collink rejects 'ir' as an intent — the values must be the raw

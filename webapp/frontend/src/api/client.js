@@ -250,7 +250,7 @@ export async function postConvert(body) {
   const blob = await r.blob();
   const cd = r.headers.get('Content-Disposition') || '';
   const m = /filename="?([^";]+)"?/.exec(cd);
-  return { blob, filename: m ? m[1] : `converted_${body.intent || 'ir'}.tif` };
+  return { blob, filename: m ? m[1] : `converted_${body.intent || 'r'}.tif` };
 }
 
 // ─── Known printers (IP configuration) ──────────────────────────────────────

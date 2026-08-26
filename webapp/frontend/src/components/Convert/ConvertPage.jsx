@@ -27,7 +27,7 @@ export default function ConvertPage({ paper, offline }) {
   const [sourceInfo, setSourceInfo] = useState(null);   // { has_profile, color_space, trc } | null
   const [sourceLoading, setSourceLoading] = useState(false);
 
-  const [intent, setIntent] = useState('ir');           // ir | ip | ilp
+  const [intent, setIntent] = useState('r');            // collink -i choice: r | p | lp
   const [quality, setQuality] = useState('h');          // l | m | h | u
   const [ge, setGe] = useState('OFF');                   // FULLPAGE | OFF (resident selection)
 
@@ -172,9 +172,9 @@ export default function ConvertPage({ paper, offline }) {
             <Field label={t('convert.intent_label')} help={t('convert.intent_help')}>
               <Segmented
                 options={[
-                  { value: 'ir', label: t('convert.intent_ir') },
-                  { value: 'ip', label: t('convert.intent_ip') },
-                  { value: 'ilp', label: t('convert.intent_ilp') },
+                  { value: 'r', label: t('convert.intent_r') },
+                  { value: 'p', label: t('convert.intent_p') },
+                  { value: 'lp', label: t('convert.intent_lp') },
                 ]}
                 value={intent}
                 onChange={setIntent}/>

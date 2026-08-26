@@ -77,6 +77,25 @@ def test_convert_refuses_image_without_source_profile():
     assert r.json()["detail"]["code"] == "no_source_profile"
 
 
+def test_collink_argv_intent_token_is_single_i():
+    """Regression: the collink intent flag is ``-i`` + the bare choice (``-ir``),
+    NOT ``-iir``. collink rejects 'ir' as an intent — the values must be the raw
+    choices r|p|lp, not ir|ip|ilp."""
+    from lib.z9_client import devicelink
+
+    argv = devicelink.build_collink_argv(
+        "collink", "src.icc", "dst.icc", "out.icc", intent="r", quality="h")
+    assert "-ir" in argv
+    assert "-iir" not in argv
+    assert "-qh" in argv
+    assert "-G" in argv
+    assert devicelink.ALLOWED_INTENTS == ("r", "p", "lp")
+
+    import pytest
+    with pytest.raises(ValueError):
+        devicelink.build_collink_argv("collink", "s", "d", "o", intent="ir")
+
+
 def test_convert_without_z9_configured_409(sample_tiff_path):
     """Valid source profile but no Z9 wired (no lifespan in TestClient) → the
     DEST cannot be resolved → 409, BEFORE any Argyll call."""

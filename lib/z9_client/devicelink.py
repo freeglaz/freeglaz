@@ -35,18 +35,20 @@ from typing import Optional
 
 from .argyll import resolve_argyll_binary
 
-# collink -G : bypass the stored B2A and invert the A2B at link time (fixed for
-# this milestone). Rendering intents exposed (the 3 Argyll DeviceLink modes):
-#   ir  = White Point Matched Appearance (ICC relative colorimetric)
-#   ip  = Perceptual
-#   ilp = Luminance Preserving Perceptual
-ALLOWED_INTENTS = ("ir", "ip", "ilp")
+# collink -G : Gamut Mapping Mode using the inverse of the output profile A2B
+# (fixed for this milestone). Intents are the collink ``-i`` *choices* — the
+# argv token is ``-i`` + choice (e.g. ``-ir``), so the value here is the bare
+# choice, NOT ``ir`` (``-iir`` is rejected by collink):
+#   r  = White Point Matched Appearance [ICC relative colorimetric]
+#   p  = Perceptual (collink default)
+#   lp = Luminance Preserving Perceptual
+ALLOWED_INTENTS = ("r", "p", "lp")
 # collink -q<quality> : LUT resolution / effort.
 ALLOWED_QUALITIES = ("l", "m", "h", "u")
 
 
 def build_collink_argv(collink_bin: str, source_icc, dest_icc, out_icc, *,
-                       intent: str = "ir", quality: str = "h") -> list[str]:
+                       intent: str = "r", quality: str = "h") -> list[str]:
     """Build the ``collink -G`` argv (source profile → dest profile → DeviceLink).
 
     :param collink_bin: resolved collink executable path.
@@ -66,7 +68,7 @@ def build_collink_argv(collink_bin: str, source_icc, dest_icc, out_icc, *,
 
 
 def run_collink(source_icc, dest_icc, out_icc, *,
-                intent: str = "ir", quality: str = "h",
+                intent: str = "r", quality: str = "h",
                 timeout: int = 600) -> Path:
     """Generate a DeviceLink .icc from (source, dest) via ``collink -G``.
 

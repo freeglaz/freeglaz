@@ -36,7 +36,7 @@ router = APIRouter(prefix="/api/convert", tags=["convert"])
 
 class ConvertBody(BaseModel):
     file_id: str = Field(..., min_length=1)
-    intent: str = "ir"                 # ir | ip | ilp (collink DeviceLink modes)
+    intent: str = "r"                  # collink -i choice: r | p | lp (→ -ir/-ip/-ilp)
     quality: str = "h"                 # l | m | h | u
     gloss_enhancer: str                # GE state selecting the paper's resident (same vocab as print)
 

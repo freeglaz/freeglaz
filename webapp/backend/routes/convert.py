@@ -41,6 +41,8 @@ class ConvertBody(BaseModel):
     gloss_enhancer: str                # GE state selecting the paper's resident (same vocab as print)
     image_aware: bool = False          # image-aware axis (orthogonal to intent): map the image's
                                        # OWN occupied gamut (tiffgamut) instead of the full source gamut
+    dest_viewcond: str = "default"     # destination CIECAM02 viewing conditions (collink -d):
+                                       # default | pp | pc | pe | pm (print presets only)
 
 
 def _source_profile_summary(icc_bytes: bytes) -> dict:
@@ -112,7 +114,8 @@ def convert(body: ConvertBody, request: Request,
     # 3. DeviceLink (collink -G) + apply (cctiff) → device TIFF on disk
     storage_dir = file_storage.get_storage(body.file_id)
     ia_tag = "_ia" if body.image_aware else ""
-    dev_tiff = storage_dir / f"converted_{body.intent}_{body.quality}{ia_tag}.tif"
+    vc_tag = f"_{body.dest_viewcond}" if body.dest_viewcond not in ("default", "", None) else ""
+    dev_tiff = storage_dir / f"converted_{body.intent}_{body.quality}{ia_tag}{vc_tag}.tif"
     with tempfile.TemporaryDirectory(prefix="freeglaz_convert_") as tmp:
         tmp = Path(tmp)
         # Argyll is v2-only: normalize both profiles (v4 sources are common on
@@ -133,7 +136,8 @@ def convert(body: ConvertBody, request: Request,
                 tiffgamut.run_tiffgamut(tmp / "source.icc", src_tiff, image_gam)
             devicelink.run_collink(
                 tmp / "source.icc", tmp / "dest.icc", tmp / "link.icc",
-                intent=body.intent, quality=body.quality, image_gam=image_gam)
+                intent=body.intent, quality=body.quality, image_gam=image_gam,
+                dest_viewcond=body.dest_viewcond)
             devicelink.apply_cctiff(tmp / "link.icc", src_tiff, dev_tiff,
                                     embed_icc=tmp / "paper.icc")
         except ArgyllNotFound as e:
@@ -144,10 +148,12 @@ def convert(body: ConvertBody, request: Request,
         except (ValueError, RuntimeError) as e:
             raise HTTPException(500, detail=f"conversion failed: {e}")
 
-    logger.info("Convert: %s → device via -G%s -i%s -q%s (GE=%s, paper=%s)",
+    logger.info("Convert: %s → device via -G%s -i%s -q%s%s (GE=%s, paper=%s)",
                 body.file_id, " <image.gam>" if body.image_aware else "",
-                body.intent, body.quality, body.gloss_enhancer, loaded.id)
+                body.intent, body.quality,
+                f" -d {body.dest_viewcond}" if body.dest_viewcond not in ("default", "", None) else "",
+                body.gloss_enhancer, loaded.id)
     return FileResponse(
         str(dev_tiff), media_type="image/tiff",
-        filename=f"converted_{body.intent}{ia_tag}.tif",
+        filename=f"converted_{body.intent}{ia_tag}{vc_tag}.tif",
     )

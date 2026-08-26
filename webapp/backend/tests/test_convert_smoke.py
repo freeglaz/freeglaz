@@ -117,6 +117,37 @@ def test_collink_argv_image_gam_axis():
     assert not any(str(a).endswith(".gam") for a in off)
 
 
+def test_collink_argv_dest_viewcond_axis():
+    """JALON 4: a print preset adds ``-d <preset>``; default/None adds nothing.
+    Orthogonal to intent and image-aware. Strict allow-list."""
+    from lib.z9_client import devicelink
+
+    # preset → -d pp, placed as its own token after the intent
+    on = devicelink.build_collink_argv("collink", "s.icc", "d.icc", "o.icc",
+                                       intent="p", dest_viewcond="pp")
+    assert "-d" in on
+    assert on[on.index("-d") + 1] == "pp"
+
+    # default / None / "" → no -d at all (unchanged JALON 1-3 behaviour)
+    for default in ("default", None, ""):
+        off = devicelink.build_collink_argv("collink", "s.icc", "d.icc", "o.icc",
+                                            intent="p", dest_viewcond=default)
+        assert "-d" not in off
+
+    # combines with image-aware, still one -d
+    combo = devicelink.build_collink_argv("collink", "s.icc", "d.icc", "o.icc",
+                                          intent="p", image_gam="img.gam",
+                                          dest_viewcond="pm")
+    assert combo[combo.index("-G") + 1] == "img.gam"
+    assert combo[combo.index("-d") + 1] == "pm"
+
+    # strict: non-print / unknown presets are refused
+    for bad in ("mt", "jd", "xx"):
+        with pytest.raises(ValueError):
+            devicelink.build_collink_argv("collink", "s.icc", "d.icc", "o.icc",
+                                          dest_viewcond=bad)
+
+
 @pytest.mark.skipif(not _tiffgamut_available(),
                     reason="tiffgamut/collink not installed")
 def test_image_aware_extracts_gam_and_feeds_collink(tmp_path):

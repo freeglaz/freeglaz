@@ -45,11 +45,18 @@ from .argyll import resolve_argyll_binary
 ALLOWED_INTENTS = ("r", "p", "lp")
 # collink -q<quality> : LUT resolution / effort.
 ALLOWED_QUALITIES = ("l", "m", "h", "u")
+# collink -d <viewcond> : DESTINATION CIECAM02 viewing conditions. Print presets
+# only (the reasonable print-bench selection); monitor/projector presets and the
+# fine per-parameter overrides are out of scope. None/"default" → no -d (collink
+# generic defaults). Verified: collink accepts all four with -G, image-aware
+# on or off.
+ALLOWED_DEST_VIEWCONDS = ("pp", "pc", "pe", "pm")
+_VIEWCOND_DEFAULT = ("default", "", None)
 
 
 def build_collink_argv(collink_bin: str, source_icc, dest_icc, out_icc, *,
                        intent: str = "r", quality: str = "h",
-                       image_gam=None) -> list[str]:
+                       image_gam=None, dest_viewcond=None) -> list[str]:
     """Build the ``collink -G`` argv (source profile → dest profile → DeviceLink).
 
     :param collink_bin: resolved collink executable path.
@@ -59,7 +66,11 @@ def build_collink_argv(collink_bin: str, source_icc, dest_icc, out_icc, *,
         gamut. The ``.gam`` MUST be in CIECAM02 Jab (``tiffgamut -pj``): a
         default Lab gamut makes collink abort ("Failed to make gamut map
         transform"). When None → full source gamut (unchanged JALON 1 behaviour).
-    :raises ValueError: unknown intent / quality.
+    :param dest_viewcond: optional DESTINATION viewing-conditions preset
+        (``-d <preset>``), one of ``ALLOWED_DEST_VIEWCONDS``. None/"default" →
+        no ``-d`` (collink generic defaults, unchanged). Orthogonal to intent and
+        image-aware.
+    :raises ValueError: unknown intent / quality / dest_viewcond.
     """
     if intent not in ALLOWED_INTENTS:
         raise ValueError(f"unknown intent {intent!r}; expected {ALLOWED_INTENTS}")
@@ -69,21 +80,34 @@ def build_collink_argv(collink_bin: str, source_icc, dest_icc, out_icc, *,
     # source gamut = the image's occupied gamut (image-aware). Orthogonal to
     # intent (works for r/p/lp).
     gmap = ["-G"] if image_gam is None else ["-G", str(image_gam)]
+    # ``-d <preset>`` → destination CIECAM02 viewing conditions. Absent → collink
+    # generic defaults (unchanged). Strict allow-list.
+    if dest_viewcond in _VIEWCOND_DEFAULT:
+        vc = []
+    elif dest_viewcond in ALLOWED_DEST_VIEWCONDS:
+        vc = ["-d", dest_viewcond]
+    else:
+        raise ValueError(
+            f"unknown dest_viewcond {dest_viewcond!r}; "
+            f"expected {ALLOWED_DEST_VIEWCONDS} or default")
     return [
         collink_bin, "-v",
         f"-q{quality}",
         *gmap,
         f"-i{intent}",
+        *vc,
         str(source_icc), str(dest_icc), str(out_icc),
     ]
 
 
 def run_collink(source_icc, dest_icc, out_icc, *,
                 intent: str = "r", quality: str = "h", image_gam=None,
-                timeout: int = 600) -> Path:
+                dest_viewcond=None, timeout: int = 600) -> Path:
     """Generate a DeviceLink .icc from (source, dest) via ``collink -G``.
 
     :param image_gam: optional image gamut ``.gam`` (image-aware axis, cf.
+        ``build_collink_argv``).
+    :param dest_viewcond: optional destination viewing-conditions preset (cf.
         ``build_collink_argv``).
     :return: Path of the produced DeviceLink.
     :raises ArgyllNotFound: collink not installed.
@@ -91,7 +115,8 @@ def run_collink(source_icc, dest_icc, out_icc, *,
     """
     collink = resolve_argyll_binary("collink")
     argv = build_collink_argv(collink, source_icc, dest_icc, out_icc,
-                              intent=intent, quality=quality, image_gam=image_gam)
+                              intent=intent, quality=quality, image_gam=image_gam,
+                              dest_viewcond=dest_viewcond)
     try:
         proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:

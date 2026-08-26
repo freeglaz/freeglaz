@@ -238,6 +238,7 @@ export async function postConvert(body) {
       quality: body.quality,
       gloss_enhancer: body.gloss_enhancer,
       image_aware: body.image_aware,
+      dest_viewcond: body.dest_viewcond,
     }),
   });
   if (!r.ok) {

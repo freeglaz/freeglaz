@@ -96,6 +96,51 @@ def test_collink_argv_intent_token_is_single_i():
         devicelink.build_collink_argv("collink", "s", "d", "o", intent="ir")
 
 
+def _icc_tags(icc: bytes) -> dict:
+    """Minimal tag table parse: {sig: type} for assertions."""
+    n = int.from_bytes(icc[128:132], "big")
+    out = {}
+    for i in range(n):
+        o = 132 + i * 12
+        sig = icc[o:o + 4]
+        off = int.from_bytes(icc[o + 4:o + 8], "big")
+        out[sig] = icc[off:off + 4]
+    return out
+
+
+def test_normalize_v4_profile_for_argyll():
+    """A real v4 profile (mluc desc) → v2.4, mluc tags dropped, colorimetry kept.
+
+    Fixture: sRGB_v4_ICC_preference.icc (v4, mluc text tags) already bundled.
+    """
+    from lib.z9_client import devicelink
+
+    v4 = (Path(__file__).resolve().parents[3]
+          / "lib" / "z9_client" / "assets" / "sRGB_v4_ICC_preference.icc").read_bytes()
+    assert v4[8] == 4, "fixture must be ICC v4"
+    assert any(t == b"mluc" for t in _icc_tags(v4).values())
+
+    norm = devicelink.normalize_icc_for_argyll(v4)
+    assert norm[8] == 2                                 # downgraded to v2
+    tags = _icc_tags(norm)
+    assert not any(t == b"mluc" for t in tags.values())  # no mluc left
+    # Colorimetric tags survive (this is a cLUT v4 profile → A2B0 present)
+    assert b"wtpt" in tags
+    assert b"A2B0" in tags or b"rXYZ" in tags
+    assert int.from_bytes(norm[0:4], "big") == len(norm)  # header size fixed
+
+
+def test_normalize_v2_profile_unchanged():
+    """A v2 profile with no mluc tags is returned byte-identical (no needless
+    repackaging)."""
+    from lib.z9_client import devicelink
+
+    v2 = (Path(__file__).resolve().parents[3]
+          / "lib" / "z9_client" / "assets" / "sRGB_IEC61966-2.1.icc").read_bytes()
+    assert v2[8] == 2
+    assert devicelink.normalize_icc_for_argyll(v2) == v2
+
+
 def test_convert_without_z9_configured_409(sample_tiff_path):
     """Valid source profile but no Z9 wired (no lifespan in TestClient) → the
     DEST cannot be resolved → 409, BEFORE any Argyll call."""

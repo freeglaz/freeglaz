@@ -112,8 +112,10 @@ def convert(body: ConvertBody, request: Request,
     dev_tiff = storage_dir / f"converted_{body.intent}_{body.quality}.tif"
     with tempfile.TemporaryDirectory(prefix="freeglaz_convert_") as tmp:
         tmp = Path(tmp)
-        (tmp / "source.icc").write_bytes(src_icc)
-        (tmp / "dest.icc").write_bytes(dest_icc)
+        # Argyll is v2-only: normalize both profiles (v4 sources are common on
+        # external images) before collink. Colorimetry is preserved untouched.
+        (tmp / "source.icc").write_bytes(devicelink.normalize_icc_for_argyll(src_icc))
+        (tmp / "dest.icc").write_bytes(devicelink.normalize_icc_for_argyll(dest_icc))
         try:
             devicelink.run_collink(
                 tmp / "source.icc", tmp / "dest.icc", tmp / "link.icc",

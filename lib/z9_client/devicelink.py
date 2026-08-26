@@ -118,6 +118,60 @@ def apply_cctiff(link_icc, in_tiff, out_tiff, *, timeout: int = 600) -> Path:
     return out
 
 
+def normalize_icc_for_argyll(icc: bytes) -> bytes:
+    """Return a copy of ``icc`` that Argyll (v2-only icclib) can read.
+
+    Argyll's icclib does not support ICC v4: it aborts when copying a v4
+    multiLocalizedUnicode (``mluc``) text tag ("icmTextDescription_cpy:
+    unimplemented tagtype"). Modern images (Adobe, camera exports) routinely
+    embed a v4 working space as their SOURCE profile — so this must be handled.
+
+    Fix: drop the ``mluc`` text tags (desc/cprt/dm?d — pure metadata, no colour)
+    and stamp the header as ICC v2.4. Every colorimetric tag (XYZ primaries,
+    white point, TRC curves, chromatic adaptation, any A2B) is copied
+    byte-for-byte, so the colour definition is untouched. collink writes its own
+    description (``-D``), so the removed text is not needed.
+
+    A profile already v2 and free of ``mluc`` tags is returned unchanged. On any
+    parse problem the input is returned as-is (let collink surface the real
+    error). Covers matrix profiles (≈ all image working spaces); an exotic v4
+    cLUT *input* profile (mAB/mBA) may still be unreadable by Argyll — out of
+    scope for this milestone.
+    """
+    try:
+        if len(icc) < 132:
+            return icc
+        major = icc[8]
+        n = int.from_bytes(icc[128:132], "big")
+        table = []
+        for i in range(n):
+            o = 132 + i * 12
+            sig = icc[o:o + 4]
+            off = int.from_bytes(icc[o + 4:o + 8], "big")
+            sz = int.from_bytes(icc[o + 8:o + 12], "big")
+            table.append((sig, off, sz, icc[off:off + 4]))
+        if major < 4 and not any(t[3] == b"mluc" for t in table):
+            return icc  # already Argyll-friendly
+
+        header = bytearray(icc[:128])
+        header[8:12] = b"\x02\x40\x00\x00"           # ICC v2.4
+        kept = [(sig, icc[off:off + sz])
+                for sig, off, sz, ttype in table if ttype != b"mluc"]
+        tbl = bytearray(len(kept).to_bytes(4, "big"))
+        data = bytearray()
+        data_base = 128 + 4 + len(kept) * 12
+        for sig, payload in kept:
+            off = data_base + len(data)
+            tbl += sig + off.to_bytes(4, "big") + len(payload).to_bytes(4, "big")
+            data += payload
+            data += b"\x00" * ((4 - len(payload) % 4) % 4)   # 4-byte align
+        out = bytearray(header) + tbl + data
+        out[0:4] = len(out).to_bytes(4, "big")               # header profile size
+        return bytes(out)
+    except Exception:
+        return icc
+
+
 def extract_embedded_icc(tiff_path) -> Optional[bytes]:
     """Return the ICC profile embedded in a TIFF (tag 34675), or ``None``.
 

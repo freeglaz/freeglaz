@@ -43,7 +43,7 @@ from pathlib import Path
 # repo root on path so lib/webapp import when run as a script
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from lib.z9_client import devicelink, xicclu               # noqa: E402
+from lib.z9_client import devicelink, tiffgamut, xicclu     # noqa: E402
 from lib.z9_client.argyll import resolve_argyll_binary      # noqa: E402
 from webapp.backend.services.scan_delta import ciede2000    # noqa: E402  (ΔE00, reused)
 
@@ -90,9 +90,12 @@ def build_grid(Ls, Cs, hs) -> list[dict]:
 
 # ─── collink link building (direct — includes `la`) ──────────────────────────
 def build_link(source_icc: Path, dest_icc: Path, out_icc: Path, *,
-               intent: str, quality: str, viewcond: str, timeout: int = 600) -> None:
+               intent: str, quality: str, viewcond: str,
+               image_gam=None, timeout: int = 900) -> None:
     collink = resolve_argyll_binary("collink")
-    argv = [collink, "-v", f"-q{quality}", "-G", f"-i{intent}"]
+    argv = [collink, "-v", f"-q{quality}"]
+    argv += ["-G"] if image_gam is None else ["-G", str(image_gam)]   # image-aware axis
+    argv += [f"-i{intent}"]
     if viewcond not in _VC_NONE:
         argv += ["-d", viewcond]
     argv += [str(source_icc), str(dest_icc), str(out_icc)]
@@ -100,6 +103,24 @@ def build_link(source_icc: Path, dest_icc: Path, out_icc: Path, *,
     if proc.returncode != 0 or not out_icc.exists():
         raise RuntimeError(f"collink failed ({intent}/{viewcond}): "
                            f"{(proc.stderr or proc.stdout or '').strip()[:300]}")
+
+
+def grid_image_gam(source_icc: Path, src_rgb: list[tuple], out_gam: Path, tmp: Path) -> Path:
+    """Image gamut (.gam) of the grid itself, rendered as a TIFF — the bench's
+    stand-in for 'the image' in image-aware mode. Self-contained/reproducible;
+    NOT vinz's real image (his visual judgement used real content) — measures the
+    MECHANISM (does image-aware change the L behaviour on these points)."""
+    import numpy as np
+    from PIL import Image
+    arr = np.array([list(t)[:3] for t in src_rgb], dtype=np.float64)
+    n = len(arr)
+    side = max(1, int(math.ceil(math.sqrt(n))))
+    pad = np.zeros((side * side, 3))
+    pad[:n] = arr
+    img8 = np.clip(pad * 255.0, 0, 255).astype(np.uint8).reshape(side, side, 3)
+    tif = tmp / "grid.tif"
+    Image.fromarray(img8).save(tif, format="TIFF")
+    return tiffgamut.run_tiffgamut(source_icc, tif, out_gam)
 
 
 # ─── measurement ─────────────────────────────────────────────────────────────
@@ -172,8 +193,31 @@ def derivatives(rows: list[dict], shadow_L_max: float = 20.0) -> dict:
     }
 
 
+def global_luminance(rows: list[dict], midhigh_L_min: float = 30.0) -> dict:
+    """Second grievance: does the intent lift OUTPUT luminance globally (not just
+    in shadows)? ΔL_out = L_out - L_in. >0 = luminance lifted. Measured on
+    neutrals (C_in==0, pure tone curve), on near-neutrals (C_in<=10), on
+    mid/high tones (L_in>=midhigh_L_min), and overall — plus the neutral ramp."""
+    def mean(xs):
+        return round(sum(xs) / len(xs), 3) if xs else None
+
+    neutral = [r for r in rows if r["C_in"] == 0]
+    near_neutral = [r for r in rows if r["C_in"] <= 10]
+    midhigh = [r for r in rows if r["L_in"] >= midhigh_L_min]
+    ramp = sorted([(r["L_in"], r["L_out"], r["dL"]) for r in neutral], key=lambda t: t[0])
+    return {
+        "neutral_dL_mean": mean([r["dL"] for r in neutral]),
+        "near_neutral_dL_mean": mean([r["dL"] for r in near_neutral]),
+        "midhigh_dL_mean": mean([r["dL"] for r in midhigh]),
+        "overall_dL_mean": mean([r["dL"] for r in rows]),
+        "midhigh_L_min": midhigh_L_min,
+        "neutral_ramp": [{"L_in": L, "L_out": round(Lo, 2), "dL": round(dl, 2)} for L, Lo, dl in ramp],
+    }
+
+
 # ─── run ─────────────────────────────────────────────────────────────────────
-def run_bench(dest_icc: Path, source_icc: Path, intents, viewconds, quality, out_dir: Path):
+def run_bench(dest_icc: Path, source_icc: Path, intents, viewconds, quality, out_dir: Path,
+              image_aware_modes=(False,)):
     out_dir.mkdir(parents=True, exist_ok=True)
     Ls = [5, 10, 15, 20, 30, 50]
     Cs = [0, 5, 10, 15, 20, 30, 40, 50, 60]
@@ -188,10 +232,17 @@ def run_bench(dest_icc: Path, source_icc: Path, intents, viewconds, quality, out
         dst_n = tmp / "dest.icc"; dst_n.write_bytes(
             devicelink.normalize_icc_for_argyll(dest_icc.read_bytes()))
 
-        print(f"[bench] grid: {len(grid)} points  (L={Ls} C={Cs} h={hs})")
+        print(f"[bench] grid: {len(grid)} points  (L={Ls} C={Cs} h={hs})  quality=-q{quality}")
         src_rgb, clipped = stage1_source_rgb(src_n, grid)
         n_clip = sum(clipped)
         print(f"[bench] source stage: {n_clip}/{len(grid)} points out of source gamut (flagged)")
+
+        # image-aware axis: the grid's own gamut stands in for 'the image'.
+        image_gam = None
+        if True in image_aware_modes:
+            non_clipped = [rgb for rgb, c in zip(src_rgb, clipped) if not c]
+            image_gam = grid_image_gam(src_n, non_clipped, tmp / "grid.gam", tmp)
+            print(f"[bench] image-aware: grid gamut extracted ({image_gam.name})")
 
         all_rows = []
         summary = {"dest": str(dest_icc), "source": str(source_icc),
@@ -199,39 +250,48 @@ def run_bench(dest_icc: Path, source_icc: Path, intents, viewconds, quality, out
                    "n_points": len(grid), "n_src_clipped": n_clip, "conditions": {}}
         for intent in intents:
             for vc in viewconds:
-                tag = f"{intent}_{vc}"
-                link = tmp / f"link_{tag}.icc"
-                print(f"[bench] building link -i{intent} "
-                      f"{'-d '+vc if vc not in _VC_NONE else '(default vc)'} …", flush=True)
-                try:
-                    build_link(src_n, dst_n, link, intent=intent, quality=quality, viewcond=vc)
-                except RuntimeError as e:
-                    print(f"[bench]   SKIP {tag}: {e}")
-                    summary["conditions"][tag] = {"error": str(e)}
-                    continue
-                lab_out = measure_link(link, dst_n, src_rgb)
-                rows = []
-                for i, g in enumerate(grid):
-                    if clipped[i] or i >= len(lab_out):
+                for ia in image_aware_modes:
+                    tag = f"{intent}_{vc}_{'ia' if ia else 'full'}"
+                    link = tmp / f"link_{tag}.icc"
+                    print(f"[bench] building link -i{intent} "
+                          f"{'-d '+vc if vc not in _VC_NONE else '(default vc)'} "
+                          f"{'image-aware' if ia else 'full-gamut'} …", flush=True)
+                    try:
+                        build_link(src_n, dst_n, link, intent=intent, quality=quality,
+                                   viewcond=vc, image_gam=image_gam if ia else None)
+                    except RuntimeError as e:
+                        print(f"[bench]   SKIP {tag}: {e}")
+                        summary["conditions"][tag] = {"error": str(e)}
                         continue
-                    row = metrics_row(g, lab_out[i])
-                    row.update({"intent": intent, "viewcond": vc})
-                    rows.append(row)
-                    all_rows.append(row)
-                deriv = derivatives(rows)
-                summary["conditions"][tag] = {
-                    "intent": intent, "viewcond": vc, "n_rows": len(rows),
-                    "shadow": deriv["shadow_summary"],
-                }
-                print(f"[bench]   {tag}: shadow dLout/dCin mean="
-                      f"{deriv['shadow_summary']['dLout_dCin_mean']} "
-                      f"max={deriv['shadow_summary']['dLout_dCin_max']}")
+                    lab_out = measure_link(link, dst_n, src_rgb)
+                    rows = []
+                    for i, g in enumerate(grid):
+                        if clipped[i] or i >= len(lab_out):
+                            continue
+                        row = metrics_row(g, lab_out[i])
+                        row.update({"intent": intent, "viewcond": vc,
+                                    "image_aware": int(ia)})
+                        rows.append(row)
+                        all_rows.append(row)
+                    deriv = derivatives(rows)
+                    glob = global_luminance(rows)
+                    summary["conditions"][tag] = {
+                        "intent": intent, "viewcond": vc, "image_aware": ia,
+                        "n_rows": len(rows),
+                        "shadow": deriv["shadow_summary"],
+                        "global_luminance": {k: v for k, v in glob.items() if k != "neutral_ramp"},
+                        "neutral_ramp": glob["neutral_ramp"],
+                    }
+                    print(f"[bench]   {tag}: shadow dLout/dCin mean="
+                          f"{deriv['shadow_summary']['dLout_dCin_mean']}  "
+                          f"| global ΔL_out neutral={glob['neutral_dL_mean']} "
+                          f"midhigh={glob['midhigh_dL_mean']} overall={glob['overall_dL_mean']}")
 
         # write outputs
         csv_path = out_dir / "points.csv"
         with open(csv_path, "w", newline="") as f:
             w = csv.DictWriter(f, fieldnames=[
-                "intent", "viewcond", "L_in", "C_in", "h_in",
+                "intent", "viewcond", "image_aware", "L_in", "C_in", "h_in",
                 "L_out", "C_out", "h_out", "dL", "dC", "dh", "dE00"])
             w.writeheader()
             w.writerows(all_rows)
@@ -259,10 +319,27 @@ def _write_reading(path: Path, summary: dict):
                                kv[1]["shadow"]["dLout_dCin_mean"] or 0), reverse=True)
     for k, v in conds:
         s = v["shadow"]
-        lines.append(f"{k:<12} {str(s['dLout_dCin_mean']):>16} "
-                     f"{str(s['dLout_dCin_max']):>16} {v['n_rows']:>6}")
+        lines.append(f"{k:<16} {str(s['dLout_dCin_mean']):>14} "
+                     f"{str(s['dLout_dCin_max']):>14} {v['n_rows']:>6}")
     lines.append("")
     lines.append("Lower (closer to 0) = shadows keep their luminance as chroma rises.")
+
+    # ── global luminance (2nd grievance): does the intent lift L EVERYWHERE? ──
+    glob_conds = [(k, v) for k, v in summary["conditions"].items() if "global_luminance" in v]
+    if glob_conds:
+        lines += ["", "", "=== Global luminance — ΔL_out = L_out - L_in (>0 = luminance lifted) ===",
+                  "Second grievance: is L raised everywhere (neutrals / mid-high), not only shadows?", ""]
+        lines.append(f"{'condition':<16} {'neutral':>9} {'near-neut':>10} {'mid-high':>9} {'overall':>9}")
+        lines.append("-" * 56)
+        glob_conds.sort(key=lambda kv: kv[1]["global_luminance"]["overall_dL_mean"] or 0, reverse=True)
+        for k, v in glob_conds:
+            g = v["global_luminance"]
+            lines.append(f"{k:<16} {str(g['neutral_dL_mean']):>9} "
+                         f"{str(g['near_neutral_dL_mean']):>10} {str(g['midhigh_dL_mean']):>9} "
+                         f"{str(g['overall_dL_mean']):>9}")
+        lines.append("")
+        lines.append("neutral = C*=0 (pure tone curve). >0 there = the whole tone scale is lifted,")
+        lines.append("independent of chroma → the 'raises luminance everywhere' grievance.")
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -273,11 +350,14 @@ def main():
     ap.add_argument("--intents", default="r,la,p,lp")
     ap.add_argument("--viewconds", default="default,pp")
     ap.add_argument("--quality", default="l", choices=list("lmhu"))
+    ap.add_argument("--image-aware", default="off", choices=("off", "on", "both"),
+                    help="collink -G image-aware: off | on | both (grid gamut stands in for the image)")
     ap.add_argument("--out-dir", required=True, type=Path)
     a = ap.parse_args()
     intents = [x.strip() for x in a.intents.split(",") if x.strip()]
     vcs = [x.strip() for x in a.viewconds.split(",") if x.strip()]
-    run_bench(a.dest, a.source, intents, vcs, a.quality, a.out_dir)
+    ia_modes = {"off": (False,), "on": (True,), "both": (False, True)}[a.image_aware]
+    run_bench(a.dest, a.source, intents, vcs, a.quality, a.out_dir, image_aware_modes=ia_modes)
 
 
 if __name__ == "__main__":

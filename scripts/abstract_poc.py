@@ -44,6 +44,23 @@ from lib.z9_client.argyll import resolve_argyll_binary            # noqa: E402
 
 _SRC = Path(__file__).resolve().parents[1] / "lib" / "z9_client" / "assets" / "LargeRGB-elle-V2-g18.icc"
 
+# ── OFFICIAL non-regression baseline (witness: Canson Photolustre RC GE-ON) ──
+# Reference experimental condition: refined Cmeasured (bracketing+bisection) +
+# τref=1, policy unchanged. The heterogeneous-generalisation jalon compares each
+# profile's guards against this. τref=1 is a REFERENCE condition, NOT an optimum
+# nor a universal value — the chroma↔luminance trade depends on the image; τ will
+# become a UI cursor (future). Values measured (rebaseline_tau1.py), not assumed.
+BASELINE_TAU1 = {
+    "witness": "Canson Photolustre RC GE-ON",
+    "condition": "refined Cmeasured (bracketing+bisection) · τref=1 · policy unchanged",
+    "shadow_dLoutdCin_mean": 0.0235,      # ombres — la propriété centrale
+    "neutral_dLout_mean": 0.348,          # neutre ΔL
+    "hue_dh_P95_Ct20": 0.66, "hue_dh_P99_Ct20": 0.81,   # teinte, couleurs chromatiques (clean)
+    "hue_dh_P95_Ct10": 1.77,              # Ct>10 : instabilité near-neutral (hue Verdict A), pas un défaut
+    "hue_dE00_P95_Ct10": 0.73,
+    "L5C60_hotspot_dE00": 2.13,           # résolu (artefact de résolution ≈21 fermé par le raffinement)
+}
+
 
 # ─── lut16 Lab→Lab abstract (hand-authored; identity verified via xicclu) ─────
 def _u16(x):

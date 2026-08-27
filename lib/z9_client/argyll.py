@@ -73,11 +73,12 @@ __all__ = [
 # official CIE table) + profcheck (profile validation) are used by build/verify.
 REQUIRED_BINARIES = ("targen", "colprof", "spec2cie", "profcheck")
 
-# Binaries used by the OPTIONAL Convert module (collink = build a DeviceLink,
-# cctiff = apply it, tiffgamut = image-aware gamut extraction). Resolved ON
-# DEMAND via find_argyll_binary and NEVER gate check_argyll's ``ok`` — a freeglaz
-# install without them prints and profiles perfectly; only Convert needs them.
-OPTIONAL_BINARIES = ("collink", "cctiff", "tiffgamut")
+# Binaries used by OPTIONAL tooling: the Convert module (collink = build a
+# DeviceLink, cctiff = apply it, tiffgamut = image-aware gamut extraction) and
+# the diagnostic gamut bench (xicclu = look colours up through a profile/link).
+# Resolved ON DEMAND via find_argyll_binary and NEVER gate check_argyll's ``ok``
+# — a freeglaz install without them prints and profiles perfectly.
+OPTIONAL_BINARIES = ("collink", "cctiff", "tiffgamut", "xicclu")
 
 
 class ArgyllNotFound(RuntimeError):

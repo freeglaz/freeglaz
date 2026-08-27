@@ -219,6 +219,61 @@ def normalize_icc_for_argyll(icc: bytes) -> bytes:
         return icc
 
 
+# ── ICC transform LUT tag TYPES — the REAL discriminant for Argyll support ────
+# Established (v4 confrontation) against the INSTALLED binaries, NOT the ICC
+# version byte: Argyll (xicclu/collink) reads mft1/mft2 even inside a v4 header
+# (Z9-native profiles), but CANNOT read mAB/mBA (true v4 lutAToBType, what
+# i1Profiler emits) → "Unable to locate usable conversion". NEVER gate on the ICC
+# version: `if ICC_major >= 4: reject` is WRONG (Z9 profiles are v4/mft2).
+_ARGYLL_READABLE_LUT = (b"mft1", b"mft2")
+_ARGYLL_UNREADABLE_LUT = (b"mAB ", b"mBA ")
+
+
+def lut_tag_types(icc: bytes) -> dict:
+    """Return ``{tag_sig: tag_type}`` (bytes) for the A2B*/B2A* transform tags."""
+    out = {}
+    try:
+        if len(icc) < 132:
+            return out
+        n = int.from_bytes(icc[128:132], "big")
+        for i in range(n):
+            o = 132 + i * 12
+            sig = icc[o:o + 4]
+            if sig[:3] in (b"A2B", b"B2A"):
+                off = int.from_bytes(icc[o + 4:o + 8], "big")
+                out[sig] = icc[off:off + 4]
+    except Exception:
+        pass
+    return out
+
+
+def convert_lut_support(icc: bytes) -> str:
+    """Classify a profile for the Convert (Argyll) engine, on the REAL LUT tag
+    type — NEVER on the ICC version.
+
+    - ``SUPPORTED_MFT``       : has an mft1/mft2 A2B/B2A LUT (Argyll reads it,
+      including inside a v4 header — Z9-native and freeglaz-built profiles).
+    - ``SUPPORTED_MATRIX``    : no A2B/B2A LUT but a matrix profile
+      (rXYZ/gXYZ/bXYZ) — Argyll uses the matrix (source working spaces).
+    - ``UNSUPPORTED_MAB_MBA`` : A2B/B2A are mAB/mBA (true v4) with no mft — Argyll
+      cannot build a lookup (i1Profiler output).
+    - ``NO_USABLE_TRANSFORM`` : neither a usable LUT nor a matrix.
+    """
+    types = set(lut_tag_types(icc).values())
+    if types & set(_ARGYLL_READABLE_LUT):
+        return "SUPPORTED_MFT"
+    if types & set(_ARGYLL_UNREADABLE_LUT):
+        return "UNSUPPORTED_MAB_MBA"
+    try:
+        n = int.from_bytes(icc[128:132], "big")
+        tags = {icc[132 + i * 12:132 + i * 12 + 4] for i in range(n)}
+    except Exception:
+        tags = set()
+    if {b"rXYZ", b"gXYZ", b"bXYZ"} <= tags:
+        return "SUPPORTED_MATRIX"
+    return "NO_USABLE_TRANSFORM"
+
+
 def extract_embedded_icc(tiff_path) -> Optional[bytes]:
     """Return the ICC profile embedded in a TIFF (tag 34675), or ``None``.
 

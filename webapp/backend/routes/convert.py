@@ -45,6 +45,24 @@ class ConvertBody(BaseModel):
                                        # default | pp | pc | pe | pm (print presets only)
 
 
+# Convert v1 contract (documented, not accidental): the Argyll engine supports
+# mft1/mft2 LUTs (incl. under a v4 header — Z9-native and freeglaz-built) and
+# does NOT support mAB/mBA (true v4 lutAToBType, i1Profiler output). We refuse
+# mAB/mBA CLEANLY here, BEFORE any Argyll call, so no cryptic Argyll error leaks.
+# This gate is Convert-scoped only — it never touches the Print path.
+def _reject_unsupported_lut(icc: bytes, which: str) -> None:
+    status = devicelink.convert_lut_support(icc)
+    if status in ("UNSUPPORTED_MAB_MBA", "NO_USABLE_TRANSFORM"):
+        raise HTTPException(
+            422,
+            detail={"code": "unsupported_lut", "which": which, "status": status,
+                    "message": "Profile not supported by the Convert module. "
+                               "This profile uses ICC mAB/mBA tables, which the Argyll "
+                               "conversion engine currently used by freeglaz does not "
+                               "support. Convert accepts profiles using mft1/mft2 tables."},
+        )
+
+
 def _source_profile_summary(icc_bytes: bytes) -> dict:
     """Space + TRC summary of an embedded profile (assembles existing bricks)."""
     header = HpProprietaryDecoder.extract_header(icc_bytes)
@@ -95,6 +113,7 @@ def convert(body: ConvertBody, request: Request,
                     "message": "The image carries no embedded ICC profile — "
                                "cannot convert (no source space to read)."},
         )
+    _reject_unsupported_lut(src_icc, "source")   # clean refusal BEFORE any Argyll call
 
     # 2. DEST = loaded paper's resident, via the SAME primitive as print
     if z9 is None:
@@ -110,6 +129,7 @@ def convert(body: ConvertBody, request: Request,
         dest_icc = fetch_resident_icc(z9, loaded.id, body.gloss_enhancer)
     except Z9Error as e:
         raise HTTPException(502, detail=f"cannot read the loaded paper resident: {e}")
+    _reject_unsupported_lut(dest_icc, "destination")   # clean refusal BEFORE any Argyll call
 
     # 3. DeviceLink (collink -G) + apply (cctiff) → device TIFF on disk
     storage_dir = file_storage.get_storage(body.file_id)
@@ -118,8 +138,10 @@ def convert(body: ConvertBody, request: Request,
     dev_tiff = storage_dir / f"converted_{body.intent}_{body.quality}{ia_tag}{vc_tag}.tif"
     with tempfile.TemporaryDirectory(prefix="freeglaz_convert_") as tmp:
         tmp = Path(tmp)
-        # Argyll is v2-only: normalize both profiles (v4 sources are common on
-        # external images) before collink. Colorimetry is preserved untouched.
+        # Normalize both profiles before collink: strip the v4 mluc TEXT tags
+        # (collink crashes copying them) + relabel the header v2.4. Colorimetry
+        # is preserved untouched (mft1/mft2 LUTs copied byte-for-byte; mAB/mBA
+        # were already refused above by _reject_unsupported_lut).
         (tmp / "source.icc").write_bytes(devicelink.normalize_icc_for_argyll(src_icc))
         (tmp / "dest.icc").write_bytes(devicelink.normalize_icc_for_argyll(dest_icc))
         # VOLET 2: tag the device output with the loaded paper's profile so it

@@ -66,6 +66,7 @@
     "offline_hint": "Z9 unreachable — the destination profile cannot be resolved while offline.",
     "saved": "Saved: {{filename}}",
     "error_generic": "Conversion failed.",
+    "error_unsupported_lut": "Profile not supported by the Convert module. This profile uses ICC mAB/mBA tables, which the Argyll conversion engine currently used by freeglaz does not support. Convert accepts profiles using mft1/mft2 tables.",
     "error": "Conversion failed: {{message}}"
   },
   "status_bar": {

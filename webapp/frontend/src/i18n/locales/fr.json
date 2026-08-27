@@ -66,6 +66,7 @@
     "offline_hint": "Z9 injoignable — le profil de destination ne peut pas être résolu hors ligne.",
     "saved": "Enregistré : {{filename}}",
     "error_generic": "Échec de la conversion.",
+    "error_unsupported_lut": "Profil non pris en charge par le module Convert. Ce profil utilise des tables ICC mAB/mBA, que le moteur de conversion Argyll utilisé actuellement par freeglaz ne prend pas en charge. Convert accepte les profils utilisant des tables mft1/mft2.",
     "error": "Échec de la conversion : {{message}}"
   },
   "status_bar": {

@@ -271,6 +271,68 @@ def test_cctiff_embed_tags_device_without_changing_pixels(tmp_path):
     assert not Image.open(plain).info.get("icc_profile")
 
 
+def test_convert_lut_support_classifier():
+    """LUT-type classifier (the real Argyll discriminant, NOT the ICC version)."""
+    from lib.z9_client import devicelink
+    mft2_v4 = (_ASSETS.parent.parent.parent / "webapp" / "backend" / "tests"
+               / "fixtures" / "synthetic_test_resident_A.icc").read_bytes()
+    mab_v4 = (_ASSETS / "sRGB_v4_ICC_preference.icc").read_bytes()
+    matrix_v2 = (_ASSETS / "sRGB_IEC61966-2.1.icc").read_bytes()
+    assert mft2_v4[8] == 4 and devicelink.convert_lut_support(mft2_v4) == "SUPPORTED_MFT"
+    assert mab_v4[8] == 4 and devicelink.convert_lut_support(mab_v4) == "UNSUPPORTED_MAB_MBA"
+    assert devicelink.convert_lut_support(matrix_v2) == "SUPPORTED_MATRIX"
+
+
+def _stage_with_icc(icc_bytes: bytes) -> str:
+    """Stage a source.tif carrying ``icc_bytes`` as its embedded profile."""
+    file_id, dir_path = file_storage.new_storage()
+    Image.new("RGB", (32, 32), color=(120, 60, 20)).save(
+        dir_path / "source.tif", format="TIFF", dpi=(300, 300), icc_profile=icc_bytes)
+    return file_id
+
+
+def test_convert_refuses_mab_mba_source_cleanly_before_argyll():
+    """A source using mAB/mBA v4 LUTs → clean 422 unsupported_lut, BEFORE any Z9
+    or Argyll call (no cryptic Argyll message leaks)."""
+    c = _client()
+    mab = (_ASSETS / "sRGB_v4_ICC_preference.icc").read_bytes()
+    fid = _stage_with_icc(mab)
+    r = c.post("/api/convert", json={"file_id": fid, "gloss_enhancer": "OFF"})
+    assert r.status_code == 422, r.text
+    d = r.json()["detail"]
+    assert d["code"] == "unsupported_lut" and d["which"] == "source"
+    # factual message, no Argyll internals
+    assert "mAB/mBA" in d["message"] and "Unable to locate usable conversion" not in d["message"]
+
+
+def test_convert_mft_source_passes_lut_gate():
+    """An mft2 source passes the LUT gate (fails later on Z9=None → 409, not 422)."""
+    c = _client()
+    mft = (_ASSETS.parent.parent.parent / "webapp" / "backend" / "tests"
+           / "fixtures" / "synthetic_test_resident_A.icc").read_bytes()
+    fid = _stage_with_icc(mft)
+    r = c.post("/api/convert", json={"file_id": fid, "gloss_enhancer": "OFF"})
+    assert r.status_code == 409, r.text        # Z9 not configured — gate passed
+
+
+def test_print_gate_unaffected_by_convert_lut_guard():
+    """Print non-regression: an mAB-embedded TIFF stays printable (the print gate
+    keys on has_icc, not the LUT type) — the Convert guard never touches Print."""
+    from webapp.backend.services.file_inspector import to_file_info
+    from lib.z9_client import devicelink
+    import inspect as _inspect
+    from webapp.backend.routes import printing
+    mab = (_ASSETS / "sRGB_v4_ICC_preference.icc").read_bytes()
+    fid, dir_path = file_storage.new_storage()
+    p = dir_path / "source.tif"
+    Image.new("RGB", (64, 64), color=(180, 90, 30)).save(p, format="TIFF", dpi=(300, 300), icc_profile=mab)
+    info = to_file_info(fid, "source.tif", p)
+    assert info.has_icc is True and info.is_printable is True   # Print unaffected
+    assert devicelink.convert_lut_support(mab) == "UNSUPPORTED_MAB_MBA"  # Convert refuses
+    # structural: the Print route never calls the Convert-scoped LUT guard
+    assert "convert_lut_support" not in _inspect.getsource(printing)
+
+
 def test_convert_without_z9_configured_409(sample_tiff_path):
     """Valid source profile but no Z9 wired (no lifespan in TestClient) → the
     DEST cannot be resolved → 409, BEFORE any Argyll call."""

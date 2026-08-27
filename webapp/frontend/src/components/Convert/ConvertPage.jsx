@@ -87,8 +87,9 @@ export default function ConvertPage({ paper, offline }) {
     } catch (e) {
       const d = e.detail;
       setConvertError(
-        (d && typeof d === 'object' && d.message) ? d.message
-          : (e.message || t('convert.error_generic')),
+        d?.code === 'unsupported_lut' ? t('convert.error_unsupported_lut')
+          : (d && typeof d === 'object' && d.message) ? d.message
+            : (e.message || t('convert.error_generic')),
       );
     } finally {
       setConverting(false);

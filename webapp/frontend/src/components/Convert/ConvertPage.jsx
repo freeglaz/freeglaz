@@ -131,242 +131,243 @@ export default function ConvertPage({ paper, offline, onSendToPrint }) {
   const canConvert = !!fileId && !!sourceInfo?.has_profile && !noPaper && !offline && !converting;
 
   return (
-    <div className="flex-1 overflow-auto">
-      <div className="max-w-3xl mx-auto px-6 py-8">
-        <header className="mb-6">
-          <h1 className="text-lg font-semibold text-text-strong">{t('convert.title')}</h1>
-          <p className="text-sm text-text-muted mt-1">{t('convert.subtitle')}</p>
-        </header>
-
-        {/* Drop zone */}
-        <div
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          className={`rounded-lg border-2 border-dashed transition-colors p-8 text-center
-            ${dragging ? 'border-accent bg-accent-soft' : 'border-border-soft bg-sunken'}`}>
-          {loading ? (
-            <div className="flex items-center justify-center gap-2 text-text-muted">
-              <Loader2 size={18} className="animate-spin" aria-hidden="true"/>
-              <span className="text-sm">{t('convert.loading')}</span>
+    <>
+      {/* LEFT — drop zone that becomes the preview. Mirrors the Print viewer:
+          one flex-1 column, drop handlers on the whole surface, dropzone and
+          preview share the same slot so there is no layout jump. */}
+      <div
+        className="flex-1 flex flex-col min-w-0"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}>
+        {!file ? (
+          <div className={`flex-1 m-4 mb-2 rounded-xl bg-sunken border-[1.5px] border-dashed
+                           relative flex flex-col items-center justify-center gap-4 text-text-muted
+                           transition-colors
+                           ${dragging ? 'border-accent bg-accent/5' : 'border-border-strong'}
+                           ${loading ? 'opacity-90' : ''}`}>
+            <UploadCloud size={48} strokeWidth={1.3} aria-hidden="true"/>
+            <div className="text-[17px] font-medium text-text-strong tracking-tight text-center">
+              {t('convert.drop_hint')}
             </div>
-          ) : file ? (
-            <div className="flex items-center justify-center gap-2 text-text-strong">
-              <FileImage size={18} className="text-accent" aria-hidden="true"/>
-              <span className="text-sm font-medium">{file.info.filename}</span>
+            {loading && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="absolute inset-0 rounded-xl bg-surface/85 backdrop-blur-[1px] flex flex-col items-center justify-center gap-3">
+                <Loader2 size={32} strokeWidth={1.8} className="animate-spin text-accent" aria-hidden="true"/>
+                <div className="text-sm font-medium text-text-strong">{t('convert.loading')}</div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex-1 flex flex-col min-h-0 m-4 mb-2">
+            {/* Backend PNG preview (bounded, purely informative) */}
+            <div className="flex-1 min-h-0 rounded-xl bg-sunken border border-border-soft flex items-center justify-center overflow-hidden p-4">
+              <img
+                src={getFilePreviewUrl(fileId)}
+                alt={file.info.filename}
+                className="max-h-full max-w-full object-contain rounded-md"/>
             </div>
-          ) : (
-            <div className="flex flex-col items-center gap-2 text-text-muted">
-              <UploadCloud size={28} strokeWidth={1.5} aria-hidden="true"/>
-              <span className="text-sm">{t('convert.drop_hint')}</span>
+            <div className="mt-2 flex items-center justify-center gap-2 text-text-muted min-w-0">
+              <FileImage size={14} className="text-accent flex-shrink-0" aria-hidden="true"/>
+              <span className="text-xs2 font-medium truncate">{file.info.filename}</span>
             </div>
-          )}
-        </div>
+          </div>
+        )}
         {loadError && (
-          <p className="text-xs2 text-danger mt-2">{loadError}</p>
-        )}
-
-        {/* Preview of the dropped image (backend PNG, bounded) — visual feedback
-            that the file loaded, mirroring the Print viewer. Purely informative. */}
-        {file && fileId && (
-          <div className="mt-4 flex justify-center">
-            <img
-              src={getFilePreviewUrl(fileId)}
-              alt={file.info.filename}
-              className="max-h-64 max-w-full rounded-md border border-border-soft object-contain bg-sunken"/>
-          </div>
-        )}
-
-        {/* Detected source space + TRC */}
-        {file && (
-          <div className="mt-5">
-            <Label>{t('convert.source_section')}</Label>
-            {sourceLoading ? (
-              <div className="flex items-center gap-2 text-text-muted text-sm">
-                <Loader2 size={14} className="animate-spin" aria-hidden="true"/>
-                <span>{t('convert.reading_source')}</span>
-              </div>
-            ) : noSourceProfile ? (
-              <div className="flex items-start gap-2 rounded-md bg-danger/10 border border-danger/30 px-3 py-2.5">
-                <AlertTriangle size={16} className="text-danger mt-0.5 flex-shrink-0" aria-hidden="true"/>
-                <p className="text-xs2 text-danger">{t('convert.no_source_profile')}</p>
-              </div>
-            ) : sourceInfo ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge kind="info">{(sourceInfo.color_space || '—').trim()}</Badge>
-                {sourceInfo.trc?.primary_family_label && (
-                  <Badge kind="neutral">{sourceInfo.trc.primary_family_label}</Badge>
-                )}
-              </div>
-            ) : null}
-          </div>
-        )}
-
-        {/* collink gamut intent (+ its command + its cost, always visible) — the
-            primary choice. Real term (collink gamut intent, not an ICC profile
-            intent), real command shown; each carries its trade-off; no hidden "best". */}
-        {file && sourceInfo?.has_profile && (
-          <div className="mt-6">
-            <div className="flex items-center gap-3">
-              <Label>{t('convert.gamut_label')}</Label>
-              <Select
-                value={gamutIntent}
-                onChange={setGamutIntent}
-                options={[
-                  { value: 'relative', label: t('convert.gamut_relative') },
-                  { value: 'luminance_matched', label: t('convert.gamut_luminance_matched') },
-                  { value: 'perceptual', label: t('convert.gamut_perceptual') },
-                  { value: 'luminance_preserving', label: t('convert.gamut_luminance_preserving') },
-                  { value: 'luminance_priority', label: t('convert.gamut_luminance_priority') },
-                  { value: 'relative_bpc', label: t('convert.gamut_relative_bpc') },
-                ]}/>
-              {isFreeglazCustom && (
-                <Badge kind="info">{t('convert.gamut_freeglaz')}</Badge>
-              )}
-            </div>
-            {/* Real command driven (short form). Full command with -v -qh + profile
-                paths + effective τ goes to the job trace (backend log). */}
-            <p className="text-xs2 font-mono text-text-muted mt-1.5">{GAMUT_COMMAND[gamutIntent]}</p>
-            <p className="text-xs2 text-text-muted mt-1 max-w-xl">
-              {t(`convert.gamut_desc_${gamutIntent}`)}
-            </p>
-
-            {/* τ cursor — ONLY for luminance_priority. Orientation (verified):
-                LEFT = low τ (0.5) = luminance protected ; RIGHT = high τ (2.0) =
-                chroma preserved. The numeric value is shown (traceability). */}
-            {isLumPriority && (
-              <div className="mt-3 max-w-md">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-text-strong">{t('convert.tau_label')}</span>
-                  <span className="text-xs2 font-mono text-text-muted">τ = {tau.toFixed(2)}</span>
-                </div>
-                <div className="mt-1.5">
-                  <Slider value={tau} min={0.5} max={2.0} step={0.05} onChange={setTau}/>
-                </div>
-                <div className="flex justify-between text-xs2 text-text-faint mt-1">
-                  <span>{t('convert.tau_luminance_end')}</span>
-                  <span>{t('convert.tau_chroma_end')}</span>
-                </div>
-                <p className="text-xs2 text-text-muted mt-1.5 max-w-xl">{t('convert.tau_help')}</p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Quality + gloss enhancer */}
-        {file && sourceInfo?.has_profile && (
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            <Field label={t('convert.quality_label')} help={t('convert.quality_help')}>
-              <Segmented
-                options={[
-                  { value: 'l', label: t('convert.quality_l') },
-                  { value: 'm', label: t('convert.quality_m') },
-                  { value: 'h', label: t('convert.quality_h') },
-                  { value: 'u', label: t('convert.quality_u') },
-                ]}
-                value={quality}
-                onChange={setQuality}/>
-            </Field>
-            <Field label={t('convert.ge_label')} help={t('convert.ge_help')}>
-              <Segmented
-                options={[
-                  { value: 'OFF', label: t('convert.ge_off') },
-                  { value: 'FULLPAGE', label: t('convert.ge_on') },
-                ]}
-                value={ge}
-                onChange={setGe}/>
-            </Field>
-          </div>
-        )}
-
-        {/* Image-aware + dest viewing conditions apply to the native -G strategies
-            only (they are gamut-mapping-mode features) → hidden for luminance_priority. */}
-        {file && sourceInfo?.has_profile && !isFreeglazCustom && (
-          <div className="mt-4 flex items-start gap-3">
-            <div className="pt-0.5">
-              <Toggle on={imageAware} onChange={setImageAware}/>
-            </div>
-            <div>
-              <div className="text-sm font-medium text-text-strong">{t('convert.image_aware_label')}</div>
-              <div className="text-xs2 text-text-muted mt-0.5 max-w-xl">{t('convert.image_aware_help')}</div>
-            </div>
-          </div>
-        )}
-
-        {file && sourceInfo?.has_profile && !isFreeglazCustom && (
-          <div className="mt-4">
-            <div className="flex items-center gap-3">
-              <span className="text-sm font-medium text-text-strong">{t('convert.viewcond_label')}</span>
-              <Select
-                value={destViewcond}
-                onChange={setDestViewcond}
-                options={[
-                  { value: 'default', label: t('convert.viewcond_default_label') },
-                  { value: 'pp', label: 'pp' },
-                  { value: 'pc', label: 'pc' },
-                  { value: 'pe', label: 'pe' },
-                  { value: 'pm', label: 'pm' },
-                ]}/>
-            </div>
-            <p className="text-xs2 text-text-muted mt-1.5 max-w-xl">
-              {t(`convert.viewcond_desc_${destViewcond}`)}
-            </p>
-            <p className="text-xs2 text-text-faint italic mt-1 max-w-xl">
-              {t('convert.viewcond_note')}
-            </p>
-          </div>
-        )}
-
-        {/* Destination (informational — not a selector) */}
-        {file && sourceInfo?.has_profile && (
-          <p className="mt-4 text-xs2 text-text-muted flex items-center gap-1.5">
-            <ArrowRight size={13} aria-hidden="true"/>
-            {noPaper
-              ? t('convert.dest_no_paper')
-              : t('convert.dest_loaded', { paper: paper.name || paper.mediaid || '—' })}
-          </p>
-        )}
-
-        {/* Action — save to disk, or hand off to the Print tab (device passthrough) */}
-        {file && sourceInfo?.has_profile && (
-          <div className="mt-6">
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                disabled={!canConvert}
-                onClick={() => runConvert(false)}
-                className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-md text-sm font-semibold transition-colors
-                  ${canConvert
-                    ? 'bg-accent text-white hover:bg-accent/90'
-                    : 'bg-sunken text-text-faint cursor-not-allowed'}`}>
-                {converting && <Loader2 size={15} className="animate-spin" aria-hidden="true"/>}
-                {t('convert.run_button')}
-              </button>
-              <button
-                type="button"
-                disabled={!canConvert}
-                onClick={() => runConvert(true)}
-                title={t('convert.run_and_print_help')}
-                className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-md text-sm font-semibold border transition-colors
-                  ${canConvert
-                    ? 'border-accent text-accent hover:bg-accent/10'
-                    : 'border-border text-text-faint cursor-not-allowed'}`}>
-                <Printer size={15} aria-hidden="true"/>
-                {t('convert.run_and_print_button')}
-              </button>
-            </div>
-            {offline && !noPaper && (
-              <p className="text-xs2 text-text-muted mt-2">{t('convert.offline_hint')}</p>
-            )}
-            {convertError && (
-              <p className="text-xs2 text-danger mt-2">{convertError}</p>
-            )}
-            {done && (
-              <p className="text-xs2 text-icc-ok mt-2">{t('convert.saved', { filename: done })}</p>
-            )}
-          </div>
+          <p className="px-4 pb-2 text-xs2 text-danger text-center">{loadError}</p>
         )}
       </div>
-    </div>
+
+      {/* RIGHT — fixed params panel. Mirrors the Print sidebar: 380px wide,
+          flex-col with a scrolling body and a pinned footer holding the actions. */}
+      <aside className="w-[380px] bg-bg border-l border-border-soft flex flex-col">
+        <header className="px-5 pt-4 pb-3.5">
+          <h1 className="text-[13.5px] font-semibold text-text-strong tracking-tight">{t('convert.title')}</h1>
+          <p className="text-xs2 text-text-muted mt-0.5">{t('convert.subtitle')}</p>
+        </header>
+
+        <div className="flex-1 px-5 overflow-y-auto no-scrollbar">
+          {/* 1. Detected source space + TRC (info about the loaded file, in head
+              of the panel — analogous to PaperCard in the Print sidebar). */}
+          {file && (
+            <>
+              <Label>{t('convert.source_section')}</Label>
+              {sourceLoading ? (
+                <div className="flex items-center gap-2 text-text-muted text-sm">
+                  <Loader2 size={14} className="animate-spin" aria-hidden="true"/>
+                  <span>{t('convert.reading_source')}</span>
+                </div>
+              ) : noSourceProfile ? (
+                <div className="flex items-start gap-2 rounded-md bg-danger/10 border border-danger/30 px-3 py-2.5">
+                  <AlertTriangle size={16} className="text-danger mt-0.5 flex-shrink-0" aria-hidden="true"/>
+                  <p className="text-xs2 text-danger">{t('convert.no_source_profile')}</p>
+                </div>
+              ) : sourceInfo ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge kind="info">{(sourceInfo.color_space || '—').trim()}</Badge>
+                  {sourceInfo.trc?.primary_family_label && (
+                    <Badge kind="neutral">{sourceInfo.trc.primary_family_label}</Badge>
+                  )}
+                </div>
+              ) : null}
+            </>
+          )}
+
+          {file && sourceInfo?.has_profile && (
+            <>
+              {/* 2. collink gamut intent (+ command + desc, always visible) — the
+                  primary choice. Real term, real command; each carries its
+                  trade-off; no hidden "best". */}
+              <div className="h-5"/>
+              <Label>{t('convert.gamut_label')}</Label>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 min-w-0">
+                  <Select
+                    value={gamutIntent}
+                    onChange={setGamutIntent}
+                    options={[
+                      { value: 'relative', label: t('convert.gamut_relative') },
+                      { value: 'relative_bpc', label: t('convert.gamut_relative_bpc') },
+                      { value: 'luminance_matched', label: t('convert.gamut_luminance_matched') },
+                      { value: 'perceptual', label: t('convert.gamut_perceptual') },
+                      { value: 'luminance_preserving', label: t('convert.gamut_luminance_preserving') },
+                      { value: 'luminance_priority', label: t('convert.gamut_luminance_priority') },
+                    ]}/>
+                </div>
+                {isFreeglazCustom && (
+                  <Badge kind="info">{t('convert.gamut_freeglaz')}</Badge>
+                )}
+              </div>
+              {/* Real command driven (short form). Full command with -v -qh + profile
+                  paths + effective τ goes to the job trace (backend log). */}
+              <p className="text-xs2 font-mono text-text-muted mt-1.5">{GAMUT_COMMAND[gamutIntent]}</p>
+              <p className="text-xs2 text-text-muted mt-1">{t(`convert.gamut_desc_${gamutIntent}`)}</p>
+
+              {/* τ cursor — ONLY for luminance_priority. Orientation (verified):
+                  LEFT = low τ (0.5) = luminance protected ; RIGHT = high τ (2.0) =
+                  chroma preserved. The numeric value is shown (traceability). */}
+              {isLumPriority && (
+                <div className="mt-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-text-strong">{t('convert.tau_label')}</span>
+                    <span className="text-xs2 font-mono text-text-muted">τ = {tau.toFixed(2)}</span>
+                  </div>
+                  <div className="mt-1.5">
+                    <Slider value={tau} min={0.5} max={2.0} step={0.05} onChange={setTau}/>
+                  </div>
+                  <div className="flex justify-between text-xs2 text-text-faint mt-1">
+                    <span>{t('convert.tau_luminance_end')}</span>
+                    <span>{t('convert.tau_chroma_end')}</span>
+                  </div>
+                  <p className="text-xs2 text-text-muted mt-1.5">{t('convert.tau_help')}</p>
+                </div>
+              )}
+
+              {/* 3. Quality + gloss enhancer (stacked in the narrow panel) */}
+              <div className="h-5"/>
+              <Field label={t('convert.quality_label')} help={t('convert.quality_help')}>
+                <Segmented
+                  options={[
+                    { value: 'l', label: t('convert.quality_l') },
+                    { value: 'm', label: t('convert.quality_m') },
+                    { value: 'h', label: t('convert.quality_h') },
+                    { value: 'u', label: t('convert.quality_u') },
+                  ]}
+                  value={quality}
+                  onChange={setQuality}/>
+              </Field>
+              <Field label={t('convert.ge_label')} help={t('convert.ge_help')}>
+                <Segmented
+                  options={[
+                    { value: 'OFF', label: t('convert.ge_off') },
+                    { value: 'FULLPAGE', label: t('convert.ge_on') },
+                  ]}
+                  value={ge}
+                  onChange={setGe}/>
+              </Field>
+
+              {/* 4. Image-aware + dest viewing conditions — native -G strategies
+                  only. Long descriptions folded behind the Field "?" tooltip so
+                  the panel stays compact (no text removed, help = native title). */}
+              {!isFreeglazCustom && (
+                <>
+                  <Field label={t('convert.image_aware_label')} help={t('convert.image_aware_help')}>
+                    <Toggle on={imageAware} onChange={setImageAware}/>
+                  </Field>
+                  <Field
+                    label={t('convert.viewcond_label')}
+                    help={`${t(`convert.viewcond_desc_${destViewcond}`)}\n\n${t('convert.viewcond_note')}`}>
+                    <Select
+                      value={destViewcond}
+                      onChange={setDestViewcond}
+                      options={[
+                        { value: 'default', label: t('convert.viewcond_default_label') },
+                        { value: 'pp', label: 'pp' },
+                        { value: 'pc', label: 'pc' },
+                        { value: 'pe', label: 'pe' },
+                        { value: 'pm', label: 'pm' },
+                      ]}/>
+                  </Field>
+                </>
+              )}
+
+              {/* 5. Destination (informational — not a selector), just above the
+                  pinned action footer. */}
+              <div className="h-5"/>
+              <p className="text-xs2 text-text-muted flex items-center gap-1.5">
+                <ArrowRight size={13} className="flex-shrink-0" aria-hidden="true"/>
+                {noPaper
+                  ? t('convert.dest_no_paper')
+                  : t('convert.dest_loaded', { paper: paper.name || paper.mediaid || '—' })}
+              </p>
+            </>
+          )}
+
+          <div className="h-6"/>
+        </div>
+
+        {/* Pinned footer — the two actions, anchored at the bottom, equal weight
+            (no primary/secondary hierarchy). Save to disk, or hand off to the
+            Print tab (device passthrough). */}
+        <div className="px-5 pt-3.5 pb-4 border-t border-border-soft">
+          <div className="flex gap-3">
+            <button
+              type="button"
+              disabled={!canConvert}
+              onClick={() => runConvert(false)}
+              className={`flex-1 inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-semibold tracking-tight transition-colors
+                ${canConvert
+                  ? 'bg-accent hover:bg-accent-press text-on-accent shadow-sm cursor-pointer'
+                  : 'bg-sunken-deep text-text-faint cursor-not-allowed'}`}>
+              {converting && <Loader2 size={15} className="animate-spin" aria-hidden="true"/>}
+              {t('convert.run_button')}
+            </button>
+            <button
+              type="button"
+              disabled={!canConvert}
+              onClick={() => runConvert(true)}
+              title={t('convert.run_and_print_help')}
+              className={`flex-1 inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-semibold tracking-tight transition-colors
+                ${canConvert
+                  ? 'bg-accent hover:bg-accent-press text-on-accent shadow-sm cursor-pointer'
+                  : 'bg-sunken-deep text-text-faint cursor-not-allowed'}`}>
+              <Printer size={15} aria-hidden="true"/>
+              {t('convert.run_and_print_button')}
+            </button>
+          </div>
+          {offline && !noPaper && (
+            <p className="text-xs2 text-text-muted mt-2">{t('convert.offline_hint')}</p>
+          )}
+          {convertError && (
+            <p className="text-xs2 text-danger mt-2">{convertError}</p>
+          )}
+          {done && (
+            <p className="text-xs2 text-icc-ok mt-2">{t('convert.saved', { filename: done })}</p>
+          )}
+        </div>
+      </aside>
+    </>
   );
 }

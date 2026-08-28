@@ -186,7 +186,7 @@ def test_collink_argv_intent_token_is_single_i():
     assert "-iir" not in argv
     assert "-qh" in argv
     assert "-G" in argv
-    # 'la' added (Luminance matched strategy, -G -ila) — additive, r/p/lp unchanged.
+    # 'la' added (Shadow-detail gamut intent, -G -ila) — additive, r/p/lp unchanged.
     assert devicelink.ALLOWED_INTENTS == ("r", "p", "lp", "la")
     la = devicelink.build_collink_argv("collink", "s", "d", "o", intent="la", quality="h")
     assert "-ila" in la and "-iila" not in la
@@ -346,38 +346,38 @@ def test_convert_without_z9_configured_409(sample_tiff_path):
 
 
 # ── conversion strategies (production wiring) ─────────────────────────────────
-def test_strategy_relative_is_non_regressive():
-    """NON-REGRESSION: default strategy 'relative' maps to intent 'r', and the
-    built command is exactly the previous -G -ir (same argv → bit-identical)."""
+def test_relative_gamut_intent_is_non_regressive():
+    """NON-REGRESSION: default gamut intent 'relative' maps to collink intent 'r',
+    and the built command is exactly the previous -G -ir (same argv → bit-identical)."""
     from lib.z9_client import devicelink
     from webapp.backend.routes.convert import _NATIVE_INTENT, ConvertBody
-    assert ConvertBody(file_id="x", gloss_enhancer="OFF").strategy == "relative"
+    assert ConvertBody(file_id="x", gloss_enhancer="OFF").gamut_intent == "relative"
     assert _NATIVE_INTENT["relative"] == "r"
     argv = devicelink.build_collink_argv("collink", "s", "d", "o",
                                          intent=_NATIVE_INTENT["relative"], quality="h")
     assert argv == ["collink", "-v", "-qh", "-G", "-ir", "s", "d", "o"]
 
 
-def test_native_strategies_map_to_expected_intents():
-    """The four native strategies map to the characterised collink intents."""
+def test_native_gamut_intents_map_to_expected_collink_intents():
+    """The four native gamut intents map to the characterised collink intents."""
     from lib.z9_client import devicelink
     from webapp.backend.routes.convert import _NATIVE_INTENT
     assert _NATIVE_INTENT == {"relative": "r", "luminance_matched": "la",
                               "perceptual": "p", "luminance_preserving": "lp"}
-    for strat, flag in [("relative", "-ir"), ("luminance_matched", "-ila"),
-                        ("perceptual", "-ip"), ("luminance_preserving", "-ilp")]:
+    for gi, flag in [("relative", "-ir"), ("luminance_matched", "-ila"),
+                     ("perceptual", "-ip"), ("luminance_preserving", "-ilp")]:
         argv = devicelink.build_collink_argv("collink", "s", "d", "o",
-                                             intent=_NATIVE_INTENT[strat], quality="h")
+                                             intent=_NATIVE_INTENT[gi], quality="h")
         assert flag in argv
 
 
-def test_convert_unknown_strategy_422():
-    """An unknown strategy → clean 422 unknown_strategy, before any hardware."""
+def test_convert_unknown_gamut_intent_422():
+    """An unknown gamut intent → clean 422 unknown_gamut_intent, before any hardware."""
     c = _client()
     fid = _stage_no_icc()
-    r = c.post("/api/convert", json={"file_id": fid, "gloss_enhancer": "OFF", "strategy": "bogus"})
+    r = c.post("/api/convert", json={"file_id": fid, "gloss_enhancer": "OFF", "gamut_intent": "bogus"})
     assert r.status_code == 422, r.text
-    assert r.json()["detail"]["code"] == "unknown_strategy"
+    assert r.json()["detail"]["code"] == "unknown_gamut_intent"
 
 
 def test_convert_tau_out_of_characterised_range_422():
@@ -386,23 +386,23 @@ def test_convert_tau_out_of_characterised_range_422():
     fid = _stage_no_icc()
     for bad in (0.0, 0.4, 2.1, 3.0):
         r = c.post("/api/convert", json={"file_id": fid, "gloss_enhancer": "OFF",
-                                         "strategy": "luminance_priority", "tau": bad})
+                                         "gamut_intent": "luminance_priority", "tau": bad})
         assert r.status_code == 422, (bad, r.text)
     # in-range accepted (passes validation → later 400 no-source, not 422)
     r = c.post("/api/convert", json={"file_id": fid, "gloss_enhancer": "OFF",
-                                     "strategy": "luminance_priority", "tau": 0.5})
+                                     "gamut_intent": "luminance_priority", "tau": 0.5})
     assert r.status_code == 400, r.text        # no embedded source profile, gate passed
 
 
-def test_mab_rejected_for_all_strategies_including_luminance_priority():
-    """The mAB/mBA guard is active for EVERY strategy (custom included)."""
+def test_mab_rejected_for_all_gamut_intents_including_luminance_priority():
+    """The mAB/mBA guard is active for EVERY gamut intent (custom included)."""
     c = _client()
     mab = (_ASSETS / "sRGB_v4_ICC_preference.icc").read_bytes()
-    for strat in ("relative", "luminance_matched", "perceptual",
-                  "luminance_preserving", "luminance_priority"):
+    for gi in ("relative", "luminance_matched", "perceptual",
+               "luminance_preserving", "luminance_priority"):
         fid = _stage_with_icc(mab)
-        r = c.post("/api/convert", json={"file_id": fid, "gloss_enhancer": "OFF", "strategy": strat})
-        assert r.status_code == 422, (strat, r.text)
+        r = c.post("/api/convert", json={"file_id": fid, "gloss_enhancer": "OFF", "gamut_intent": gi})
+        assert r.status_code == 422, (gi, r.text)
         assert r.json()["detail"]["code"] == "unsupported_lut"
 
 

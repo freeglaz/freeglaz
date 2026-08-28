@@ -408,11 +408,11 @@ export async function postConvert(body) {
   await sleep(300);
   if (!_files.get(body.file_id)) throw new Error('file not found');
   const blob = new Blob([_PLACEHOLDER_SVG], { type: 'image/tiff' });
-  const custom = body.strategy === 'luminance_priority';
+  const custom = body.gamut_intent === 'luminance_priority';
   const tag = custom ? `_tau${body.tau}` : '';
   const ia = (!custom && body.image_aware) ? '_ia' : '';
   const vc = (!custom && body.dest_viewcond && body.dest_viewcond !== 'default') ? `_${body.dest_viewcond}` : '';
-  return { blob, filename: `converted_${body.strategy || 'relative'}${tag}${ia}${vc}.tif` };
+  return { blob, filename: `converted_${body.gamut_intent || 'relative'}${tag}${ia}${vc}.tif` };
 }
 
 // ─── DEV helpers ──────────────────────────────────────────────────────────

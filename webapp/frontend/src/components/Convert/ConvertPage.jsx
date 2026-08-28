@@ -22,6 +22,17 @@ import Badge from '../ui/Badge.jsx';
  * backend-side), no preview geometry, no "Convert and print". The only output is
  * a device file saved to disk.
  */
+// Short collink command shown on screen per gamut intent (technical, language-
+// independent). MUST match the argv the backend builds (non-regression). The last
+// entry is NOT a -G intent — its command shows -s + abstract, and it is freeglaz-marked.
+const GAMUT_COMMAND = {
+  relative: 'collink -G -ir',
+  luminance_matched: 'collink -G -ila',
+  perceptual: 'collink -G -ip',
+  luminance_preserving: 'collink -G -ilp',
+  luminance_priority: 'collink -s -ir -p <abstract τ>',
+};
+
 export default function ConvertPage({ paper, offline, onSendToPrint }) {
   const { t } = useTranslation();
   const { file, error: loadError, loading, load } = useFileLoader();
@@ -30,16 +41,17 @@ export default function ConvertPage({ paper, offline, onSendToPrint }) {
   const [sourceInfo, setSourceInfo] = useState(null);   // { has_profile, color_space, trc } | null
   const [sourceLoading, setSourceLoading] = useState(false);
 
-  // Conversion strategy: relative | luminance_matched | perceptual |
+  // collink gamut intent: relative | luminance_matched | perceptual |
   // luminance_preserving | luminance_priority. Default 'relative' = current behaviour.
-  const [strategy, setStrategy] = useState('relative');
+  // (Value slugs are internal keys; the user sees the i18n labels + the command.)
+  const [gamutIntent, setGamutIntent] = useState('relative');
   const [tau, setTau] = useState(1.0);                   // luminance_priority only: 0.5 → 2.0
   const [quality, setQuality] = useState('h');          // l | m | h | u
   const [ge, setGe] = useState('OFF');                   // FULLPAGE | OFF (resident selection)
-  const [imageAware, setImageAware] = useState(false);   // image-aware axis (native -G strategies only)
+  const [imageAware, setImageAware] = useState(false);   // image-aware axis (native -G intents only)
   const [destViewcond, setDestViewcond] = useState('default');  // collink -d preset (native -G only)
 
-  const isLumPriority = strategy === 'luminance_priority';
+  const isLumPriority = gamutIntent === 'luminance_priority';
 
   const [converting, setConverting] = useState(false);
   const [convertError, setConvertError] = useState(null);
@@ -79,7 +91,7 @@ export default function ConvertPage({ paper, offline, onSendToPrint }) {
     setDone(null);
     try {
       const { blob, filename } = await postConvert({
-        file_id: fileId, strategy, tau, quality, gloss_enhancer: ge,
+        file_id: fileId, gamut_intent: gamutIntent, tau, quality, gloss_enhancer: ge,
         image_aware: imageAware, dest_viewcond: destViewcond,
       });
       if (toPrint) {
@@ -106,7 +118,7 @@ export default function ConvertPage({ paper, offline, onSendToPrint }) {
     } finally {
       setConverting(false);
     }
-  }, [fileId, strategy, tau, quality, ge, imageAware, destViewcond, onSendToPrint, t]);
+  }, [fileId, gamutIntent, tau, quality, ge, imageAware, destViewcond, onSendToPrint, t]);
 
   const noPaper = !paper;
   const noSourceProfile = sourceInfo && sourceInfo.has_profile === false;
@@ -184,25 +196,32 @@ export default function ConvertPage({ paper, offline, onSendToPrint }) {
           </div>
         )}
 
-        {/* Conversion strategy (+ its cost, always visible) — the primary choice.
-            Each strategy carries its trade-off in the description; no hidden "best". */}
+        {/* collink gamut intent (+ its command + its cost, always visible) — the
+            primary choice. Real term (collink gamut intent, not an ICC profile
+            intent), real command shown; each carries its trade-off; no hidden "best". */}
         {file && sourceInfo?.has_profile && (
           <div className="mt-6">
             <div className="flex items-center gap-3">
-              <Label>{t('convert.strategy_label')}</Label>
+              <Label>{t('convert.gamut_label')}</Label>
               <Select
-                value={strategy}
-                onChange={setStrategy}
+                value={gamutIntent}
+                onChange={setGamutIntent}
                 options={[
-                  { value: 'relative', label: t('convert.strategy_relative') },
-                  { value: 'luminance_matched', label: t('convert.strategy_luminance_matched') },
-                  { value: 'perceptual', label: t('convert.strategy_perceptual') },
-                  { value: 'luminance_preserving', label: t('convert.strategy_luminance_preserving') },
-                  { value: 'luminance_priority', label: t('convert.strategy_luminance_priority') },
+                  { value: 'relative', label: t('convert.gamut_relative') },
+                  { value: 'luminance_matched', label: t('convert.gamut_luminance_matched') },
+                  { value: 'perceptual', label: t('convert.gamut_perceptual') },
+                  { value: 'luminance_preserving', label: t('convert.gamut_luminance_preserving') },
+                  { value: 'luminance_priority', label: t('convert.gamut_luminance_priority') },
                 ]}/>
+              {isLumPriority && (
+                <Badge kind="info">{t('convert.gamut_freeglaz')}</Badge>
+              )}
             </div>
-            <p className="text-xs2 text-text-muted mt-1.5 max-w-xl">
-              {t(`convert.strategy_desc_${strategy}`)}
+            {/* Real command driven (short form). Full command with -v -qh + profile
+                paths + effective τ goes to the job trace (backend log). */}
+            <p className="text-xs2 font-mono text-text-muted mt-1.5">{GAMUT_COMMAND[gamutIntent]}</p>
+            <p className="text-xs2 text-text-muted mt-1 max-w-xl">
+              {t(`convert.gamut_desc_${gamutIntent}`)}
             </p>
 
             {/* τ cursor — ONLY for luminance_priority. Orientation (verified):

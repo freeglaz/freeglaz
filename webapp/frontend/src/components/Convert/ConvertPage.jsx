@@ -31,7 +31,12 @@ const GAMUT_COMMAND = {
   perceptual: 'collink -G -ip',
   luminance_preserving: 'collink -G -ilp',
   luminance_priority: 'collink -s -ir -p <abstract τ>',
+  relative_bpc: 'collink -s -ir -p <abstract BPC>',
 };
+
+// The two freeglaz custom entries insert an abstract via -s -ir -p (NOT -G): the
+// τ-controlled luminance-priority one, and the parameter-less Relative + BPC one.
+const FREEGLAZ_CUSTOM = new Set(['luminance_priority', 'relative_bpc']);
 
 export default function ConvertPage({ paper, offline, onSendToPrint }) {
   const { t } = useTranslation();
@@ -51,7 +56,8 @@ export default function ConvertPage({ paper, offline, onSendToPrint }) {
   const [imageAware, setImageAware] = useState(false);   // image-aware axis (native -G intents only)
   const [destViewcond, setDestViewcond] = useState('default');  // collink -d preset (native -G only)
 
-  const isLumPriority = gamutIntent === 'luminance_priority';
+  const isLumPriority = gamutIntent === 'luminance_priority';   // τ cursor only here
+  const isFreeglazCustom = FREEGLAZ_CUSTOM.has(gamutIntent);    // -s -ir -p abstract (badge, no ia/vc)
 
   const [converting, setConverting] = useState(false);
   const [convertError, setConvertError] = useState(null);
@@ -212,8 +218,9 @@ export default function ConvertPage({ paper, offline, onSendToPrint }) {
                   { value: 'perceptual', label: t('convert.gamut_perceptual') },
                   { value: 'luminance_preserving', label: t('convert.gamut_luminance_preserving') },
                   { value: 'luminance_priority', label: t('convert.gamut_luminance_priority') },
+                  { value: 'relative_bpc', label: t('convert.gamut_relative_bpc') },
                 ]}/>
-              {isLumPriority && (
+              {isFreeglazCustom && (
                 <Badge kind="info">{t('convert.gamut_freeglaz')}</Badge>
               )}
             </div>
@@ -274,7 +281,7 @@ export default function ConvertPage({ paper, offline, onSendToPrint }) {
 
         {/* Image-aware + dest viewing conditions apply to the native -G strategies
             only (they are gamut-mapping-mode features) → hidden for luminance_priority. */}
-        {file && sourceInfo?.has_profile && !isLumPriority && (
+        {file && sourceInfo?.has_profile && !isFreeglazCustom && (
           <div className="mt-4 flex items-start gap-3">
             <div className="pt-0.5">
               <Toggle on={imageAware} onChange={setImageAware}/>
@@ -286,7 +293,7 @@ export default function ConvertPage({ paper, offline, onSendToPrint }) {
           </div>
         )}
 
-        {file && sourceInfo?.has_profile && !isLumPriority && (
+        {file && sourceInfo?.has_profile && !isFreeglazCustom && (
           <div className="mt-4">
             <div className="flex items-center gap-3">
               <span className="text-sm font-medium text-text-strong">{t('convert.viewcond_label')}</span>

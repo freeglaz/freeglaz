@@ -205,6 +205,23 @@ def build_luminance_priority_abstract(dest_argyll_icc: Path, tau: float) -> byte
     return build_abstract(make_policy(Cdriver(boundary)))
 
 
+def assert_neutral_chroma_clean(abstract_icc: bytes, tol: float = 0.5) -> dict:
+    """Intra-profile neutral guard for an L-scaling abstract (BPC): on the neutral
+    axis, a,b must stay ≈0 (no chroma introduced) — but L MAY change by design (the
+    BPC lift). This is the a,b-only part of the neutral guard; NOT an L check (that
+    would reject the intended lift) and NOT an absolute threshold."""
+    with tempfile.NamedTemporaryFile(suffix=".icc", delete=True) as f:
+        f.write(abstract_icc); f.flush()
+        out = xicclu.run_xicclu(f.name, [(L, 0.0, 0.0) for L in range(2, 99, 8)],
+                                direction="f", pcs="lab")
+    dmax_ab = max(max(abs(out[i][1]), abs(out[i][2])) for i in range(len(out)))
+    if dmax_ab > tol:
+        raise RuntimeError(
+            f"BPC abstract introduces chroma on the neutral axis (max |a,b|={dmax_ab:.3f} "
+            f"> {tol}) — refusing")
+    return {"neutral_ab_drift_max": round(dmax_ab, 3)}
+
+
 # ── BPC (black point compensation) abstract — Phase 2 (NOT wired to convert) ──
 # Established (BPC Phase 1, 124ab79): Argyll has no native BPC (-b is a pure
 # endpoint pin, no scaling); the lcms oracle BPC = a GLOBAL linear scaling that

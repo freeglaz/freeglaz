@@ -408,10 +408,12 @@ export async function postConvert(body) {
   await sleep(300);
   if (!_files.get(body.file_id)) throw new Error('file not found');
   const blob = new Blob([_PLACEHOLDER_SVG], { type: 'image/tiff' });
-  const custom = body.gamut_intent === 'luminance_priority';
-  const tag = custom ? `_tau${body.tau}` : '';
-  const ia = (!custom && body.image_aware) ? '_ia' : '';
-  const vc = (!custom && body.dest_viewcond && body.dest_viewcond !== 'default') ? `_${body.dest_viewcond}` : '';
+  // Both freeglaz custom entries (-s -ir -p abstract) have no image-aware / viewcond;
+  // only luminance_priority carries τ. relative_bpc has no parameter.
+  const abstract = body.gamut_intent === 'luminance_priority' || body.gamut_intent === 'relative_bpc';
+  const tag = body.gamut_intent === 'luminance_priority' ? `_tau${body.tau}` : '';
+  const ia = (!abstract && body.image_aware) ? '_ia' : '';
+  const vc = (!abstract && body.dest_viewcond && body.dest_viewcond !== 'default') ? `_${body.dest_viewcond}` : '';
   return { blob, filename: `converted_${body.gamut_intent || 'relative'}${tag}${ia}${vc}.tif` };
 }
 

@@ -47,12 +47,15 @@ _NATIVE_INTENT = {
     "luminance_preserving": "lp",  # -G -ilp : lightness-preserving perceptual
 }
 _CUSTOM_INTENT = "luminance_priority"   # -s -ir -p <abstract τ> : preserves saturated luminance, desaturates
+_BPC_INTENT = "relative_bpc"            # -s -ir -p <abstract_bpc> : Relative Colorimetric + black point
+                                        # compensation (freeglaz abstract; NO -G; no parameter; OFF by default)
+_ABSTRACT_INTENTS = (_CUSTOM_INTENT, _BPC_INTENT)   # both insert an abstract via -s -ir -p (no -G, no ia/vc)
 
 
 class ConvertBody(BaseModel):
     file_id: str = Field(..., min_length=1)
     gamut_intent: str = "relative"     # relative | luminance_matched | perceptual |
-                                       # luminance_preserving | luminance_priority
+                                       # luminance_preserving | luminance_priority | relative_bpc
     tau: float = Field(1.0, ge=luminance_priority.TAU_MIN, le=luminance_priority.TAU_MAX)
                                        # luminance_priority only: 0.5 (protect luminance) → 2.0 (keep chroma)
     quality: str = "h"                 # l | m | h | u
@@ -119,12 +122,12 @@ def convert(body: ConvertBody, request: Request,
     Errors: 404 (file), 400 (no source profile), 409 (no paper loaded),
     503 (collink/cctiff not installed), 500 (conversion failed).
     """
-    # 0. Gamut intent must be one of the five characterised intents (clean 422).
-    if body.gamut_intent not in _NATIVE_INTENT and body.gamut_intent != _CUSTOM_INTENT:
+    # 0. Gamut intent must be one of the characterised intents (clean 422).
+    if body.gamut_intent not in _NATIVE_INTENT and body.gamut_intent not in _ABSTRACT_INTENTS:
         raise HTTPException(
             422, detail={"code": "unknown_gamut_intent", "gamut_intent": body.gamut_intent,
                          "message": f"unknown gamut intent {body.gamut_intent!r}; "
-                                    f"expected {sorted([*_NATIVE_INTENT, _CUSTOM_INTENT])}"})
+                                    f"expected {sorted([*_NATIVE_INTENT, *_ABSTRACT_INTENTS])}"})
 
     # 1. Source TIFF + its embedded profile (SOURCE)
     src_tiff = file_storage.get_source(body.file_id)
@@ -160,11 +163,14 @@ def convert(body: ConvertBody, request: Request,
     #    Traceability (doctrine): the gamut intent (+ τ for the custom one) is encoded
     #    in the output filename so a job is identifiable a posteriori.
     storage_dir = file_storage.get_storage(body.file_id)
-    is_custom = body.gamut_intent == _CUSTOM_INTENT
-    if is_custom:
+    is_abstract = body.gamut_intent in _ABSTRACT_INTENTS   # -s -ir -p <abstract> (no -G, no ia/vc)
+    is_bpc = body.gamut_intent == _BPC_INTENT
+    if is_abstract:
         # -s mode: image-aware (-G <gam>) and dest viewing conditions (-d) are
-        # gamut-mapping-mode features → they do NOT apply here (ignored).
-        tag = f"_tau{body.tau}"; ia_tag = vc_tag = ""
+        # gamut-mapping-mode features → they do NOT apply (ignored). τ tags only the
+        # luminance-priority abstract; the BPC abstract has NO parameter.
+        tag = f"_tau{body.tau}" if body.gamut_intent == _CUSTOM_INTENT else ""
+        ia_tag = vc_tag = ""
     else:
         tag = ""
         ia_tag = "_ia" if body.image_aware else ""
@@ -182,8 +188,19 @@ def convert(body: ConvertBody, request: Request,
         # colour-managed in an editor. We embed the ORIGINAL resident (full
         # metadata/name). Pure assignment: cctiff -e leaves device pixels intact.
         (tmp / "paper.icc").write_bytes(dest_icc)
+        bpc_lmin = None
         try:
-            if is_custom:
+            if is_bpc:
+                # Relative Colorimetric + BPC (freeglaz abstract; NO -G). Linear L
+                # scaling source-black → dest-black (PROFILE-DERIVED Lmin), inserted
+                # via -s -ir -p BEFORE the B2A → lifts sub-floor content above Lmin.
+                # No parameter. Chroma-only neutral guard (L changes by design).
+                built = luminance_priority.build_bpc_abstract(tmp / "source.icc", tmp / "dest.icc")
+                bpc_lmin = built["l_dst"]
+                luminance_priority.assert_neutral_chroma_clean(built["abstract"])
+                luminance_priority.build_link(
+                    tmp / "source.icc", tmp / "dest.icc", tmp / "link.icc", built["abstract"])
+            elif body.gamut_intent == _CUSTOM_INTENT:
                 # Custom "luminance priority": radial-chroma abstract at τ inserted
                 # via collink -s -ir -p (ported bench; preserves saturated luminance,
                 # desaturates). Intra-profile neutral guard before applying.
@@ -220,7 +237,10 @@ def convert(body: ConvertBody, request: Request,
     # Full command in the job trace (doctrine: total traceability). Profile args
     # are the ephemeral normalized copies (shown as source/dest/link.icc); the paper
     # id + GE identify the live resident that was fetched.
-    if is_custom:
+    if is_bpc:
+        full_cmd = (f"collink -v -qh -s -ir -p <abstract_bpc Lmin={bpc_lmin}> "
+                    "source.icc dest.icc link.icc")
+    elif body.gamut_intent == _CUSTOM_INTENT:
         full_cmd = (f"collink -v -qh -s -ir -p <abstract τ={body.tau}> "
                     "source.icc dest.icc link.icc")
     else:

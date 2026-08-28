@@ -399,11 +399,29 @@ def test_mab_rejected_for_all_gamut_intents_including_luminance_priority():
     c = _client()
     mab = (_ASSETS / "sRGB_v4_ICC_preference.icc").read_bytes()
     for gi in ("relative", "luminance_matched", "perceptual",
-               "luminance_preserving", "luminance_priority"):
+               "luminance_preserving", "luminance_priority", "relative_bpc"):
         fid = _stage_with_icc(mab)
         r = c.post("/api/convert", json={"file_id": fid, "gloss_enhancer": "OFF", "gamut_intent": gi})
         assert r.status_code == 422, (gi, r.text)
         assert r.json()["detail"]["code"] == "unsupported_lut"
+
+
+def test_relative_bpc_is_a_known_gamut_intent():
+    """Relative + BPC is accepted (not 422 unknown); it needs no τ. A no-source
+    file passes the intent gate → 400 no_source_profile, not 422 unknown_gamut_intent."""
+    c = _client()
+    fid = _stage_no_icc()
+    r = c.post("/api/convert", json={"file_id": fid, "gloss_enhancer": "OFF", "gamut_intent": "relative_bpc"})
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"]["code"] == "no_source_profile"
+
+
+def test_bpc_intent_command_is_s_ir_p_never_G():
+    """Regression: Relative + BPC must map to -s -ir -p (colorimetric, NO gamut
+    mapping) — never -G. Guards the phase-1 semantic."""
+    from webapp.backend.routes.convert import _BPC_INTENT, _NATIVE_INTENT, _ABSTRACT_INTENTS
+    assert _BPC_INTENT == "relative_bpc"
+    assert _BPC_INTENT in _ABSTRACT_INTENTS and _BPC_INTENT not in _NATIVE_INTENT   # not a -G intent
 
 
 def test_luminance_priority_validate_tau_bounds():
@@ -460,9 +478,11 @@ def test_bpc_abstract_black_anchors_and_neutral_clean():
         assert abs(f(bpc["l_src"], 0, 0)[0] - bpc["l_dst"]) < 1e-6
         ys = [f(L, 0, 0)[0] for L in range(0, 101)]
         assert all(ys[i] >= ys[i - 1] - 1e-9 for i in range(1, len(ys)))   # monotone
-        # a,b clean on the neutral axis (L may change)
+        # a,b clean on the neutral axis (L may change) — the chroma-only guard
+        guard = lp.assert_neutral_chroma_clean(bpc["abstract"])   # raises if a,b drifts
         with tempfile.NamedTemporaryFile(suffix=".icc") as fa:
             fa.write(bpc["abstract"]); fa.flush()
             out = xicclu.run_xicclu(fa.name, [(L, 0.0, 0.0) for L in (5, 20, 50, 90)],
                                     direction="f", pcs="lab")
+    assert guard["neutral_ab_drift_max"] < 0.5
     assert max(max(abs(o[1]), abs(o[2])) for o in out) < 0.5

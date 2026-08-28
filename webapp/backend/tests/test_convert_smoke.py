@@ -186,7 +186,10 @@ def test_collink_argv_intent_token_is_single_i():
     assert "-iir" not in argv
     assert "-qh" in argv
     assert "-G" in argv
-    assert devicelink.ALLOWED_INTENTS == ("r", "p", "lp")
+    # 'la' added (Luminance matched strategy, -G -ila) — additive, r/p/lp unchanged.
+    assert devicelink.ALLOWED_INTENTS == ("r", "p", "lp", "la")
+    la = devicelink.build_collink_argv("collink", "s", "d", "o", intent="la", quality="h")
+    assert "-ila" in la and "-iila" not in la
 
     import pytest
     with pytest.raises(ValueError):
@@ -340,3 +343,97 @@ def test_convert_without_z9_configured_409(sample_tiff_path):
     fid = _upload(c, sample_tiff_path, "sample.tif")
     r = c.post("/api/convert", json={"file_id": fid, "gloss_enhancer": "OFF"})
     assert r.status_code == 409, r.text
+
+
+# ── conversion strategies (production wiring) ─────────────────────────────────
+def test_strategy_relative_is_non_regressive():
+    """NON-REGRESSION: default strategy 'relative' maps to intent 'r', and the
+    built command is exactly the previous -G -ir (same argv → bit-identical)."""
+    from lib.z9_client import devicelink
+    from webapp.backend.routes.convert import _NATIVE_INTENT, ConvertBody
+    assert ConvertBody(file_id="x", gloss_enhancer="OFF").strategy == "relative"
+    assert _NATIVE_INTENT["relative"] == "r"
+    argv = devicelink.build_collink_argv("collink", "s", "d", "o",
+                                         intent=_NATIVE_INTENT["relative"], quality="h")
+    assert argv == ["collink", "-v", "-qh", "-G", "-ir", "s", "d", "o"]
+
+
+def test_native_strategies_map_to_expected_intents():
+    """The four native strategies map to the characterised collink intents."""
+    from lib.z9_client import devicelink
+    from webapp.backend.routes.convert import _NATIVE_INTENT
+    assert _NATIVE_INTENT == {"relative": "r", "luminance_matched": "la",
+                              "perceptual": "p", "luminance_preserving": "lp"}
+    for strat, flag in [("relative", "-ir"), ("luminance_matched", "-ila"),
+                        ("perceptual", "-ip"), ("luminance_preserving", "-ilp")]:
+        argv = devicelink.build_collink_argv("collink", "s", "d", "o",
+                                             intent=_NATIVE_INTENT[strat], quality="h")
+        assert flag in argv
+
+
+def test_convert_unknown_strategy_422():
+    """An unknown strategy → clean 422 unknown_strategy, before any hardware."""
+    c = _client()
+    fid = _stage_no_icc()
+    r = c.post("/api/convert", json={"file_id": fid, "gloss_enhancer": "OFF", "strategy": "bogus"})
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["code"] == "unknown_strategy"
+
+
+def test_convert_tau_out_of_characterised_range_422():
+    """τ is constrained to the characterised domain [0.5, 2.0] (Pydantic → 422)."""
+    c = _client()
+    fid = _stage_no_icc()
+    for bad in (0.0, 0.4, 2.1, 3.0):
+        r = c.post("/api/convert", json={"file_id": fid, "gloss_enhancer": "OFF",
+                                         "strategy": "luminance_priority", "tau": bad})
+        assert r.status_code == 422, (bad, r.text)
+    # in-range accepted (passes validation → later 400 no-source, not 422)
+    r = c.post("/api/convert", json={"file_id": fid, "gloss_enhancer": "OFF",
+                                     "strategy": "luminance_priority", "tau": 0.5})
+    assert r.status_code == 400, r.text        # no embedded source profile, gate passed
+
+
+def test_mab_rejected_for_all_strategies_including_luminance_priority():
+    """The mAB/mBA guard is active for EVERY strategy (custom included)."""
+    c = _client()
+    mab = (_ASSETS / "sRGB_v4_ICC_preference.icc").read_bytes()
+    for strat in ("relative", "luminance_matched", "perceptual",
+                  "luminance_preserving", "luminance_priority"):
+        fid = _stage_with_icc(mab)
+        r = c.post("/api/convert", json={"file_id": fid, "gloss_enhancer": "OFF", "strategy": strat})
+        assert r.status_code == 422, (strat, r.text)
+        assert r.json()["detail"]["code"] == "unsupported_lut"
+
+
+def test_luminance_priority_validate_tau_bounds():
+    """Service-level τ domain guard [0.5, 2.0]."""
+    import pytest
+    from webapp.backend.services import luminance_priority as lp
+    assert lp.validate_tau(0.5) == 0.5 and lp.validate_tau(2.0) == 2.0 and lp.validate_tau(1.0) == 1.0
+    for bad in (0.49, 2.01, 0.0, 3.0):
+        with pytest.raises(ValueError):
+            lp.validate_tau(bad)
+
+
+def _lumprio_e2e_available() -> bool:
+    from lib.z9_client.argyll import find_argyll_binary
+    return bool(find_argyll_binary("collink") and find_argyll_binary("xicclu"))
+
+
+@pytest.mark.skipif(not _lumprio_e2e_available(), reason="collink/xicclu not installed")
+def test_luminance_priority_abstract_is_neutral_by_construction():
+    """End-to-end (light): build the τ=1 abstract on a real mft2 resident and check
+    the intra-profile neutral guard passes (radial abstract → a,b≈0 stay, L kept)."""
+    import tempfile
+    from lib.z9_client import devicelink
+    from webapp.backend.services import luminance_priority as lp
+    # A dest xicclu can invert (backward) is required by refine_boundary; the
+    # matrix ClayRGB has an analytic inverse. The guard tests the ABSTRACT (radial,
+    # neutral-clean) regardless of the boundary's actual values.
+    dest = (_ASSETS / "ClayRGB-elle-V2-g22.icc").read_bytes()
+    with tempfile.TemporaryDirectory() as td:
+        dn = Path(td) / "dest.icc"; dn.write_bytes(devicelink.normalize_icc_for_argyll(dest))
+        abstract = lp.build_luminance_priority_abstract(dn, 1.0)
+        guard = lp.assert_neutral_abstract(abstract)          # raises if it drifts
+    assert guard["neutral_ab_drift_max"] < 0.5 and guard["neutral_L_drift_max"] < 0.5

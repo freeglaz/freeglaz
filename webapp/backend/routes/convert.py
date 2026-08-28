@@ -28,20 +28,36 @@ from lib.z9_client.exceptions import Z9Error
 from lib.z9_client.inspect import HpProprietaryDecoder, analyze_trc
 from lib.z9_client.printing import fetch_resident_icc
 from webapp.backend.routes.status import build_loaded_paper, get_z9
-from webapp.backend.services import file_storage
+from webapp.backend.services import file_storage, luminance_priority
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/convert", tags=["convert"])
 
+# Conversion strategies (characterised on the Canson témoin; see the campaign
+# reports). The four NATIVE strategies are Argyll gamut-mapping intents (collink
+# -G -i<intent>); "luminance_priority" is the freeglaz custom radial-chroma
+# abstract (collink -s -ir -p, τ-controlled). DEFAULT = "relative" == the previous
+# Convert behaviour (-G -ir) → strictly non-regressive.
+_NATIVE_INTENT = {
+    "relative": "r",               # -G -ir : white-point matched (current default)
+    "luminance_matched": "la",     # -G -ila : best deep-shadow separation; lightens saturates
+    "perceptual": "p",             # -G -ip  : 3-D perceptual compression
+    "luminance_preserving": "lp",  # -G -ilp : lightness-preserving perceptual
+}
+_CUSTOM_STRATEGY = "luminance_priority"   # -s -ir -p <abstract τ> : preserves saturated luminance, desaturates
+
 
 class ConvertBody(BaseModel):
     file_id: str = Field(..., min_length=1)
-    intent: str = "r"                  # collink -i choice: r | p | lp (→ -ir/-ip/-ilp)
+    strategy: str = "relative"         # relative | luminance_matched | perceptual |
+                                       # luminance_preserving | luminance_priority
+    tau: float = Field(1.0, ge=luminance_priority.TAU_MIN, le=luminance_priority.TAU_MAX)
+                                       # luminance_priority only: 0.5 (protect luminance) → 2.0 (keep chroma)
     quality: str = "h"                 # l | m | h | u
     gloss_enhancer: str                # GE state selecting the paper's resident (same vocab as print)
-    image_aware: bool = False          # image-aware axis (orthogonal to intent): map the image's
+    image_aware: bool = False          # image-aware axis (native -G strategies only): map the image's
                                        # OWN occupied gamut (tiffgamut) instead of the full source gamut
-    dest_viewcond: str = "default"     # destination CIECAM02 viewing conditions (collink -d):
+    dest_viewcond: str = "default"     # destination CIECAM02 viewing conditions (collink -d, native only):
                                        # default | pp | pc | pe | pm (print presets only)
 
 
@@ -101,6 +117,13 @@ def convert(body: ConvertBody, request: Request,
     Errors: 404 (file), 400 (no source profile), 409 (no paper loaded),
     503 (collink/cctiff not installed), 500 (conversion failed).
     """
+    # 0. Strategy must be one of the five characterised strategies (clean 422).
+    if body.strategy not in _NATIVE_INTENT and body.strategy != _CUSTOM_STRATEGY:
+        raise HTTPException(
+            422, detail={"code": "unknown_strategy", "strategy": body.strategy,
+                         "message": f"unknown conversion strategy {body.strategy!r}; "
+                                    f"expected {sorted([*_NATIVE_INTENT, _CUSTOM_STRATEGY])}"})
+
     # 1. Source TIFF + its embedded profile (SOURCE)
     src_tiff = file_storage.get_source(body.file_id)
     if src_tiff is None:
@@ -131,11 +154,20 @@ def convert(body: ConvertBody, request: Request,
         raise HTTPException(502, detail=f"cannot read the loaded paper resident: {e}")
     _reject_unsupported_lut(dest_icc, "destination")   # clean refusal BEFORE any Argyll call
 
-    # 3. DeviceLink (collink -G) + apply (cctiff) → device TIFF on disk
+    # 3. Build the DeviceLink per strategy + apply (cctiff) → device TIFF on disk.
+    #    Traceability (doctrine): strategy (+ τ for the custom one) is encoded in
+    #    the output filename so a job is identifiable a posteriori.
     storage_dir = file_storage.get_storage(body.file_id)
-    ia_tag = "_ia" if body.image_aware else ""
-    vc_tag = f"_{body.dest_viewcond}" if body.dest_viewcond not in ("default", "", None) else ""
-    dev_tiff = storage_dir / f"converted_{body.intent}_{body.quality}{ia_tag}{vc_tag}.tif"
+    is_custom = body.strategy == _CUSTOM_STRATEGY
+    if is_custom:
+        # -s mode: image-aware (-G <gam>) and dest viewing conditions (-d) are
+        # gamut-mapping-mode features → they do NOT apply here (ignored).
+        tag = f"_tau{body.tau}"; ia_tag = vc_tag = ""
+    else:
+        tag = ""
+        ia_tag = "_ia" if body.image_aware else ""
+        vc_tag = f"_{body.dest_viewcond}" if body.dest_viewcond not in ("default", "", None) else ""
+    dev_tiff = storage_dir / f"converted_{body.strategy}{tag}_{body.quality}{ia_tag}{vc_tag}.tif"
     with tempfile.TemporaryDirectory(prefix="freeglaz_convert_") as tmp:
         tmp = Path(tmp)
         # Normalize both profiles before collink: strip the v4 mluc TEXT tags
@@ -144,22 +176,31 @@ def convert(body: ConvertBody, request: Request,
         # were already refused above by _reject_unsupported_lut).
         (tmp / "source.icc").write_bytes(devicelink.normalize_icc_for_argyll(src_icc))
         (tmp / "dest.icc").write_bytes(devicelink.normalize_icc_for_argyll(dest_icc))
-        # VOLET 2: tag the device output with the loaded paper's profile so it
-        # opens colour-managed in an editor. We embed the ORIGINAL resident (not
-        # the Argyll-normalized copy) — full metadata/name, and editors read v4
-        # fine. Pure assignment: cctiff -e leaves the device pixels intact.
+        # Tag the device output with the loaded paper's profile so it opens
+        # colour-managed in an editor. We embed the ORIGINAL resident (full
+        # metadata/name). Pure assignment: cctiff -e leaves device pixels intact.
         (tmp / "paper.icc").write_bytes(dest_icc)
         try:
-            # Image-aware (orthogonal to intent): restrict the mapping to the
-            # gamut the image actually occupies. Ephemeral, recomputed per job.
-            image_gam = None
-            if body.image_aware:
-                image_gam = tmp / "image.gam"
-                tiffgamut.run_tiffgamut(tmp / "source.icc", src_tiff, image_gam)
-            devicelink.run_collink(
-                tmp / "source.icc", tmp / "dest.icc", tmp / "link.icc",
-                intent=body.intent, quality=body.quality, image_gam=image_gam,
-                dest_viewcond=body.dest_viewcond)
+            if is_custom:
+                # Custom "luminance priority": radial-chroma abstract at τ inserted
+                # via collink -s -ir -p (ported bench; preserves saturated luminance,
+                # desaturates). Intra-profile neutral guard before applying.
+                abstract = luminance_priority.build_luminance_priority_abstract(
+                    tmp / "dest.icc", body.tau)
+                luminance_priority.assert_neutral_abstract(abstract)
+                luminance_priority.build_link(
+                    tmp / "source.icc", tmp / "dest.icc", tmp / "link.icc", abstract)
+            else:
+                # Native gamut-mapping intent (collink -G -i<intent>). Image-aware
+                # restricts the mapping to the gamut the image actually occupies.
+                image_gam = None
+                if body.image_aware:
+                    image_gam = tmp / "image.gam"
+                    tiffgamut.run_tiffgamut(tmp / "source.icc", src_tiff, image_gam)
+                devicelink.run_collink(
+                    tmp / "source.icc", tmp / "dest.icc", tmp / "link.icc",
+                    intent=_NATIVE_INTENT[body.strategy], quality=body.quality,
+                    image_gam=image_gam, dest_viewcond=body.dest_viewcond)
             devicelink.apply_cctiff(tmp / "link.icc", src_tiff, dev_tiff,
                                     embed_icc=tmp / "paper.icc")
         except ArgyllNotFound as e:
@@ -170,12 +211,14 @@ def convert(body: ConvertBody, request: Request,
         except (ValueError, RuntimeError) as e:
             raise HTTPException(500, detail=f"conversion failed: {e}")
 
-    logger.info("Convert: %s → device via -G%s -i%s -q%s%s (GE=%s, paper=%s)",
-                body.file_id, " <image.gam>" if body.image_aware else "",
-                body.intent, body.quality,
-                f" -d {body.dest_viewcond}" if body.dest_viewcond not in ("default", "", None) else "",
+    logger.info("Convert: %s → device via strategy=%s%s -q%s%s%s (GE=%s, paper=%s)",
+                body.file_id, body.strategy, f" τ={body.tau}" if is_custom else "",
+                body.quality,
+                " <image.gam>" if (not is_custom and body.image_aware) else "",
+                f" -d {body.dest_viewcond}"
+                if (not is_custom and body.dest_viewcond not in ("default", "", None)) else "",
                 body.gloss_enhancer, loaded.id)
     return FileResponse(
         str(dev_tiff), media_type="image/tiff",
-        filename=f"converted_{body.intent}{ia_tag}{vc_tag}.tif",
+        filename=f"converted_{body.strategy}{tag}{ia_tag}{vc_tag}.tif",
     )

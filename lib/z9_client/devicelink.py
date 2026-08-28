@@ -42,7 +42,7 @@ from .argyll import resolve_argyll_binary
 #   r  = White Point Matched Appearance [ICC relative colorimetric]
 #   p  = Perceptual (collink default)
 #   lp = Luminance Preserving Perceptual
-ALLOWED_INTENTS = ("r", "p", "lp")
+ALLOWED_INTENTS = ("r", "p", "lp", "la")
 # collink -q<quality> : LUT resolution / effort.
 ALLOWED_QUALITIES = ("l", "m", "h", "u")
 # collink -d <viewcond> : DESTINATION CIECAM02 viewing conditions. Print presets

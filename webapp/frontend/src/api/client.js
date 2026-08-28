@@ -234,7 +234,8 @@ export async function postConvert(body) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       file_id: body.file_id,
-      intent: body.intent,
+      strategy: body.strategy,
+      tau: body.tau,
       quality: body.quality,
       gloss_enhancer: body.gloss_enhancer,
       image_aware: body.image_aware,
@@ -252,7 +253,7 @@ export async function postConvert(body) {
   const blob = await r.blob();
   const cd = r.headers.get('Content-Disposition') || '';
   const m = /filename="?([^";]+)"?/.exec(cd);
-  return { blob, filename: m ? m[1] : `converted_${body.intent || 'r'}.tif` };
+  return { blob, filename: m ? m[1] : `converted_${body.strategy || 'relative'}.tif` };
 }
 
 // ─── Known printers (IP configuration) ──────────────────────────────────────

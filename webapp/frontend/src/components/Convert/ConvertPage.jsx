@@ -8,6 +8,7 @@ import Label from '../ui/Label.jsx';
 import Segmented from '../ui/Segmented.jsx';
 import Toggle from '../ui/Toggle.jsx';
 import Select from '../ui/Select.jsx';
+import Slider from '../ui/Slider.jsx';
 import Badge from '../ui/Badge.jsx';
 
 /**
@@ -29,11 +30,16 @@ export default function ConvertPage({ paper, offline }) {
   const [sourceInfo, setSourceInfo] = useState(null);   // { has_profile, color_space, trc } | null
   const [sourceLoading, setSourceLoading] = useState(false);
 
-  const [intent, setIntent] = useState('r');            // collink -i choice: r | p | lp
+  // Conversion strategy: relative | luminance_matched | perceptual |
+  // luminance_preserving | luminance_priority. Default 'relative' = current behaviour.
+  const [strategy, setStrategy] = useState('relative');
+  const [tau, setTau] = useState(1.0);                   // luminance_priority only: 0.5 → 2.0
   const [quality, setQuality] = useState('h');          // l | m | h | u
   const [ge, setGe] = useState('OFF');                   // FULLPAGE | OFF (resident selection)
-  const [imageAware, setImageAware] = useState(false);   // image-aware axis (orthogonal to intent)
-  const [destViewcond, setDestViewcond] = useState('default');  // collink -d preset (dest viewing conditions)
+  const [imageAware, setImageAware] = useState(false);   // image-aware axis (native -G strategies only)
+  const [destViewcond, setDestViewcond] = useState('default');  // collink -d preset (native -G only)
+
+  const isLumPriority = strategy === 'luminance_priority';
 
   const [converting, setConverting] = useState(false);
   const [convertError, setConvertError] = useState(null);
@@ -71,7 +77,7 @@ export default function ConvertPage({ paper, offline }) {
     setDone(null);
     try {
       const { blob, filename } = await postConvert({
-        file_id: fileId, intent, quality, gloss_enhancer: ge,
+        file_id: fileId, strategy, tau, quality, gloss_enhancer: ge,
         image_aware: imageAware, dest_viewcond: destViewcond,
       });
       // Trigger a browser download of the device TIFF.
@@ -94,7 +100,7 @@ export default function ConvertPage({ paper, offline }) {
     } finally {
       setConverting(false);
     }
-  }, [fileId, intent, quality, ge, imageAware, destViewcond, t]);
+  }, [fileId, strategy, tau, quality, ge, imageAware, destViewcond, t]);
 
   const noPaper = !paper;
   const noSourceProfile = sourceInfo && sourceInfo.has_profile === false;
@@ -172,19 +178,52 @@ export default function ConvertPage({ paper, offline }) {
           </div>
         )}
 
-        {/* Parameters + action — only meaningful with a valid source profile */}
+        {/* Conversion strategy (+ its cost, always visible) — the primary choice.
+            Each strategy carries its trade-off in the description; no hidden "best". */}
         {file && sourceInfo?.has_profile && (
-          <div className="mt-6 grid gap-4 sm:grid-cols-3">
-            <Field label={t('convert.intent_label')} help={t('convert.intent_help')}>
-              <Segmented
+          <div className="mt-6">
+            <div className="flex items-center gap-3">
+              <Label>{t('convert.strategy_label')}</Label>
+              <Select
+                value={strategy}
+                onChange={setStrategy}
                 options={[
-                  { value: 'r', label: t('convert.intent_r') },
-                  { value: 'p', label: t('convert.intent_p') },
-                  { value: 'lp', label: t('convert.intent_lp') },
-                ]}
-                value={intent}
-                onChange={setIntent}/>
-            </Field>
+                  { value: 'relative', label: t('convert.strategy_relative') },
+                  { value: 'luminance_matched', label: t('convert.strategy_luminance_matched') },
+                  { value: 'perceptual', label: t('convert.strategy_perceptual') },
+                  { value: 'luminance_preserving', label: t('convert.strategy_luminance_preserving') },
+                  { value: 'luminance_priority', label: t('convert.strategy_luminance_priority') },
+                ]}/>
+            </div>
+            <p className="text-xs2 text-text-muted mt-1.5 max-w-xl">
+              {t(`convert.strategy_desc_${strategy}`)}
+            </p>
+
+            {/* τ cursor — ONLY for luminance_priority. Orientation (verified):
+                LEFT = low τ (0.5) = luminance protected ; RIGHT = high τ (2.0) =
+                chroma preserved. The numeric value is shown (traceability). */}
+            {isLumPriority && (
+              <div className="mt-3 max-w-md">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-text-strong">{t('convert.tau_label')}</span>
+                  <span className="text-xs2 font-mono text-text-muted">τ = {tau.toFixed(2)}</span>
+                </div>
+                <div className="mt-1.5">
+                  <Slider value={tau} min={0.5} max={2.0} step={0.05} onChange={setTau}/>
+                </div>
+                <div className="flex justify-between text-xs2 text-text-faint mt-1">
+                  <span>{t('convert.tau_luminance_end')}</span>
+                  <span>{t('convert.tau_chroma_end')}</span>
+                </div>
+                <p className="text-xs2 text-text-muted mt-1.5 max-w-xl">{t('convert.tau_help')}</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Quality + gloss enhancer */}
+        {file && sourceInfo?.has_profile && (
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
             <Field label={t('convert.quality_label')} help={t('convert.quality_help')}>
               <Segmented
                 options={[
@@ -208,8 +247,9 @@ export default function ConvertPage({ paper, offline }) {
           </div>
         )}
 
-        {/* Image-aware — orthogonal axis to the intent (independent toggle) */}
-        {file && sourceInfo?.has_profile && (
+        {/* Image-aware + dest viewing conditions apply to the native -G strategies
+            only (they are gamut-mapping-mode features) → hidden for luminance_priority. */}
+        {file && sourceInfo?.has_profile && !isLumPriority && (
           <div className="mt-4 flex items-start gap-3">
             <div className="pt-0.5">
               <Toggle on={imageAware} onChange={setImageAware}/>
@@ -221,10 +261,7 @@ export default function ConvertPage({ paper, offline }) {
           </div>
         )}
 
-        {/* Destination viewing conditions — collink -d (independent axis).
-            Faithful Argyll text shown for the selected preset (the pm one is
-            long → shown below the select, not a native tooltip). */}
-        {file && sourceInfo?.has_profile && (
+        {file && sourceInfo?.has_profile && !isLumPriority && (
           <div className="mt-4">
             <div className="flex items-center gap-3">
               <span className="text-sm font-medium text-text-strong">{t('convert.viewcond_label')}</span>

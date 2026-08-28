@@ -203,8 +203,12 @@ def convert(body: ConvertBody, request: Request,
                     tmp / "source.icc", tmp / "dest.icc", tmp / "link.icc",
                     intent=_NATIVE_INTENT[body.gamut_intent], quality=body.quality,
                     image_gam=image_gam, dest_viewcond=body.dest_viewcond)
+            # Uncompressed output: cctiff's LZW default is a single huge strip
+            # that the Print path (tifffile) and the preview (libvips) cannot read
+            # in this environment, and it expands noisy 16-bit data anyway. Pixels
+            # are identical; the device file is just uncompressed (often smaller).
             devicelink.apply_cctiff(tmp / "link.icc", src_tiff, dev_tiff,
-                                    embed_icc=tmp / "paper.icc")
+                                    embed_icc=tmp / "paper.icc", uncompressed=True)
         except ArgyllNotFound as e:
             raise HTTPException(
                 503,

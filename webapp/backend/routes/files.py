@@ -101,8 +101,26 @@ def _render_tiff_preview(path: Path) -> bytes:
     XMP text chunk of bug 3. On any failure (older libvips, missing/broken ICC)
     we fall back to the previous strip-all behaviour (raw pixels, untagged —
     dull but never broken).
+
+    A TIFF stored as a single very large strip (e.g. cctiff device outputs, or an
+    externally-made single-strip file) trips libvips' DoS memory ceiling on decode
+    ("unable to copy to memory") — the ``thumbnail`` shrink-on-load cannot random-
+    access such a file. The upload gate already validated the pixels, so on that
+    failure we retry once with the ``[unlimited]`` loader option (memory ceiling
+    removed for this one decode).
     """
-    img = pyvips.Image.thumbnail(str(path), PREVIEW_MAX_SIDE)
+    try:
+        return _tiff_thumbnail_png(str(path))
+    except pyvips.Error as e:
+        logger.info("Preview: %s tripped the libvips memory limit — retrying "
+                    "[unlimited] (%s).", path.name, str(e).splitlines()[0])
+        return _tiff_thumbnail_png(str(path) + "[unlimited]")
+
+
+def _tiff_thumbnail_png(loadpath: str) -> bytes:
+    """Thumbnail → materialise → PNG. ``loadpath`` may carry libvips loader options
+    (e.g. ``file.tif[unlimited]``)."""
+    img = pyvips.Image.thumbnail(loadpath, PREVIEW_MAX_SIDE)
     # ``thumbnail`` already yields 8-bit; cast defensively for any non-uchar
     # input (e.g. a float TIFF). ``shift`` scales 16-bit down, not truncates.
     # Neither the cast (depth) nor the flatten (alpha) changes the colour space,

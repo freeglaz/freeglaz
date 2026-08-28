@@ -133,7 +133,7 @@ def run_collink(source_icc, dest_icc, out_icc, *,
 
 
 def apply_cctiff(link_icc, in_tiff, out_tiff, *, embed_icc=None,
-                 timeout: int = 600) -> Path:
+                 uncompressed=False, timeout: int = 600) -> Path:
     """Apply a DeviceLink to a TIFF via ``cctiff`` (16-bit integer path).
 
     :param embed_icc: optional profile to EMBED in the output (``cctiff -e``).
@@ -141,12 +141,21 @@ def apply_cctiff(link_icc, in_tiff, out_tiff, *, embed_icc=None,
         unchanged; ``-e`` only writes the ICC tag (proven pixel-identical). Used
         to tag the device TIFF with the loaded paper's profile so it opens
         colour-managed in an editor.
+    :param uncompressed: if True, write an UNCOMPRESSED TIFF (``cctiff -N``)
+        instead of cctiff's LZW default. LZW here is a single huge strip that some
+        downstream readers cannot decode in this environment (tifffile needs
+        imagecodecs; libvips trips its DoS memory limit) — and it does not even
+        compress noisy 16-bit data (it expands it). Pixels are IDENTICAL to the
+        LZW output; only the on-disk compression differs. Default False keeps the
+        historical LZW behaviour for every existing caller.
     :return: Path of the produced device TIFF.
     :raises ArgyllNotFound: cctiff not installed.
     :raises RuntimeError: cctiff failed.
     """
     cctiff = resolve_argyll_binary("cctiff")
     argv = [cctiff]
+    if uncompressed:
+        argv.append("-N")
     if embed_icc is not None:
         argv += ["-e", str(embed_icc)]
     argv += [str(link_icc), str(in_tiff), str(out_tiff)]

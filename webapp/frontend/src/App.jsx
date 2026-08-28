@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import Viewer from './components/Viewer/Viewer.jsx';
 import Sidebar from './components/Sidebar/Sidebar.jsx';
@@ -95,6 +95,16 @@ export default function App() {
   const { file, error, load, loadFromId, clear, updatePreview, loading: fileLoading } = useFileLoader();
   const loadRef = useRef(load);   // stable handle for the Dock-drop listener (registered once, below)
   loadRef.current = load;
+
+  // Convert → Print hand-off: the Convert tab produced a device TIFF (already in
+  // the resident's device space). Upload it as a normal printable file and switch
+  // to the Print tab, where the user sets geometry and confirms. Device passthrough
+  // (source == resident) is handled by the unchanged Print path; NO auto-print.
+  const sendConvertedToPrint = useCallback(async (blob, filename) => {
+    const f = new File([blob], filename, { type: 'image/tiff' });
+    await load(f);
+    navigate('/print');
+  }, [load, navigate]);
   const queue                  = useQueue();
   const [queueOpen, setQueueOpen] = useState(false);
   const queueTriggerRef           = useRef(null);
@@ -560,7 +570,8 @@ export default function App() {
         {isConvertRoute ? (
           <ConvertPage
             paper={status?.paper}
-            offline={(status?.alerts || []).some((a) => a.code === 'Z9_UNREACHABLE')}/>
+            offline={(status?.alerts || []).some((a) => a.code === 'Z9_UNREACHABLE')}
+            onSendToPrint={sendConvertedToPrint}/>
         ) : isSettingsRoute ? (
           <SettingsPage/>
         ) : isLogsRoute ? (

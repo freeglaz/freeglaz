@@ -79,6 +79,8 @@
     "dest_loaded": "Destination: loaded paper — {{paper}}",
     "dest_no_paper": "No paper loaded — load a paper in the Z9 to resolve the destination profile.",
     "run_button": "Convert and save on disk",
+    "run_and_print_button": "Convert & send to Print",
+    "run_and_print_help": "Converts, then loads the device file into the Print tab (raw device passthrough — the values reach the inks untouched). You set the geometry and confirm there; nothing prints automatically.",
     "offline_hint": "Z9 unreachable — the destination profile cannot be resolved while offline.",
     "saved": "Saved: {{filename}}",
     "error_generic": "Conversion failed.",

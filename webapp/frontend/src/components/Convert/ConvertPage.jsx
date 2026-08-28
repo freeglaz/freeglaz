@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { UploadCloud, FileImage, ArrowRight, Loader2, AlertTriangle } from 'lucide-react';
+import { UploadCloud, FileImage, ArrowRight, Loader2, AlertTriangle, Printer } from 'lucide-react';
 import { useFileLoader } from '../../hooks/useFileLoader.js';
 import { getConvertSourceInfo, postConvert, getFilePreviewUrl } from '../../api/client.js';
 import Field from '../ui/Field.jsx';
@@ -22,7 +22,7 @@ import Badge from '../ui/Badge.jsx';
  * backend-side), no preview geometry, no "Convert and print". The only output is
  * a device file saved to disk.
  */
-export default function ConvertPage({ paper, offline }) {
+export default function ConvertPage({ paper, offline, onSendToPrint }) {
   const { t } = useTranslation();
   const { file, error: loadError, loading, load } = useFileLoader();
 
@@ -70,7 +70,9 @@ export default function ConvertPage({ paper, offline }) {
     if (f) load(f);
   };
 
-  const runConvert = useCallback(async () => {
+  // toPrint=false → download the device TIFF; toPrint=true → hand it off to the
+  // Print tab (App uploads it + navigates; device passthrough, no auto-print).
+  const runConvert = useCallback(async (toPrint = false) => {
     if (!fileId) return;
     setConverting(true);
     setConvertError(null);
@@ -80,16 +82,20 @@ export default function ConvertPage({ paper, offline }) {
         file_id: fileId, strategy, tau, quality, gloss_enhancer: ge,
         image_aware: imageAware, dest_viewcond: destViewcond,
       });
-      // Trigger a browser download of the device TIFF.
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      setDone(filename);
+      if (toPrint) {
+        await onSendToPrint?.(blob, filename);
+      } else {
+        // Trigger a browser download of the device TIFF.
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        setDone(filename);
+      }
     } catch (e) {
       const d = e.detail;
       setConvertError(
@@ -100,7 +106,7 @@ export default function ConvertPage({ paper, offline }) {
     } finally {
       setConverting(false);
     }
-  }, [fileId, strategy, tau, quality, ge, imageAware, destViewcond, t]);
+  }, [fileId, strategy, tau, quality, ge, imageAware, destViewcond, onSendToPrint, t]);
 
   const noPaper = !paper;
   const noSourceProfile = sourceInfo && sourceInfo.has_profile === false;
@@ -295,20 +301,34 @@ export default function ConvertPage({ paper, offline }) {
           </p>
         )}
 
-        {/* Action */}
+        {/* Action — save to disk, or hand off to the Print tab (device passthrough) */}
         {file && sourceInfo?.has_profile && (
           <div className="mt-6">
-            <button
-              type="button"
-              disabled={!canConvert}
-              onClick={runConvert}
-              className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-md text-sm font-semibold transition-colors
-                ${canConvert
-                  ? 'bg-accent text-white hover:bg-accent/90'
-                  : 'bg-sunken text-text-faint cursor-not-allowed'}`}>
-              {converting && <Loader2 size={15} className="animate-spin" aria-hidden="true"/>}
-              {t('convert.run_button')}
-            </button>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                disabled={!canConvert}
+                onClick={() => runConvert(false)}
+                className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-md text-sm font-semibold transition-colors
+                  ${canConvert
+                    ? 'bg-accent text-white hover:bg-accent/90'
+                    : 'bg-sunken text-text-faint cursor-not-allowed'}`}>
+                {converting && <Loader2 size={15} className="animate-spin" aria-hidden="true"/>}
+                {t('convert.run_button')}
+              </button>
+              <button
+                type="button"
+                disabled={!canConvert}
+                onClick={() => runConvert(true)}
+                title={t('convert.run_and_print_help')}
+                className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-md text-sm font-semibold border transition-colors
+                  ${canConvert
+                    ? 'border-accent text-accent hover:bg-accent/10'
+                    : 'border-border text-text-faint cursor-not-allowed'}`}>
+                <Printer size={15} aria-hidden="true"/>
+                {t('convert.run_and_print_button')}
+              </button>
+            </div>
             {offline && !noPaper && (
               <p className="text-xs2 text-text-muted mt-2">{t('convert.offline_hint')}</p>
             )}

@@ -79,6 +79,8 @@
     "dest_loaded": "Destination : papier chargé — {{paper}}",
     "dest_no_paper": "Aucun papier chargé — chargez un papier dans la Z9 pour résoudre le profil de destination.",
     "run_button": "Convertir et enregistrer sur disque",
+    "run_and_print_button": "Convertir et envoyer à l'impression",
+    "run_and_print_help": "Convertit, puis charge le fichier device dans l'onglet Impression (passthrough device brut — les valeurs atteignent les encres intactes). Vous réglez la géométrie et confirmez là-bas ; rien ne s'imprime automatiquement.",
     "offline_hint": "Z9 injoignable — le profil de destination ne peut pas être résolu hors ligne.",
     "saved": "Enregistré : {{filename}}",
     "error_generic": "Échec de la conversion.",

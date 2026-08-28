@@ -205,6 +205,51 @@ def build_luminance_priority_abstract(dest_argyll_icc: Path, tau: float) -> byte
     return build_abstract(make_policy(Cdriver(boundary)))
 
 
+# ── BPC (black point compensation) abstract — Phase 2 (NOT wired to convert) ──
+# Established (BPC Phase 1, 124ab79): Argyll has no native BPC (-b is a pure
+# endpoint pin, no scaling); the lcms oracle BPC = a GLOBAL linear scaling that
+# maps source black → dest black across the whole tonal range (lift decreasing
+# with L, tapering to 0 at white). We reproduce that FORM with a per-(source,dest)
+# L-scaling abstract, anchored at the PROFILE-DERIVED dest black L (Lmin) — the
+# real paper Dmax (deeper than lcms's own black-point estimate; the anchor
+# deviation from the oracle is documented, not hidden). Chroma is a MEASURED cost
+# (the guard bench characterises it), never assumed neutral.
+def measure_black_L(argyll_icc: Path, *, source: bool) -> float:
+    """Darkest reproducible neutral L of a profile. source=True: forward A2B of
+    device (0,0,0) (the source's black). source=False: B2A(0,0,0)→A2B roundtrip
+    (the dest's reproducible floor, Lmin)."""
+    if source:
+        lab = xicclu.run_xicclu(str(argyll_icc), [(0.0, 0.0, 0.0)],
+                                direction="f", intent="r", pcs="lab")
+        return round(lab[0][0], 3)
+    dev = xicclu.run_xicclu(str(argyll_icc), [(0.0, 0.0, 0.0)], direction="b", intent="r", pcs="lab")
+    lab = xicclu.run_xicclu(str(argyll_icc), dev, direction="f", intent="r", pcs="lab")
+    return round(lab[0][0], 3)
+
+
+def _bpc_policy(l_src: float, l_dst: float):
+    """Linear L scaling [l_src, 100] → [l_dst, 100] (source black → dest black),
+    a,b unchanged. Content below l_src (out of the source neutral gamut) clamps to
+    l_dst. Monotone (slope (100-l_dst)/(100-l_src) > 0)."""
+    span_in = (100.0 - l_src) if (100.0 - l_src) > 1e-6 else 1.0
+    span_out = 100.0 - l_dst
+    def policy(L, a, b):
+        if L <= l_src:
+            return (l_dst, a, b)
+        return (l_dst + (L - l_src) / span_in * span_out, a, b)
+    return policy
+
+
+def build_bpc_abstract(source_argyll_icc: Path, dest_argyll_icc: Path) -> dict:
+    """Author the BPC abstract for (source → dest). Returns {abstract, l_src,
+    l_dst} — l_src/l_dst are the measured black anchors (profile-derived Lmin for
+    the dest). Reuses the production abstract engine (build_abstract), no dup."""
+    l_src = measure_black_L(source_argyll_icc, source=True)
+    l_dst = measure_black_L(dest_argyll_icc, source=False)          # Lmin, profile-derived
+    abstract = build_abstract(_bpc_policy(l_src, l_dst))
+    return {"abstract": abstract, "l_src": l_src, "l_dst": l_dst}
+
+
 def assert_neutral_abstract(abstract_icc: bytes, tol: float = 0.5) -> dict:
     """Intra-profile neutral guard: the abstract must not drift the neutral axis
     (a,b ≈ 0 stay ≈ 0, whatever L). This is the correct intra-profile check —

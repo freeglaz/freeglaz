@@ -437,3 +437,32 @@ def test_luminance_priority_abstract_is_neutral_by_construction():
         abstract = lp.build_luminance_priority_abstract(dn, 1.0)
         guard = lp.assert_neutral_abstract(abstract)          # raises if it drifts
     assert guard["neutral_ab_drift_max"] < 0.5 and guard["neutral_L_drift_max"] < 0.5
+
+
+@pytest.mark.skipif(not _lumprio_e2e_available(), reason="collink/xicclu not installed")
+def test_bpc_abstract_black_anchors_and_neutral_clean():
+    """BPC Phase 2 (NOT wired): the BPC abstract maps source black → dest Lmin with
+    a monotone linear L scaling; a,b stay ≈0 on the neutral axis (L changes BY
+    DESIGN — the BPC-adapted guard: chroma-clean, luminance-scaling)."""
+    import tempfile
+    from lib.z9_client import devicelink, xicclu
+    from webapp.backend.services import luminance_priority as lp
+    src = (_ASSETS / "sRGB_IEC61966-2.1.icc").read_bytes()      # true-black source (L_src≈0)
+    dst = (_ASSETS / "ClayRGB-elle-V2-g22.icc").read_bytes()
+    with tempfile.TemporaryDirectory() as td:
+        sn = Path(td) / "s.icc"; sn.write_bytes(devicelink.normalize_icc_for_argyll(src))
+        dn = Path(td) / "d.icc"; dn.write_bytes(devicelink.normalize_icc_for_argyll(dst))
+        bpc = lp.build_bpc_abstract(sn, dn)
+        assert bpc["l_src"] <= 1.0                              # sRGB black ≈ 0
+        # f monotone + anchors: f(black)=l_dst, f(white)=100
+        f = lp._bpc_policy(bpc["l_src"], bpc["l_dst"])
+        assert abs(f(100, 0, 0)[0] - 100) < 1e-6
+        assert abs(f(bpc["l_src"], 0, 0)[0] - bpc["l_dst"]) < 1e-6
+        ys = [f(L, 0, 0)[0] for L in range(0, 101)]
+        assert all(ys[i] >= ys[i - 1] - 1e-9 for i in range(1, len(ys)))   # monotone
+        # a,b clean on the neutral axis (L may change)
+        with tempfile.NamedTemporaryFile(suffix=".icc") as fa:
+            fa.write(bpc["abstract"]); fa.flush()
+            out = xicclu.run_xicclu(fa.name, [(L, 0.0, 0.0) for L in (5, 20, 50, 90)],
+                                    direction="f", pcs="lab")
+    assert max(max(abs(o[1]), abs(o[2])) for o in out) < 0.5

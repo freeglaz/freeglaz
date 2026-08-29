@@ -7,11 +7,13 @@ import GamutSettings from './GamutSettings.jsx';
 import ArgyllSettings from './ArgyllSettings.jsx';
 import PrintersModal from './PrintersModal.jsx';
 import AboutSettings from './AboutSettings.jsx';
+import ConvertTabSetting from './ConvertTabSetting.jsx';
 
 /**
- * Settings page.
+ * Settings page. `showConvertTab`/`onShowConvertTabChange` come from App (single
+ * source of truth) so the Convert-tab toggle updates the nav live.
  */
-export default function SettingsPage() {
+export default function SettingsPage({ showConvertTab = false, onShowConvertTabChange }) {
   const { t } = useTranslation();
   const [printersOpen, setPrintersOpen] = useState(false);
   return (
@@ -27,6 +29,15 @@ export default function SettingsPage() {
         <div className="bg-surface border border-border-soft rounded-xl p-5 max-w-2xl space-y-5">
           <LanguageSwitcher/>
           <ThemeSwitcher/>
+        </div>
+        <div className="bg-surface border border-border-soft rounded-xl p-5 max-w-2xl">
+          <h2 className="text-xs2 font-semibold uppercase tracking-wider
+                         text-accent mb-4 font-mono">
+            {t('settings.experimental.section_title')}
+          </h2>
+          <ConvertTabSetting
+            value={showConvertTab}
+            onChange={onShowConvertTabChange}/>
         </div>
         <div className="bg-surface border border-border-soft rounded-xl p-5 max-w-2xl">
           <h2 className="text-xs2 font-semibold uppercase tracking-wider

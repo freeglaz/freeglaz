@@ -764,6 +764,12 @@
   },
   "settings": {
     "title": "Settings",
+    "experimental": {
+      "section_title": "Experimental"
+    },
+    "convert_tab_label": "Show the Convert tab",
+    "convert_tab_hint": "Your choice is stored in this browser.",
+    "convert_tab_status": "Experimental — research only. Not validated for production.",
     "about": {
       "section_title": "About",
       "version_label": "freeglaz version"

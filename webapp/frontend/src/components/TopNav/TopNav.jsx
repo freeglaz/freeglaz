@@ -18,7 +18,7 @@ import { UIState } from '../../lib/state-machine.js';
 import ZMonogram from '../ui/ZMonogram.jsx';
 import EasterEgg from '../EasterEgg/EasterEgg.jsx';
 
-export default function TopNav({ path, onNavigate, state }) {
+export default function TopNav({ path, onNavigate, state, showConvert = false }) {
   const { t } = useTranslation();
   const [eggOpen, setEggOpen] = useState(false);   // easter egg — loaded on demand
   // Hidden trigger: 5 quick clicks on the logo within 1.5s (a single click does
@@ -70,10 +70,12 @@ export default function TopNav({ path, onNavigate, state }) {
       {/* Tabs — adapt under constraint (horizontal scroll, never wrapping);
           the logo stays priority. */}
       <nav className="flex items-center gap-0.5 min-w-0 overflow-x-auto no-scrollbar">
-        <NavTab
-          label={t('nav.convert')}
-          active={isConvert}
-          onClick={() => onNavigate('/convert')}/>
+        {showConvert && (
+          <NavTab
+            label={t('nav.convert')}
+            active={isConvert}
+            onClick={() => onNavigate('/convert')}/>
+        )}
         <NavTab
           label={t('nav.print')}
           active={isPrint}

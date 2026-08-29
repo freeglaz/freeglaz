@@ -764,6 +764,12 @@
   },
   "settings": {
     "title": "Paramètres",
+    "experimental": {
+      "section_title": "Expérimental"
+    },
+    "convert_tab_label": "Afficher l'onglet Convertir",
+    "convert_tab_hint": "Votre choix est conservé dans ce navigateur.",
+    "convert_tab_status": "Expérimental — recherche uniquement. Non validé pour la production.",
     "about": {
       "section_title": "À propos",
       "version_label": "Version de freeglaz"

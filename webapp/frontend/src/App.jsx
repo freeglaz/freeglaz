@@ -12,6 +12,7 @@ import { useFileLoader } from './hooks/useFileLoader.js';
 import { useTheme } from './hooks/useTheme.js';
 import { useQueue } from './hooks/useQueue.js';
 import { useRoute } from './hooks/useRoute.js';
+import { useShowConvertTab } from './hooks/useShowConvertTab.js';
 import { takeDroppedFile } from './lib/fileIO.js';
 import TopNav from './components/TopNav/TopNav.jsx';
 import PapersPage from './components/Papers/PapersPage.jsx';
@@ -91,6 +92,9 @@ export default function App() {
   useTheme(); // applies the .dark class on <html>
 
   const { path, navigate } = useRoute();
+  // Convert is experimental → its tab is hidden by default, opt-in in Settings.
+  // Single source of truth here; passed to TopNav (gate) and Settings (control).
+  const { showConvertTab, setShowConvertTab } = useShowConvertTab();
   const { status, stale, reconnect } = useStatus();
   const { file, error, load, loadFromId, clear, updatePreview, loading: fileLoading } = useFileLoader();
   const loadRef = useRef(load);   // stable handle for the Dock-drop listener (registered once, below)
@@ -507,6 +511,13 @@ export default function App() {
   const isSettingsRoute = path === '/settings';
   const [showSplash, setShowSplash] = useState(true);
 
+  // Convert hidden but we're on its route (direct URL, or the setting was just
+  // turned off while viewing it) → redirect to Print. `replace` so Back doesn't
+  // return to the now-inaccessible route. No incoherent state possible.
+  useEffect(() => {
+    if (!showConvertTab && path === '/convert') navigate('/print', { replace: true });
+  }, [showConvertTab, path, navigate]);
+
   // Dynamic tab title
   useEffect(() => {
     document.title = isSettingsRoute
@@ -565,15 +576,18 @@ export default function App() {
       <TopNav
         path={path}
         onNavigate={navigate}
-        state={state}/>
+        state={state}
+        showConvert={showConvertTab}/>
       <div className="flex-1 flex min-h-0">
-        {isConvertRoute ? (
+        {(isConvertRoute && showConvertTab) ? (
           <ConvertPage
             paper={status?.paper}
             offline={(status?.alerts || []).some((a) => a.code === 'Z9_UNREACHABLE')}
             onSendToPrint={sendConvertedToPrint}/>
         ) : isSettingsRoute ? (
-          <SettingsPage/>
+          <SettingsPage
+            showConvertTab={showConvertTab}
+            onShowConvertTabChange={setShowConvertTab}/>
         ) : isLogsRoute ? (
           <LogsPage/>
         ) : isProfilsRoute ? (

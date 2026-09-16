@@ -69,6 +69,38 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.1.9" date="2026-08-29">
+      <description>
+        <p>Settings toggle to show or hide the experimental Convert tab.</p>
+      </description>
+    </release>
+    <release version="0.1.8" date="2026-08-29">
+      <description>
+        <p>
+          Experimental Convert tab: DeviceLink conversion to the loaded paper via
+          ArgyllCMS, gamut intents including relative colorimetric with black point
+          compensation, and hand-off to the Print screen.
+        </p>
+      </description>
+    </release>
+    <release version="0.1.7" date="2026-08-19">
+      <description>
+        <p>Raw SOAP tracing behind a flag; chart placement offset.</p>
+      </description>
+    </release>
+    <release version="0.1.6" date="2026-08-15">
+      <description>
+        <p>The app version is shown in Settings, under About.</p>
+      </description>
+    </release>
+    <release version="0.1.5" date="2026-08-02">
+      <description>
+        <p>
+          Self-contained Linux Flatpak (bundled dependencies, libvips and ArgyllCMS)
+          attached to each release; native Wayland.
+        </p>
+      </description>
+    </release>
     <release version="0.1.4" date="2026-08-01">
       <description>
         <p>Offline demo mode; macOS app packaging. First Flatpak packaging.</p>

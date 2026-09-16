@@ -123,6 +123,35 @@ jobs:
           PY
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
+      # AppStream advertises the version from metainfo.xml, NOT from the tarball.
+      # Left alone it goes stale and every bundle reports an old version to the
+      # software centres. A hand-written <release> entry is preferred (it carries
+      # real release notes); this only injects a placeholder when one is missing,
+      # so a release can never ship a wrong version.
+      - name: Ensure metainfo.xml declares this release
+        run: |
+          python3 - "${GITHUB_REF_NAME#v}" <<'PY'
+          import re, sys, datetime
+          version = sys.argv[1]
+          p = "packaging/flatpak/io.github.freeglaz.freeglaz.metainfo.xml"
+          s = open(p).read()
+          if re.search(r'<release version="%s"' % re.escape(version), s):
+              print("metainfo.xml already declares %s" % version)
+              raise SystemExit
+          entry = (
+              '  <releases>\n'
+              '    <release version="%s" date="%s">\n'
+              '      <description>\n'
+              '        <p>See the release notes on GitHub.</p>\n'
+              '      </description>\n'
+              '    </release>' % (version, datetime.date.today().isoformat())
+          )
+          s, n = re.subn(r"  <releases>", entry, s, count=1)
+          assert n == 1, "no <releases> block in metainfo.xml"
+          open(p, "w").write(s)
+          print("::warning::metainfo.xml had no entry for %s; injected a placeholder" % version)
+          PY
+
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: freeglaz-${{ env.VERSION }}-x86_64.flatpak

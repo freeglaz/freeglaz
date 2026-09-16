@@ -24,6 +24,9 @@ finish-args:
   # WEBKIT_DISABLE_DMABUF_RENDERER=1). fallback-x11 covers X11-only sessions.
   - --socket=fallback-x11
   - --share=ipc
+  - --socket=pulseaudio        # WebAudio (easter egg) — WebKitGTK renders it
+                               # through GStreamer's pulsesink; without this the
+                               # sandbox has no audio device at all.
   - --device=dri               # GPU for WebKitGTK compositing
   - --filesystem=xdg-documents # ~/Documents/freeglaz (user-facing profiles/backups)
   # File open/save go through the portals (file chooser) → no broad fs access.

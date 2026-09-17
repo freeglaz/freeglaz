@@ -69,6 +69,14 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.1.11" date="2026-09-17">
+      <description>
+        <p>
+          Fixes an image opened from a file manager, or handed over by another
+          application, being uploaded but never shown: the window opened empty.
+        </p>
+      </description>
+    </release>
     <release version="0.1.10" date="2026-09-17">
       <description>
         <p>

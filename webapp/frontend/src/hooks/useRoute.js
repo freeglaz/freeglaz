@@ -17,8 +17,12 @@ export function useRoute() {
     const initial = window.location.pathname || '/print';
     if (initial === '/' || initial === '') {
       // Redirect / → /print via replaceState (not pushState so as not to
-      // create a spurious history entry)
-      window.history.replaceState(null, '', '/print');
+      // create a spurious history entry). search + hash are CARRIED OVER: this
+      // runs during the first render, before any effect, so dropping them would
+      // silently destroy a boot parameter — e.g. /?file_id=… never reached
+      // App.jsx's boot effect, and the image was not loaded.
+      window.history.replaceState(
+        null, '', '/print' + window.location.search + window.location.hash);
       return '/print';
     }
     return initial;

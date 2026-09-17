@@ -462,7 +462,12 @@ def main(argv: list[str] | None = None) -> int:
     # Open-on-launch (file manager "Open With…", Linux/Flatpak): upload the file
     # and boot the window straight onto it, reusing the existing ?file_id=… path
     # (same as `freeglaz open`). Best-effort — a failure just opens the app empty.
-    boot_query = ""
+    # NOTE the `print` in the paths below: booting on "/" would lose the query.
+    # useRoute normalises "/" to "/print" in its state initialiser, i.e. DURING the
+    # first render and before any effect, with a bare replaceState that drops the
+    # search — so App.jsx's boot effect would then read an empty location.search and
+    # find no file_id. /print is also the contract App.jsx documents.
+    boot_path = ""
     if args.file:
         try:
             import requests
@@ -474,12 +479,12 @@ def main(argv: list[str] | None = None) -> int:
             fid = resp.json().get("file_id") if resp.ok else None
             if fid:
                 from urllib.parse import quote
-                boot_query = f"?file_id={fid}&name={quote(os.path.basename(args.file))}"
+                boot_path = f"print?file_id={fid}&name={quote(os.path.basename(args.file))}"
             else:
                 logger.warning("Open-on-launch rejected %s: %s", args.file, resp.text[:200])
         except Exception as exc:  # noqa: BLE001 — never block launch on this
             logger.warning("Open-on-launch failed (%s): %s", args.file, exc)
-    window = webview.create_window("freeglaz Print", f"http://{HOST}:{port}/{boot_query}",
+    window = webview.create_window("freeglaz Print", f"http://{HOST}:{port}/{boot_path}",
                                    width=1600, height=1000, min_size=(1024, 700),
                                    maximized=True, js_api=api)
     api._window = window
@@ -489,7 +494,7 @@ def main(argv: list[str] | None = None) -> int:
 
     def _open_in_window(file_id: str, name: str) -> None:
         from urllib.parse import quote
-        url = f"http://{HOST}:{port}/?file_id={quote(file_id)}&name={quote(name)}"
+        url = f"http://{HOST}:{port}/print?file_id={quote(file_id)}&name={quote(name)}"
 
         def _apply() -> None:
             try:

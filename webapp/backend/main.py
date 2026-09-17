@@ -32,6 +32,7 @@ from webapp.backend.paths import data_dir
 from webapp.backend.version import __version__
 from webapp.backend.routes import charts as charts_routes
 from webapp.backend.routes import convert as convert_routes
+from webapp.backend.routes import desktop as desktop_routes
 from webapp.backend.routes import files as files_routes
 from webapp.backend.routes import gamut as gamut_routes
 from webapp.backend.routes import jobs as jobs_routes
@@ -259,6 +260,7 @@ app.include_router(argyll_routes.router)
 app.include_router(gamut_routes.router)
 app.include_router(charts_routes.router)
 app.include_router(convert_routes.router)
+app.include_router(desktop_routes.router)
 
 
 @app.get("/api/health")

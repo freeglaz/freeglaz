@@ -22,10 +22,15 @@ wrapper layer above the FastAPI app.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import socket
 import sys
+import tempfile
+import threading
+import uuid
+from pathlib import Path
 
 # ── Linux: GTK/WebKit env vars set BEFORE any GTK/webview init ──
 # ORDER MATTERS: GTK reads these variables at its initialization, triggered by
@@ -51,6 +56,95 @@ logger = logging.getLogger("freeglaz.desktop")
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 HEALTH_TIMEOUT_S = 15.0
+# Short: these calls are local and must not stall a launch. The upload is the one
+# exception (a 16-bit TIFF is easily hundreds of MB) and carries its own timeout.
+HANDOFF_TIMEOUT_S = 2.0
+
+
+# ---------------------------------------------------------------- single instance
+# freeglaz shows ONE image at a time by construction, so a second launch carrying a
+# file must NOT open a second window: it hands the file to the running one and exits.
+#
+# The running instance advertises its port in a file because the port is not fixed —
+# _free_port falls back to an ephemeral one when 8765 is taken, so probing 8765
+# blindly would miss it. XDG_RUNTIME_DIR is per-user, cleared on logout, and inside
+# Flatpak it is shared by every instance of the same app id, which makes it the right
+# home for this advert.
+
+
+def _instance_file() -> Path:
+    base = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
+    return Path(base) / "freeglaz-instance.json"
+
+
+# Identifies THIS process in the advert. Not the pid: under Flatpak every instance
+# runs in its own pid namespace and sees itself as pid 2, so pids collide across
+# instances and cannot tell whose advert is whose. Liveness is never inferred from
+# this token either — _handoff probes the port over HTTP instead.
+_INSTANCE_TOKEN = uuid.uuid4().hex
+
+
+def _publish_instance(port: int) -> None:
+    """Advertise this instance so a later launch can find it. Best-effort: losing
+    the advert only costs the handoff, never the launch."""
+    try:
+        _instance_file().write_text(
+            json.dumps({"port": port, "token": _INSTANCE_TOKEN}), encoding="utf-8")
+    except OSError as exc:
+        logger.info("Instance advert not written (%s) — handoff disabled.", exc)
+
+
+def _withdraw_instance() -> None:
+    """Drop our advert on the way out — and only ours, since a newer instance may
+    already have replaced it."""
+    try:
+        path = _instance_file()
+        if json.loads(path.read_text(encoding="utf-8")).get("token") == _INSTANCE_TOKEN:
+            path.unlink()
+    except (OSError, ValueError, TypeError):
+        pass
+
+
+def _handoff(path: str) -> bool:
+    """Give ``path`` to an already-running desktop instance.
+
+    True means the running window took it and the caller must exit without starting
+    anything. A stale advert (the app crashed, or that port now belongs to something
+    else) just returns False and the normal launch proceeds.
+
+    THIS process reads the bytes and uploads them rather than passing the path along:
+    under Flatpak the file arrives as a document-portal path
+    (/run/user/N/doc/<hash>/…) granted to *this* launch, and betting on it being
+    visible from the other sandbox instance would be fragile. Uploading through the
+    ordinary /api/files avoids the question entirely."""
+    try:
+        port = int(json.loads(_instance_file().read_text(encoding="utf-8"))["port"])
+    except (OSError, ValueError, TypeError, KeyError):
+        return False
+    try:
+        import requests
+
+        base = f"http://{HOST}:{port}"
+        # It must be a DESKTOP instance: a bare web server has no window to show it in.
+        probe = requests.get(f"{base}/api/desktop/instance", timeout=HANDOFF_TIMEOUT_S)
+        if not probe.ok or not probe.json().get("desktop"):
+            return False
+        name = os.path.basename(path)
+        with open(path, "rb") as fh:
+            up = requests.post(f"{base}/api/files",
+                               files={"file": (name, fh, "image/tiff")}, timeout=300)
+        fid = up.json().get("file_id") if up.ok else None
+        if not fid:
+            logger.warning("Handoff rejected %s: %s", path, up.text[:200])
+            return False
+        opened = requests.post(f"{base}/api/desktop/open",
+                               json={"file_id": fid, "name": name},
+                               timeout=HANDOFF_TIMEOUT_S)
+        return bool(opened.ok)
+    except Exception as exc:  # noqa: BLE001 — any failure falls back to a normal launch
+        logger.info("Handoff unavailable (%s: %s) — launching normally.",
+                    type(exc).__name__, exc)
+        return False
 
 
 def _free_port(preferred: int = DEFAULT_PORT) -> int:
@@ -318,6 +412,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO)
+
+    # A second launch carrying a file gives it to the window already open and exits
+    # (single-image by construction — see _handoff). --mock is excluded: it would
+    # silently land in a live instance and print for real.
+    if args.file and not args.mock and _handoff(args.file):
+        logger.info("Handed %s to the running instance.", args.file)
+        return 0
+
     if args.mock:
         os.environ["FREEGLAZ_MOCK_PRINT"] = "1"
         logger.info("Mock mode enabled (no send to the Z9).")
@@ -348,6 +450,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     logger.info("Backend ready on http://%s:%d — opening the window.", HOST, port)
+    _publish_instance(port)
     # macOS: app name (menu + Dock tooltip) BEFORE Cocoa builds its menu.
     _set_macos_app_name()
     # Maximized by default: the app needs width (1280 is not enough to show
@@ -380,6 +483,29 @@ def main(argv: list[str] | None = None) -> int:
                                    width=1600, height=1000, min_size=(1024, 700),
                                    maximized=True, js_api=api)
     api._window = window
+
+    # Single instance: let a LATER launch navigate this window (routes/desktop.py).
+    from webapp.backend.routes import desktop as desktop_routes
+
+    def _open_in_window(file_id: str, name: str) -> None:
+        from urllib.parse import quote
+        url = f"http://{HOST}:{port}/?file_id={quote(file_id)}&name={quote(name)}"
+
+        def _apply() -> None:
+            try:
+                window.load_url(url)
+                # Wayland/GNOME forbids an app raising itself, so this may only
+                # flag the taskbar icon rather than come to the front.
+                window.restore()
+            except Exception as exc:  # noqa: BLE001 — best-effort, never fatal
+                logger.warning("Window navigation failed (%s): %s",
+                               type(exc).__name__, exc)
+
+        # Off the request thread: the HTTP reply must never wait on the GUI.
+        threading.Thread(target=_apply, daemon=True).start()
+
+    desktop_routes.set_open_handler(_open_in_window)
+
     # BLOCKING GUI loop on the main thread; returns on window close.
     # debug=True (WebKit DevTools) if FREEGLAZ_DEBUG=1 — to capture the real stack
     # of a possible blank screen in the webview (WebKitGTK). Off by default (prod).
@@ -397,6 +523,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # Window close → clean backend shutdown.
     logger.info("Window closed — shutting down the backend.")
+    desktop_routes.set_open_handler(None)
+    _withdraw_instance()
     server.should_exit = True
     t.join(timeout=5.0)
     return 0

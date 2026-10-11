@@ -66,7 +66,7 @@ fi
 # LSMinimumSystemVersion, nor link the system libexpat (the v0.1.11 failure).
 # The app still launches in that case — only the broken module fails, at use.
 MIN_MACOS=$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$APP/Contents/Info.plist")
-echo "==> Checking every binary targets macOS <= $MIN_MACOS…"
+echo "==> Checking every binary targets macOS <= ${MIN_MACOS}…"
 BAD=0
 while IFS= read -r -d '' f; do
   file -b "$f" | grep -q "Mach-O" || continue

@@ -21,7 +21,7 @@ custom ICC color profiling (CLI + web/desktop app over one engine).
 | **Node.js ≥ 22 LTS** | builds the web UI (source path only) |
 | **HP DesignJet Z9** on the network | the printer (optional — `--mock` mode exists) |
 
-Python ≥ 3.13 is required but installed automatically by `uv`. Argyll is an
+Python 3.13 or 3.14 is required but installed automatically by `uv`. Argyll is an
 **external** dependency (never bundled): freeglaz calls its binaries (`colprof`,
 `targen`, `spec2cie`, `profcheck`) and reference data (`ref/`).
 

@@ -4,7 +4,7 @@ version = "0.1.12"
 description = "Open CLI and web app to drive the HP DesignJet Z9: printing, calibration and custom ICC color profiling."
 readme = "README.md"
 license = "GPL-3.0-or-later"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.15"
 authors = [
     { name = "Vincent FISCHER", email = "265357873+vnz56@users.noreply.github.com" },
 ]

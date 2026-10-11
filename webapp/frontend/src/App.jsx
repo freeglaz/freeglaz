@@ -96,7 +96,7 @@ export default function App() {
   // Single source of truth here; passed to TopNav (gate) and Settings (control).
   const { showConvertTab, setShowConvertTab } = useShowConvertTab();
   const { status, stale, reconnect } = useStatus();
-  const { file, error, load, loadFromId, clear, updatePreview, loading: fileLoading } = useFileLoader();
+  const { file, error, load, loadFromId, loadDropped, clear, updatePreview, loading: fileLoading } = useFileLoader();
   const loadRef = useRef(load);   // stable handle for the Dock-drop listener (registered once, below)
   loadRef.current = load;
 
@@ -510,6 +510,20 @@ export default function App() {
   const isLogsRoute = path === '/logs';
   const isSettingsRoute = path === '/settings';
   const [showSplash, setShowSplash] = useState(true);
+
+  // Desktop/Flatpak: a file dropped on the window that WebKit could not read —
+  // desktop.py fetched it through the document portal and uploaded it. Print
+  // takes it only when it is the page showing and would take a drag (Viewer's
+  // rule); ConvertPage listens for its own. Inert in a browser.
+  const printShown = !((isConvertRoute && showConvertTab) || isSettingsRoute || isLogsRoute
+    || isProfilsRoute || isMesuresRoute || isPapersRoute);
+  const printTakesDrop = printShown && state !== UIState.E_PRINTING && !fileLoading;
+  useEffect(() => {
+    if (!printTakesDrop) return undefined;
+    const onDroppedFile = (e) => loadDropped(e.detail);
+    window.addEventListener('freeglaz:dropped-file', onDroppedFile);
+    return () => window.removeEventListener('freeglaz:dropped-file', onDroppedFile);
+  }, [printTakesDrop, loadDropped]);
 
   // Convert hidden but we're on its route (direct URL, or the setting was just
   // turned off while viewing it) → redirect to Print. `replace` so Back doesn't

@@ -26,6 +26,16 @@ async function _fetchFileState(file_id, filename) {
   };
 }
 
+// The strict upload gate rejects with { code, message }; map the code to a
+// localized message, falling back to the backend English text then a
+// generic label.
+function rejectionMessage(t, detail, fallback) {
+  const code = detail?.code;
+  return code
+    ? t(`errors.reject_${code}`, detail?.message || t('errors.file_load'))
+    : (fallback || t('errors.file_load'));
+}
+
 /**
  * Pipeline upload → fileInfo → preview. Maintains a single file state
  * { info, preview } that feeds the state machine.
@@ -70,14 +80,7 @@ export function useFileLoader() {
       const { file_id } = await postFile(blob);
       setFile(await _fetchFileState(file_id, blob.name));
     } catch (e) {
-      // The strict upload gate rejects with { code, message }; map the code to a
-      // localized message, falling back to the backend English text then a
-      // generic label.
-      const code = e.detail?.code;
-      const msg = code
-        ? t(`errors.reject_${code}`, e.detail?.message || t('errors.file_load'))
-        : (e.message || t('errors.file_load'));
-      setError(msg);
+      setError(rejectionMessage(t, e.detail, e.message));
       setFile(null);
     } finally {
       setLoading(false);
@@ -151,5 +154,16 @@ export function useFileLoader() {
     }
   }, []);
 
-  return { file, error, loading, load, loadFromId, clear, updatePreview };
+  // A drop WebKit could not read (Flatpak): desktop.py fetched the file through
+  // the document portal and uploaded it itself, then fired `freeglaz:dropped-file`
+  // with `{ file_id, name }` — or `{ name, reject }` when the upload gate refused
+  // it. Same outcomes as load(): the file, or the same localized rejection.
+  // useCallback: stable identity, so the listeners subscribe once.
+  const loadDropped = useCallback((detail) => {
+    if (detail?.file_id) return loadFromId(detail.file_id, detail.name);
+    setError(rejectionMessage(t, detail?.reject));
+    setFile(null);
+  }, [loadFromId, t]);
+
+  return { file, error, loading, load, loadFromId, loadDropped, clear, updatePreview };
 }

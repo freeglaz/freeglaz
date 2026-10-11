@@ -41,6 +41,9 @@ export default function Viewer({
 
   const handleDragOver = (e) => {
     e.preventDefault();
+    // 'copy': under Flatpak WebKit sees a file drag as a bare link and otherwise
+    // answers "move" (cf. ConvertPage).
+    e.dataTransfer.dropEffect = 'copy';
     if (acceptingFiles) setDragging(true);
   };
   const handleDragLeave = () => setDragging(false);

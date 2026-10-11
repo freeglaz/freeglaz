@@ -315,6 +315,121 @@ def _install_macos_open_handler(api, window) -> None:
                     type(exc).__name__, exc)
 
 
+# The file manager offers a dragged file under this target too: GTK3 resolves it
+# through the document portal to a /run/user/N/doc/… path the sandbox can read.
+_PORTAL_FILETRANSFER = "application/vnd.portal.filetransfer"
+
+
+def _install_portal_drop(window, port: int) -> None:
+    """Flatpak only, best-effort: load a file dropped on the window.
+
+    WebKitGTK asks a drop for text/uri-list only, i.e. the HOST path
+    (/home/<user>/Bureau/x.tif), which the sandbox cannot see outside
+    ~/Documents: the page then gets a drop with zero files and nothing happens.
+    Here, whenever a drop offers the portal target, we take it from WebKit, fetch
+    the file through the portal, upload it like "Open With…" and announce it to
+    the page (``freeglaz:dropped-file``), which loads it into the tab showing.
+    The bytes never cross the js bridge (pywebview inlines a return value into a
+    script: hundreds of MB for a 16-bit TIFF).
+
+    Two traps, both measured (GTK 3.24.52, WebKitGTK 2.54.1, GNOME 50 runtime):
+
+    - the request goes to a separate, never-shown widget: GTK silently drops a
+      reply whose target is missing from the receiving widget's target list, and
+      WebKit's does not carry the portal one;
+    - WebKit finishes a drop at once, which cancels a read still in flight
+      ("L'opération a été annulée"). So our handler, which runs before WebKit's,
+      stops the emission and finishes the drop itself once the reply is in.
+
+    Outside Flatpak the paths are visible and WebKit's own drop is left alone.
+    Any failure here only leaves the drop as it was (the Browse buttons remain)."""
+    if not sys.platform.startswith("linux") or not os.path.exists("/.flatpak-info"):
+        return
+    try:
+        # pywebview has already loaded these (GTK backend): no require_version.
+        from gi.repository import Gdk, GLib, Gtk, WebKit2
+
+        if not window.events.shown.wait(30):
+            logger.info("Portal drop: window not shown after 30 s; not installed.")
+            return
+
+        def _find_webview(widget):
+            if isinstance(widget, WebKit2.WebView):
+                return widget
+            if isinstance(widget, Gtk.Container):
+                for child in widget.get_children():
+                    found = _find_webview(child)
+                    if found is not None:
+                        return found
+            return None
+
+        def _deliver(path: str) -> None:
+            import requests
+
+            name = os.path.basename(path)
+            try:
+                with open(path, "rb") as fh:
+                    up = requests.post(f"http://{HOST}:{port}/api/files",
+                                       files={"file": (name, fh, "image/tiff")},
+                                       timeout=300)
+                if up.ok and up.json().get("file_id"):
+                    detail = {"file_id": up.json()["file_id"], "name": name}
+                else:
+                    # The upload gate's {code, message}: the page shows the same
+                    # localized rejection as for a drop it read itself.
+                    body = up.json() if up.headers.get("content-type", "").startswith(
+                        "application/json") else {}
+                    detail = {"name": name, "reject": body.get("detail")}
+                    logger.info("Portal drop: %s rejected (%s).", name, up.status_code)
+                window.evaluate_js("window.dispatchEvent(new CustomEvent("
+                                   f"'freeglaz:dropped-file', {{detail: {json.dumps(detail)}}}))")
+            except Exception as exc:  # noqa: BLE001 — best-effort
+                logger.warning("Portal drop failed (%s): %s: %s",
+                               path, type(exc).__name__, exc)
+
+        def _on_portal_data(_widget, context, _x, _y, data, _info, time):
+            paths = []
+            if data.get_length() > 0:
+                for uri in data.get_uris() or []:
+                    try:
+                        paths.append(GLib.filename_from_uri(uri)[0])
+                    except GLib.Error:
+                        pass
+            Gtk.drag_finish(context, bool(paths), False, time)
+            if not paths:
+                logger.warning("Portal drop: no file came through the document portal.")
+                return
+            if len(paths) > 1:
+                logger.info("Portal drop: %d files, keeping the first.", len(paths))
+            # Off the GUI thread: the upload takes a moment, and evaluate_js waits
+            # on this very thread.
+            threading.Thread(target=_deliver, args=(paths[0],), daemon=True).start()
+
+        receiver = Gtk.Label()   # never shown: the target of OUR portal request
+        receiver.connect("drag-data-received", _on_portal_data)
+
+        def _on_drop(widget, context, _x, _y, time):
+            if _PORTAL_FILETRANSFER not in [a.name() for a in context.list_targets()]:
+                return False   # not a file from a portal-aware source: WebKit's as before
+            receiver.drag_get_data(context, Gdk.Atom.intern(_PORTAL_FILETRANSFER, False),
+                                   time)
+            widget.stop_emission_by_name("drag-drop")
+            return True
+
+        def _attach() -> bool:
+            webview_widget = _find_webview(window.native)
+            if webview_widget is None:
+                logger.info("Portal drop: WebKit view not found; not installed.")
+            else:
+                webview_widget.connect("drag-drop", _on_drop)
+                logger.info("Portal drop: installed.")
+            return False   # one-shot idle callback
+
+        GLib.idle_add(_attach)
+    except Exception as exc:  # noqa: BLE001 — best-effort, never blocking
+        logger.info("Portal drop: not installed (%s: %s).", type(exc).__name__, exc)
+
+
 class _DesktopFileApi:
     """JS-exposed API (``window.pywebview.api``) for NATIVE file I/O in the desktop
     window.
@@ -550,14 +665,16 @@ def main(argv: list[str] | None = None) -> int:
     debug = os.environ.get("FREEGLAZ_DEBUG", "").lower() in ("1", "true", "yes")
     if debug:
         logger.info("FREEGLAZ_DEBUG: WebKit DevTools enabled (right-click → Inspect).")
-    # func= runs once the Cocoa app has started → the moment NSApplication is
-    # alive to set the Dock icon AND register the Dock open-file handler (macOS).
-    # No-op elsewhere; both are best-effort (swallow failures internally).
-    def _on_cocoa_started():
+    # func= runs (in its own thread) once the GUI loop has started → the moment
+    # NSApplication is alive to set the Dock icon AND register the Dock open-file
+    # handler (macOS), and the window to hook its file drops (Flatpak). Each is a
+    # no-op elsewhere and best-effort (swallows failures internally).
+    def _on_gui_started():
         _set_macos_dock_icon()
         _install_macos_open_handler(api, window)
+        _install_portal_drop(window, port)
 
-    webview.start(func=_on_cocoa_started, debug=debug)
+    webview.start(func=_on_gui_started, debug=debug)
 
     # Window close → clean backend shutdown.
     logger.info("Window closed — shutting down the backend.")

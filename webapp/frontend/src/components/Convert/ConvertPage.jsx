@@ -41,7 +41,7 @@ const FREEGLAZ_CUSTOM = new Set(['luminance_priority', 'relative_bpc']);
 
 export default function ConvertPage({ paper, offline, onSendToPrint }) {
   const { t } = useTranslation();
-  const { file, error: loadError, loading, load } = useFileLoader();
+  const { file, error: loadError, loading, load, loadDropped } = useFileLoader();
 
   const [dragging, setDragging] = useState(false);
   const [sourceInfo, setSourceInfo] = useState(null);   // { has_profile, color_space, trc } | null
@@ -80,7 +80,14 @@ export default function ConvertPage({ paper, offline, onSendToPrint }) {
     return () => { alive = false; };
   }, [fileId]);
 
-  const handleDragOver = (e) => { e.preventDefault(); if (!loading) setDragging(true); };
+  // dropEffect 'copy': under Flatpak WebKit sees a file drag as a bare link and
+  // otherwise answers "move" (no "+" cursor, and a move offered back to the file
+  // manager).
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    if (!loading) setDragging(true);
+  };
   const handleDragLeave = () => setDragging(false);
   const handleDrop = (e) => {
     e.preventDefault();
@@ -88,6 +95,14 @@ export default function ConvertPage({ paper, offline, onSendToPrint }) {
     const f = e.dataTransfer.files?.[0];
     if (f) load(f);
   };
+
+  // Desktop/Flatpak: the drop WebKit could not read arrives from desktop.py
+  // instead (fetched through the document portal, already uploaded).
+  useEffect(() => {
+    const onDroppedFile = (e) => loadDropped(e.detail);
+    window.addEventListener('freeglaz:dropped-file', onDroppedFile);
+    return () => window.removeEventListener('freeglaz:dropped-file', onDroppedFile);
+  }, [loadDropped]);
 
   // Browse — a way in without drag-and-drop, as on Print. One hidden input serves
   // both the empty zone and "change file".

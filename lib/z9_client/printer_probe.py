@@ -28,8 +28,9 @@ TWO-level check (decision: open up the DesignJet range honestly):
   "validated"`` (tested on the real Z9); otherwise ``"untested"``. The backend SIGNALS,
   the UI warns (brief 3) — we do not forbid ``untested`` ones.
 
-Three statuses: ``ok`` / ``unreachable`` / ``not_a_designjet`` — never a crashing
-exception.
+Four statuses: ``ok`` / ``unreachable`` / ``not_a_designjet`` / ``error`` — never
+a crashing exception. ``error`` = a fault on OUR side (e.g. a broken bundle with
+no XML parser, v0.1.11 on macOS 15): it must not be blamed on the printer.
 """
 from __future__ import annotations
 
@@ -48,10 +49,13 @@ def test_connection(ip: str, *, timeout: float = TEST_TIMEOUT_S) -> dict:
     - ``{"status": "unreachable", "message": …}`` — no response (TCP/SSL/timeout);
     - ``{"status": "not_a_designjet", "message"|"model": …}`` — responded but not
       a usable DesignJet;
+    - ``{"status": "error", "message": …}`` — local fault, not the printer's;
     - ``{"status": "ok", "model", "serial", "firmware", "part", "model_support"}``.
     """
+    from xml.etree.ElementTree import ParseError
+
     from .client import Z9Client
-    from .exceptions import Z9ConnectionError
+    from .exceptions import Z9ConnectionError, Z9Error
 
     ip = (ip or "").strip()
     if not ip:
@@ -63,10 +67,14 @@ def test_connection(ip: str, *, timeout: float = TEST_TIMEOUT_S) -> dict:
             ident = client.identification()
         except Z9ConnectionError as e:
             return {"status": "unreachable", "message": str(e)}
-        except Exception as e:  # responded but not a usable Z9 identification
+        except (Z9Error, ParseError) as e:  # responded, not a usable identification
             logger.info("test_connection %s: unusable response: %s", ip, e)
             return {"status": "not_a_designjet",
                     "message": f"Unexpected response from {ip} : {e}"}
+        except Exception as e:  # noqa: BLE001 — local fault, report it as such
+            logger.exception("test_connection %s: internal error", ip)
+            return {"status": "error",
+                    "message": f"{type(e).__name__}: {e}"}
     finally:
         try:
             client.close()

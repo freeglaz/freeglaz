@@ -76,6 +76,22 @@ def test_responded_with_http_error_is_not_designjet(monkeypatch):
     assert printer_probe.test_connection("1.2.3.4")["status"] == "not_a_designjet"
 
 
+def test_html_page_is_not_designjet(monkeypatch):
+    # A web server answering an HTML page -> XML ParseError -> not a Z9 PIWS.
+    from xml.etree.ElementTree import ParseError
+    _ident(monkeypatch, ParseError("syntax error: line 1, column 0"))
+    assert printer_probe.test_connection("1.2.3.4")["status"] == "not_a_designjet"
+
+
+def test_missing_xml_parser_is_internal_error(monkeypatch):
+    # v0.1.11 macOS bundle on Sequoia: pyexpat failed to load. A real Z9 was
+    # reported as "not a DesignJet" — it is OUR fault and must say so.
+    _ident(monkeypatch, ImportError("No module named expat; use SimpleXMLTreeBuilder instead"))
+    r = printer_probe.test_connection("192.168.18.93")
+    assert r["status"] == "error"
+    assert "expat" in r["message"]
+
+
 def test_empty_ip_unreachable():
     assert printer_probe.test_connection("")["status"] == "unreachable"
 

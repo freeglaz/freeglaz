@@ -331,10 +331,14 @@ function AddPrinter({ hasPrinters, onAdded, onFirstAdded }) {
 
       {/* Test result */}
       {result && result.status === 'unreachable' && (
-        <Notice kind="error" text={t('settings.printers.result_unreachable')}/>
+        <Notice kind="error" text={t('settings.printers.result_unreachable')} detail={result.message}/>
       )}
       {result && result.status === 'not_a_designjet' && (
-        <Notice kind="error" text={t('settings.printers.result_not_designjet')}/>
+        <Notice kind="error" text={t('settings.printers.result_not_designjet')}
+                detail={result.model || result.message}/>
+      )}
+      {result && result.status === 'error' && (
+        <Notice kind="error" text={t('settings.printers.result_error')} detail={result.message}/>
       )}
       {ok && (
         <div className="space-y-3">
@@ -380,7 +384,7 @@ function AddPrinter({ hasPrinters, onAdded, onFirstAdded }) {
   );
 }
 
-function Notice({ kind, text }) {
+function Notice({ kind, text, detail }) {
   const cls = kind === 'warn'
     ? 'border-warn/40 bg-warn/10 text-text-strong'
     : 'border-danger/40 bg-danger/10 text-text-strong';
@@ -389,7 +393,15 @@ function Notice({ kind, text }) {
   return (
     <div className={`flex items-start gap-2 rounded-md border px-3 py-2 ${cls}`}>
       <Icon size={14} className={`${iconCls} mt-0.5 flex-shrink-0`}/>
-      <p className="text-xs leading-relaxed">{text}</p>
+      <div className="min-w-0">
+        <p className="text-xs leading-relaxed">{text}</p>
+        {/* Technical cause (backend message): what support needs to diagnose. */}
+        {detail && (
+          <p className="text-[11px] leading-snug text-text-muted font-mono mt-1 break-words select-text">
+            {detail}
+          </p>
+        )}
+      </div>
     </div>
   );
 }

@@ -837,6 +837,7 @@
       "test_button": "Tester",
       "result_unreachable": "Aucune imprimante à cette adresse.",
       "result_not_designjet": "Cet appareil n'est pas une imprimante DesignJet.",
+      "result_error": "freeglaz n'a pas pu traiter la réponse de l'imprimante (erreur interne).",
       "serial": "N° de série",
       "untested_warning": "Modèle non testé. freeglaz est validé sur DesignJet Z9. Ce modèle peut fonctionner mais n'est pas garanti — vos retours sont bienvenus.",
       "name_label": "Nom (optionnel)",

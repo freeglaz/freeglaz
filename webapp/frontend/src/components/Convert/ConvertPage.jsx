@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { UploadCloud, FileImage, ArrowRight, Loader2, AlertTriangle, Printer } from 'lucide-react';
 import { useFileLoader } from '../../hooks/useFileLoader.js';
 import { getConvertSourceInfo, postConvert, getFilePreviewUrl } from '../../api/client.js';
+import { saveFile } from '../../lib/fileIO.js';
 import Field from '../ui/Field.jsx';
 import Label from '../ui/Label.jsx';
 import Segmented from '../ui/Segmented.jsx';
@@ -88,6 +89,15 @@ export default function ConvertPage({ paper, offline, onSendToPrint }) {
     if (f) load(f);
   };
 
+  // Browse — a way in without drag-and-drop, as on Print. One hidden input serves
+  // both the empty zone and "change file".
+  const inputRef = useRef(null);
+  const handlePicked = (e) => {
+    const f = e.target.files?.[0];
+    if (f) load(f);
+    e.target.value = '';
+  };
+
   // toPrint=false → download the device TIFF; toPrint=true → hand it off to the
   // Print tab (App uploads it + navigates; device passthrough, no auto-print).
   const runConvert = useCallback(async (toPrint = false) => {
@@ -103,16 +113,10 @@ export default function ConvertPage({ paper, offline, onSendToPrint }) {
       if (toPrint) {
         await onSendToPrint?.(blob, filename);
       } else {
-        // Trigger a browser download of the device TIFF.
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-        setDone(filename);
+        // saveFile, never a blob link: in the desktop window a blob download
+        // freezes the webview (#22) — there it opens the native SAVE dialog.
+        const saved = await saveFile(filename, await blob.arrayBuffer(), 'image/tiff');
+        if (saved) setDone(filename);
       }
     } catch (e) {
       const d = e.detail;
@@ -140,6 +144,13 @@ export default function ConvertPage({ paper, offline, onSendToPrint }) {
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}>
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".tif,.tiff,image/tiff"
+          className="hidden"
+          disabled={loading}
+          onChange={handlePicked}/>
         {!file ? (
           <div className={`flex-1 m-4 mb-2 rounded-xl bg-sunken border-[1.5px] border-dashed
                            relative flex flex-col items-center justify-center gap-4 text-text-muted
@@ -150,6 +161,13 @@ export default function ConvertPage({ paper, offline, onSendToPrint }) {
             <div className="text-[17px] font-medium text-text-strong tracking-tight text-center">
               {t('convert.drop_hint')}
             </div>
+            <button
+              type="button"
+              onClick={() => inputRef.current?.click()}
+              disabled={loading}
+              className="mt-2 px-4 py-1.5 rounded-md border border-border-strong text-sm2 font-medium text-text-muted hover:text-text-strong hover:bg-surface transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+              {t('convert.browse')}
+            </button>
             {loading && (
               <div
                 role="status"
@@ -172,6 +190,13 @@ export default function ConvertPage({ paper, offline, onSendToPrint }) {
             <div className="mt-2 flex items-center justify-center gap-2 text-text-muted min-w-0">
               <FileImage size={14} className="text-accent flex-shrink-0" aria-hidden="true"/>
               <span className="text-xs2 font-medium truncate">{file.info.filename}</span>
+              <button
+                type="button"
+                onClick={() => inputRef.current?.click()}
+                disabled={loading || converting}
+                className="flex-shrink-0 text-xs2 font-medium text-accent hover:underline disabled:opacity-40 disabled:cursor-not-allowed disabled:no-underline">
+                {t('convert.change_file')}
+              </button>
             </div>
           </div>
         )}

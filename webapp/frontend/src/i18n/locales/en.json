@@ -31,6 +31,8 @@
     "title": "Convert",
     "subtitle": "Build a device file from an image, via a DeviceLink toward the loaded paper. Separate from printing — the output is saved to disk.",
     "drop_hint": "Drop a 16-bit TIFF here",
+    "browse": "Browse…",
+    "change_file": "Change file…",
     "loading": "Loading…",
     "source_section": "Detected source",
     "reading_source": "Reading the embedded profile…",

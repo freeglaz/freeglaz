@@ -31,6 +31,8 @@
     "title": "Convertir",
     "subtitle": "Construit un fichier device à partir d'une image, via un DeviceLink vers le papier chargé. Distinct de l'impression — le résultat est enregistré sur disque.",
     "drop_hint": "Déposez un TIFF 16 bits ici",
+    "browse": "Parcourir…",
+    "change_file": "Changer de fichier…",
     "loading": "Chargement…",
     "source_section": "Source détectée",
     "reading_source": "Lecture du profil embarqué…",

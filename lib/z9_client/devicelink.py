@@ -22,7 +22,10 @@ with ``collink -G`` (bypass the stored B2A, invert the A2B at link time), then
 applies it to a 16-bit TIFF with ``cctiff`` (integer, "fully accurate").
 
 Only the final Argyll conversion is exposed here — no custom OOG/shadow/paper-
-black layers, no image-aware ``tiffgamut``, no linkstore (all out of scope).
+black layers, no linkstore (out of scope). The image-aware axis (JALON 3) passes
+a ``.gam`` built by ``tiffgamut.py`` to ``build_collink_argv(image_gam=…)``; the
+freeglaz abstracts (``collink -s -p``) live in
+``webapp/backend/services/luminance_priority.py``.
 
 Orchestration pattern mirrors ``refine.py``: ``resolve_argyll_binary`` (raises an
 actionable ``ArgyllNotFound``) + ``subprocess.run``. collink/cctiff are OPTIONAL

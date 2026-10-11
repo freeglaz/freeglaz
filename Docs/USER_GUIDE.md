@@ -158,6 +158,8 @@ The **Settings** page:
 - **ArgyllCMS** — the color engine's status; auto-detected, with an optional path
   override.
 - **Printers** — add, edit, activate or remove printers.
+- **Show the Convert tab** — off by default. Convert is an experimental,
+  research-only conversion bench; see [Convert (experimental)](CONVERT_experimental.md).
 
 ---
 

@@ -6,7 +6,7 @@ Homebrew, no `uv`, no Python, no Terminal** for everyday printing.
 freeglaz drives an **HP DesignJet Z9** printer: printing, calibration, and
 custom ICC color profiling.
 
-> This app is **Apple Silicon** (M1/M2/M3…), **macOS 11 or later**. On an Intel
+> This app is **Apple Silicon** (M1/M2/M3…), **macOS 14 (Sonoma) or later**. On an Intel
 > Mac or an older macOS, use **`INSTALL_tarball_macos.md`** instead.
 
 ---

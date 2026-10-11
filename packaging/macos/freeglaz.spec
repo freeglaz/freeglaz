@@ -147,7 +147,10 @@ app = BUNDLE(
         "CFBundleShortVersionString": VERSION,
         "CFBundleVersion": VERSION,
         "NSHighResolutionCapable": True,
-        "LSMinimumSystemVersion": "11.0",
+        # Real floor of the bundled wheels (scipy/numpy/pikepdf ship macOS 14
+        # binaries). build_app.command fails the build if any Mach-O in the
+        # bundle requires a newer macOS than this value.
+        "LSMinimumSystemVersion": "14.0",
         # Single-window utility: no Dock-less agent, keep it a normal app.
         "LSApplicationCategoryType": "public.app-category.graphics-design",
         # Accept a TIFF dropped on the Dock icon (or "Open With"). TIFF only,

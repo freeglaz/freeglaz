@@ -23,6 +23,14 @@ set -euo pipefail
 cd "$(cd "$(dirname "$0")/../.." && pwd)"
 echo "==> Repo: $(pwd)"
 
+# Bundle a uv-managed CPython (python-build-standalone), never the runner's
+# system/Homebrew Python. The latter is built for the runner's own macOS and
+# links the stdlib against /usr/lib (libexpat, …): v0.1.11 shipped a Python
+# 3.14 framework with minos 26.0 whose pyexpat needs a libexpat symbol absent
+# before macOS 26 — every XML read from the Z9 failed on Sequoia.
+export UV_PYTHON_PREFERENCE=only-managed
+export UV_PYTHON=3.13
+
 echo "==> Syncing Python dependencies (desktop extra)…"
 uv sync --extra desktop
 
@@ -53,6 +61,31 @@ if [ ! -d "$APP" ]; then
   echo "!! Build did not produce $APP" >&2
   exit 1
 fi
+
+# Guard: no Mach-O in the bundle may require a newer macOS than the declared
+# LSMinimumSystemVersion, nor link the system libexpat (the v0.1.11 failure).
+# The app still launches in that case — only the broken module fails, at use.
+MIN_MACOS=$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$APP/Contents/Info.plist")
+echo "==> Checking every binary targets macOS <= $MIN_MACOS…"
+BAD=0
+while IFS= read -r -d '' f; do
+  file -b "$f" | grep -q "Mach-O" || continue
+  minos=$(otool -l "$f" | awk '/LC_BUILD_VERSION/{b=1} b&&/minos/{print $2; exit}
+                               /LC_VERSION_MIN_MACOSX/{v=1} v&&/ version/{print $2; exit}')
+  if [ -n "$minos" ] && [ "$(printf '%s\n%s\n' "$MIN_MACOS" "$minos" | sort -V | tail -1)" != "$MIN_MACOS" ]; then
+    echo "!! ${f#"$APP"/} requires macOS $minos" >&2
+    BAD=1
+  fi
+  if otool -L "$f" | grep -q "/usr/lib/libexpat"; then
+    echo "!! ${f#"$APP"/} links the system libexpat" >&2
+    BAD=1
+  fi
+done < <(find "$APP" -type f \( -name "*.so" -o -name "*.dylib" -o -perm +111 \) -print0)
+if [ "$BAD" -ne 0 ]; then
+  echo "!! Bundle is not portable to macOS $MIN_MACOS — aborting." >&2
+  exit 1
+fi
+echo "   all binaries OK"
 
 # Apple Silicon refuses to launch an arm64 binary without a valid signature.
 # An ad-hoc signature ("-s -") is free (no Apple Developer account) and is

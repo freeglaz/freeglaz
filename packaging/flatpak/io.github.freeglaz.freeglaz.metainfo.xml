@@ -69,6 +69,17 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.1.14" date="2026-10-11">
+      <description>
+        <p>
+          Dragging an image from the file manager onto the window now works in
+          the Flatpak build, where the drop was silently ignored. The
+          Convert tab gains "Browse…" and "Change file…" buttons, so it no
+          longer depends on drag-and-drop, and saving its result opens the save
+          dialog instead of freezing the window.
+        </p>
+      </description>
+    </release>
     <release version="0.1.13" date="2026-10-11">
       <description>
         <p>

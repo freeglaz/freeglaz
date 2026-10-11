@@ -70,3 +70,33 @@ def test_main_returns_2_without_pywebview(monkeypatch):
 
     monkeypatch.setattr(builtins, "__import__", _no_webview)
     assert desktop.main([]) == 2
+
+
+def test_backend_start_failure_is_logged_and_shown(monkeypatch, caplog):
+    """Backend not up in time → logged (the .app has no console) + an error
+    window, never a silent exit with the icon bouncing in the Dock."""
+    import webapp.backend.main as backend_main
+
+    class _Server:
+        should_exit = False
+
+    shown = {}
+
+    class _FakeWebview:
+        @staticmethod
+        def create_window(title, html=None, **kw):
+            shown["title"], shown["html"] = title, html
+
+        @staticmethod
+        def start(*a, **k):
+            shown["started"] = True
+
+    monkeypatch.setitem(__import__("sys").modules, "webview", _FakeWebview)
+    monkeypatch.setattr(backend_main, "run_background", lambda host, port: (_Server(), None))
+    monkeypatch.setattr(backend_main, "wait_until_up", lambda *a, **k: False)
+    with caplog.at_level("ERROR"):
+        assert desktop.main([]) == 1
+    assert "Backend did not start" in caplog.text
+    assert shown.get("started") is True
+    assert "freeglaz could not start" in shown["html"]
+    assert "freeglaz.log" in shown["html"]

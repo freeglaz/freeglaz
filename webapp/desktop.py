@@ -55,7 +55,9 @@ logger = logging.getLogger("freeglaz.desktop")
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
-HEALTH_TIMEOUT_S = 15.0
+# Generous: a cold first launch of the frozen .app (Gatekeeper scan, unpacking)
+# is slow. The backend no longer waits on the Z9 (Z9StatusPollSubscriber.start).
+HEALTH_TIMEOUT_S = 30.0
 # Short: these calls are local and must not stall a launch. The upload is the one
 # exception (a 16-bit TIFF is easily hundreds of MB) and carries its own timeout.
 HANDOFF_TIMEOUT_S = 2.0
@@ -399,6 +401,34 @@ class _DesktopFileApi:
                 "content_b64": base64.b64encode(data).decode("ascii")}
 
 
+def _startup_error_html(msg: str, log_file: str) -> str:
+    """Self-contained page for the startup-failure window (no backend to serve it)."""
+    from html import escape
+    return f"""<!doctype html><html><head><meta charset="utf-8"><style>
+body{{font:14px -apple-system,system-ui,sans-serif;margin:28px;color:#222;background:#fff}}
+h1{{font-size:17px;margin:0 0 12px}} code{{font-size:12px;word-break:break-all}}
+@media (prefers-color-scheme:dark){{body{{color:#eee;background:#1e1e1e}}}}
+</style></head><body>
+<h1>freeglaz could not start</h1>
+<p>{escape(msg)}</p>
+<p>Details are in the log file:<br><code>{escape(log_file)}</code></p>
+<p>Please send this file when reporting the problem.</p>
+</body></html>"""
+
+
+def _show_startup_error(webview, msg: str) -> None:
+    """Show WHY the app is not opening. Without it a failed backend start was a
+    bare ``print`` nobody sees: the .app bounced in the Dock, then vanished.
+    Best-effort — the log line is already written."""
+    try:
+        from webapp.backend.main import LOG_FILE
+        webview.create_window("freeglaz", html=_startup_error_html(msg, str(LOG_FILE)),
+                              width=560, height=300, resizable=False)
+        webview.start()
+    except Exception as exc:  # noqa: BLE001 — never mask the original failure
+        logger.warning("Startup error window failed (%s): %s", type(exc).__name__, exc)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="freeglaz-desktop", description="freeglaz — native window (pywebview)")
@@ -446,7 +476,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if not wait_until_up(HOST, port, timeout=HEALTH_TIMEOUT_S, interval=0.25):
         server.should_exit = True
-        print(f"Backend did not start within {HEALTH_TIMEOUT_S:.0f}s — aborting.")
+        msg = f"Backend did not start within {HEALTH_TIMEOUT_S:.0f}s — aborting."
+        logger.error(msg)
+        print(msg)
+        _show_startup_error(webview, msg)
         return 1
 
     logger.info("Backend ready on http://%s:%d — opening the window.", HOST, port)

@@ -217,7 +217,7 @@ async def test_subscriber_pushes_full_snapshot_on_subscribe():
                  "resource_uri": "/", "resource_type": ""}],
     )
     sub = Z9StatusPollSubscriber(z9)
-    await sub._refetch_full_snapshot()
+    await sub._seed()
 
     received = []
     def cb(event_type, data):
@@ -230,6 +230,42 @@ async def test_subscriber_pushes_full_snapshot_on_subscribe():
     assert event_type == "status_full"
     assert data["global_status"] == "Ready"
     assert data["identification"]["ModelName"] == "Z9"
+
+
+@pytest.mark.asyncio
+async def test_start_does_not_wait_on_an_unreachable_z9():
+    # Active printer unreachable (other network, switched off): every request
+    # hangs for its timeout. start() must return at once, or the backend comes
+    # up after the desktop's health deadline and the window never opens.
+    import threading
+    import time
+    release = threading.Event()
+
+    def _hang(*_a, **_k):
+        release.wait(5.0)
+        raise Z9ConnectionError("Timeout connecting to 10.0.0.99")
+
+    z9 = _make_fake_z9()
+    z9.device.status = MagicMock(side_effect=_hang)
+    sub = Z9StatusPollSubscriber(z9)
+    t0 = time.monotonic()
+    await sub.start()
+    assert time.monotonic() - t0 < 0.5
+    assert sub.current_snapshot() == {}
+    release.set()
+    await sub.stop()
+
+
+@pytest.mark.asyncio
+async def test_subscriber_before_seed_gets_status_full_once_seeded():
+    z9 = _make_fake_z9(device_status={"global_status": "Ready"})
+    sub = Z9StatusPollSubscriber(z9)
+    received = []
+    sub.subscribe(lambda et, d: received.append((et, d)))
+    assert received == []          # nothing to push before the seed
+    await sub._seed()
+    assert [et for et, _ in received] == ["status_full"]
+    assert received[0][1]["global_status"] == "Ready"
 
 
 # ═══════════════════════════════════════════════════════════════════════

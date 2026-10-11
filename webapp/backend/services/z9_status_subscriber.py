@@ -233,14 +233,29 @@ class Z9StatusPollSubscriber(Z9StatusSubscriber):
         self._stop_event: Optional[asyncio.Event] = None  # lazy init
         self._last_paper_poll: float = 0.0     # monotonic timestamp
         self._last_activity_poll: float = 0.0  # monotonic timestamp
+        self._seeded = False  # initial full fetch done (cf. start)
 
     # ─── lifecycle ────────────────────────────────────────────────
 
     async def start(self) -> None:
-        """Full initial fetch (BLOCKING) then launch the poll loop in the
-        background. Must have finished before the 1st HTTP request is
-        accepted (cf. lifespan order)."""
+        """Launch the initial full fetch + the poll loop in the background.
+        Non-blocking: the lifespan must NOT wait on the Z9. With the active
+        printer unreachable (switched off, other network, new DHCP lease)
+        each request can take its full timeout, the backend then came up
+        after the desktop's health deadline and the window never opened.
+        Until the seed lands, ``subscribe`` defers the initial status_full
+        and ``current_snapshot()`` is empty (callers use .get defaults)."""
         self._stop_event = asyncio.Event()
+        self._task = asyncio.create_task(self._run())
+        logger.info("Z9StatusPollSubscriber started (interval=%.1fs)",
+                    self._poll_interval)
+
+    async def _run(self) -> None:
+        await self._seed()
+        await self._poll_loop()
+
+    async def _seed(self) -> None:
+        """Full initial fetch, then status_full to every subscriber so far."""
         await self._refetch_full_snapshot()
         # `device.status()` covers loaded_paper_* + global_status, but
         # NOT the activity (which lives in raw device_status()).
@@ -255,11 +270,9 @@ class Z9StatusPollSubscriber(Z9StatusSubscriber):
         now = time.monotonic()
         self._last_paper_poll = now
         self._last_activity_poll = now
-        self._task = asyncio.create_task(self._poll_loop())
-        logger.info(
-            "Z9StatusPollSubscriber started (interval=%.1fs, %d events in snapshot)",
-            self._poll_interval, len(self._last_aging_stamps),
-        )
+        self._seeded = True
+        logger.info("Initial Z9 snapshot done (%d events)", len(self._last_aging_stamps))
+        self._broadcast("status_full", dict(self._current_snapshot))
 
     async def stop(self) -> None:
         if self._stop_event is not None:
@@ -277,8 +290,11 @@ class Z9StatusPollSubscriber(Z9StatusSubscriber):
     def subscribe(self, cb: ChangeCallback) -> None:
         """Add a callback + immediately push the current snapshot as
         status_full (the new subscriber does not have to wait for the
-        next tick)."""
+        next tick). Before the initial fetch has landed there is nothing to
+        push: the seed broadcasts status_full to it then."""
         self._subscribers.add(cb)
+        if not self._seeded:
+            return
         try:
             cb("status_full", dict(self._current_snapshot))
         except Exception:  # noqa: BLE001

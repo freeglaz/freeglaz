@@ -72,8 +72,8 @@ modules:
           /app/share/icons/hicolor/scalable/apps/io.github.freeglaz.freeglaz.svg
     sources:
       - type: archive
-        url: https://github.com/freeglaz/freeglaz/releases/download/v0.1.11/freeglaz-0.1.11.tar.gz
-        sha256: d00692071429be236e2a8f376649dc9f03d253a6fbe9d6a0c19273e07c2f8eaa
+        url: https://github.com/freeglaz/freeglaz/releases/download/v0.1.12/freeglaz-0.1.12.tar.gz
+        sha256: 6d76c08d77d921039e13b444beab4929b7d951454493ec5ab9677c01023a520d
         strip-components: 1
       - type: dir
         path: .

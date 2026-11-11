@@ -34,6 +34,17 @@ export function chartStateStamp(detail) {
 
 const _count = (groups) => (groups || []).reduce((n, g) => n + ((g.sids || []).length), 0);
 
+/** How to word the exclusions the former "last scan" rule would ignore (phase 4E), from the
+ *  policy of the CURRENT build: 'legacy' → historical notice (the current profile does not apply
+ *  them); 'unknown' (no reliable manifest) → neutral notice; 'apply_all' or no current profile
+ *  → nothing (the excluded count already says what will be applied). */
+export function newlyNotice(p) {
+  if (!_count(p?.newly_applied_vs_legacy)) return null;
+  if (p.current_build_policy === 'legacy') return 'legacy';
+  if (p.current_build_policy === 'unknown') return 'neutral';
+  return null;
+}
+
 /** Preview → what the user must see before building. Numbers come from the backend. */
 export function summarizePreview(p) {
   if (!p) return null;
@@ -46,11 +57,12 @@ export function summarizePreview(p) {
     warnings, refusals: p.refusals || [], refused: !!p.would_be_refused,
     recommend: !!p.recommend_remeasure, reasons: p.reasons || [],
     nNewlyApplied: _count(p.newly_applied_vs_legacy), nStrongIncluded: _count(p.qc_strong_included),
+    newlyNotice: newlyNotice(p),
     differsFromCurrent: p.differs_from_current_build,
     inputsChangedSinceCurrent: !!(p.current_inputs_fingerprint && p.current_inputs_fingerprint !== p.inputs_fingerprint),
     fingerprint: p.inputs_fingerprint,
   };
-  s.needsConfirmation = !s.refused && (s.nExcluded > 0 || s.nNewlyApplied > 0 || s.nStrongIncluded > 0
+  s.needsConfirmation = !s.refused && (s.nExcluded > 0 || s.newlyNotice !== null || s.nStrongIncluded > 0
                                        || s.warnings.length > 0 || s.recommend);
   return s;
 }

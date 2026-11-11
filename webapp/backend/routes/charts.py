@@ -1214,6 +1214,21 @@ def _selection_key(request: dict) -> tuple:
             request.get("policy") or "legacy")
 
 
+def _current_build_policy(chart_id: str, d: Path, ptr: dict) -> Optional[str]:
+    """Rejection policy of the CURRENT profile's build: None = no current profile; "unknown" =
+    no reliable manifest (same criteria as profile.status v2: a build manifest with request and
+    fingerprint whose recorded ICC sha256 is the current file's); else "legacy" | "apply_all"
+    (a build manifest without a policy predates 4C, when every build was legacy)."""
+    icc = d / f"{chart_id}.icc"
+    if not icc.is_file():
+        return None
+    req, fp = ptr.get("request"), (ptr.get("plan") or {}).get("inputs_fingerprint")
+    if not (req and fp) or ptr.get("kind") != "build" \
+            or (ptr.get("pointer") or {}).get("icc_sha256") != hashlib_sha256(icc.read_bytes()):
+        return "unknown"
+    return req.get("policy") or "legacy"
+
+
 @router.post("/{chart_id}/profile/preview")
 def profile_preview(chart_id: str, body: ProfileChartBody) -> dict:
     """What a build with this request WOULD use, without building: same planning engine as the
@@ -1269,7 +1284,10 @@ def profile_preview(chart_id: str, body: ProfileChartBody) -> dict:
             "current_build_id": (ptr.get("pointer") or {}).get("build_id"),
             "current_inputs_fingerprint": (ptr.get("plan") or {}).get("inputs_fingerprint"),
             "differs_from_current_build": (None if not cur_req else _selection_key(cur_req) != _selection_key(req)),
-            "newly_applied_vs_legacy": newly, "qc_strong_included": strong}
+            "newly_applied_vs_legacy": newly, "qc_strong_included": strong,
+            # decides how the UI words newly_applied_vs_legacy: a historical notice only when the
+            # current build really used the legacy rule, a neutral one without a reliable manifest
+            "current_build_policy": _current_build_policy(chart_id, d, ptr)}
 
 
 def _profile_status(chart_id: str, d: Path) -> dict:

@@ -1355,7 +1355,7 @@
     "profile_name_ascii_only": "ASCII characters only (no accents).",
     "profile_name_maxlen": "Maximum 63 characters (ICC desc limit).",
     "profile_conflict_title": "Profile already exists",
-    "profile_conflict_body": "A profile « {{name}} » already exists for this paper. « Replace » fully overwrites the existing profile (measurements, tags and notes). To keep them, choose « Keep both ».",
+    "profile_conflict_body": "A profile “{{name}}” already exists in this paper's library. “Replace” puts the new profile in its place; the old file is kept, with its tags and notes, in the paper's backups (.replaced folder, not listed). Tags and notes are not carried over to the new profile. “Keep both” adds the new profile under another name and leaves the old one untouched.",
     "profile_conflict_keep_both": "Keep both",
     "profile_conflict_replace": "Replace",
     "build_done": "Profile built",
@@ -1364,7 +1364,8 @@
     "build_done_installable": "Ready to install on the printer.",
     "build_done_not_ranged": "Profile built, but not filed (unknown printer) — not installable.",
     "loading": "Loading…",
-    "no_charts": "No chart."
+    "no_charts": "No chart.",
+    "profile_conflict_body_build": "A profile “{{name}}” already exists in this paper's library. “Replace” puts the new profile in its place; the old file is kept, with its tags and notes, in the paper's backups (.replaced folder, not listed). Tags and notes are not carried over to the new profile. “Keep both” adds the new profile under another name and leaves the old one untouched. Every version built from this chart stays in its history."
   },
   "chart_create": {
     "kicker": "FREE CHART",
@@ -1713,8 +1714,8 @@
     "inactive_other": "{{count}} exclusions inactive in this mode",
     "holes_one": "{{count}} patch without any measurement",
     "holes_other": "{{count}} patches without any measurement",
-    "newly_applied_one": "{{count}} exclusion is applied although the former rule (\"last scan\" base) would have ignored it: an effect of the current rule, not a new finding of the check.",
-    "newly_applied_other": "{{count}} exclusions are applied although the former rule (\"last scan\" base) would have ignored them: an effect of the current rule, not a new finding of the check.",
+    "newly_applied_one": "The current build uses the former rule (\"last scan\" base without exclusions): {{count}} recorded exclusion is not applied in it; this build will apply it. An effect of the rule, not a new finding of the check.",
+    "newly_applied_other": "The current build uses the former rule (\"last scan\" base without exclusions): {{count}} recorded exclusions are not applied in it; this build will apply them. An effect of the rule, not a new finding of the check.",
     "strong_included_one": "{{count}} strongly suspect measurement stays included: you may review it before building.",
     "strong_included_other": "{{count}} strongly suspect measurements stay included: you may review them before building.",
     "guard": {
@@ -1757,7 +1758,9 @@
     "confirm": "Build the profile",
     "inputs_changed": "The measurements or the choices changed since the preview: the preview was recomputed, check it and confirm again.",
     "coverage_refused": "The build was refused: a structural point has no measurement left. The preview was recomputed.",
-    "selection_differs": "Your current choices also differ from those of the current build."
+    "selection_differs": "Your current choices also differ from those of the current build.",
+    "newly_applied_neutral_one": "{{count}} recorded exclusion will be applied. The current profile has no reliable manifest: whether it took it into account cannot be known.",
+    "newly_applied_neutral_other": "{{count}} recorded exclusions will be applied. The current profile has no reliable manifest: whether it took them into account cannot be known."
   },
   "profile_history": {
     "title_one": "Profile history ({{count}} version)",
@@ -1834,6 +1837,8 @@
       "device_white": "Paper white (RGB 255)",
       "device_black": "Black (RGB 0)"
     },
-    "limits": "Differences between two ICC transforms, computed offline (ArgyllCMS xicclu) on the measured patches ({{measured}}) and a {{grid}}³ control grid. This is not a new measurement: the comparison does not say which profile prints better. No profile is installed or rebuilt."
+    "limits": "Differences between two ICC transforms, computed offline (ArgyllCMS xicclu) on the measured patches ({{measured}}) and a {{grid}}³ control grid. This is not a new measurement: the comparison does not say which profile prints better. No profile is installed or rebuilt.",
+    "perceptual_same_both": "In both profiles, the perceptual table (A2B0) is byte-identical to the colorimetric table (A2B1): the perceptual rows therefore repeat the relative ones.",
+    "perceptual_same_one": "In profile {{side}}, the perceptual table (A2B0) is byte-identical to the colorimetric table (A2B1); the other profile has its own perceptual table."
   }
 }

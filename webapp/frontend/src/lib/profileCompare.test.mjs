@@ -2,7 +2,7 @@
  * Tests of lib/profileCompare.js — presentation of a comparison of two ICC versions (phase 4D).
  * Run: node webapp/frontend/src/lib/profileCompare.test.mjs
  */
-import { focusFinding, statRows, topColours, whiteBlackRows } from './profileCompare.js';
+import { focusFinding, perceptualNote, statRows, topColours, whiteBlackRows } from './profileCompare.js';
 
 let pass = 0, fail = 0;
 function assert(cond, msg) { if (cond) { pass++; console.log(`  ✓ ${msg}`); } else { fail++; console.error(`  ✗ ${msg}`); } }
@@ -33,5 +33,12 @@ assert(!focusFinding({ near: { n: 0 }, elsewhere: {} }).localized, 'no neighbour
 console.log('Test 3 — white and black');
 const wb = whiteBlackRows(res);
 assert(wb.map((w) => w.key).join() === 'white_point_tag,device_black' && wb[0].de00 === 0, 'present rows only, backend values');
+console.log('Test 4 — perceptual annotation read from the tables (phase 4E)');
+const meth = (a, b, compared = true) => ({ method: { perceptual_compared: compared, perceptual_same_as_relative: { a, b } } });
+assert(perceptualNote(meth(true, true)).key === 'profile_compare.perceptual_same_both', 'both copies → both note');
+const one = perceptualNote(meth(false, true));
+assert(one.key === 'profile_compare.perceptual_same_one' && one.params.side === 'B', 'one copy → names the profile');
+assert(perceptualNote(meth(false, false)) === null, 'own perceptual tables → no note');
+assert(perceptualNote(meth(true, true, false)) === null && perceptualNote({}) === null, 'perceptual not compared → no note');
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

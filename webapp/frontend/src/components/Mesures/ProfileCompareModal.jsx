@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { Loader2, X } from 'lucide-react';
 import * as api from '../../api/client.js';
-import { fmt2, focusFinding, statRows, topColours, whiteBlackRows } from '../../lib/profileCompare.js';
+import { fmt2, focusFinding, perceptualNote, statRows, topColours, whiteBlackRows } from '../../lib/profileCompare.js';
 
 // Comparison of two STORED versions of the chart's profile (A = reference, B = new): ΔE00 between
 // their A2B transforms, computed offline by the backend (never rebuilt, never installed).
@@ -55,6 +55,7 @@ export default function ProfileCompareModal({ chartId, a, b, onClose }) {
                 </tbody>
               </table>
               {!d.method?.perceptual_compared && <div className="text-tiny text-text-faint">{t('profile_compare.no_perceptual')}</div>}
+              {perceptualNote(d) && <div className="text-tiny text-text-muted" data-perceptual-note>{t(perceptualNote(d).key, perceptualNote(d).params)}</div>}
               <div>
                 <div className="text-tiny font-semibold uppercase tracking-wide text-text-faint mb-1">{t('profile_compare.top_title')}</div>
                 <ul className="space-y-0.5">

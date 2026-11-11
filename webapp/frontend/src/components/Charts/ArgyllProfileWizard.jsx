@@ -943,7 +943,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
           + preserves tags/notes. Replay = doProfile(intent) with the same body. */}
       <ConfirmModal open={!!conflict}
         title={t('mesures.profile_conflict_title')}
-        message={conflict ? t('mesures.profile_conflict_body', { name: conflict.name }) : ''}
+        message={conflict ? t('mesures.profile_conflict_body_build', { name: conflict.name }) : ''}
         cancelLabel={t('common.cancel')}
         thirdLabel={t('mesures.profile_conflict_keep_both')}
         confirmLabel={t('mesures.profile_conflict_replace')} confirmKind="danger"

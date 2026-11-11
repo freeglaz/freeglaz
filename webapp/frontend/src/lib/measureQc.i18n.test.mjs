@@ -66,6 +66,8 @@ console.log('Test 1 — i18n keys present in fr AND en');
     ...['up_to_date', 'stale', 'missing_input', 'unknown', 'no_profile'].flatMap((k) => [`profile_history.state.${k}`, `profile_history.state.${k}_title`]),
     ...['changed', 'unknown'].flatMap((k) => [`profile_history.toolchain.${k}`, `profile_history.toolchain.${k}_title`]),
     'profile_history.title',
+    'build_preview.newly_applied', 'build_preview.newly_applied_neutral', 'mesures.profile_conflict_body', 'mesures.profile_conflict_body_build',
+    'profile_compare.perceptual_same_both', 'profile_compare.perceptual_same_one',
     ...['argyll_missing', 'altered_build', 'unknown_build', 'lookup_failed', 'network', 'error'].map((k) => `profile_compare.error.${k}`),
     ...['relative', 'perceptual'].map((k) => `profile_compare.intent.${k}`), ...['measured', 'grid'].map((k) => `profile_compare.set.${k}`),
     ...['white_point_tag', 'black_point_tag', 'device_white', 'device_black'].map((k) => `profile_compare.wb.${k}`),

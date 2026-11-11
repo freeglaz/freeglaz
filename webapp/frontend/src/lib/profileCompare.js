@@ -42,6 +42,18 @@ export function focusFinding(f) {
   };
 }
 
+/** Annotation when a profile's perceptual table is a byte copy of its colorimetric one (read by
+ *  the backend from the A2B0/A2B1 tags, never from the colprof options): then the perceptual
+ *  rows necessarily repeat the relative ones. Only when the perceptual intent was compared. */
+export function perceptualNote(result) {
+  const m = result?.method || {};
+  const same = m.perceptual_same_as_relative || {};
+  if (!m.perceptual_compared) return null;
+  if (same.a === true && same.b === true) return { key: 'profile_compare.perceptual_same_both', params: {} };
+  if (same.a === true || same.b === true) return { key: 'profile_compare.perceptual_same_one', params: { side: same.a === true ? 'A' : 'B' } };
+  return null;
+}
+
 export function whiteBlackRows(result) {
   const wb = result?.white_black || {};
   return ['white_point_tag', 'black_point_tag', 'device_white', 'device_black']

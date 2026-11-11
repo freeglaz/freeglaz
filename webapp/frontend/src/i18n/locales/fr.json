@@ -1355,7 +1355,7 @@
     "profile_name_ascii_only": "Caractères ASCII uniquement (sans accents).",
     "profile_name_maxlen": "Maximum 63 caractères (limite du desc ICC).",
     "profile_conflict_title": "Profil déjà existant",
-    "profile_conflict_body": "Un profil « {{name}} » existe déjà pour ce papier. « Remplacer » écrase entièrement le profil existant (mesures, tags et notes). Pour les conserver, choisissez « Garder les deux ».",
+    "profile_conflict_body": "Un profil « {{name}} » existe déjà dans la bibliothèque de ce papier. « Remplacer » y met le nouveau profil à sa place ; l'ancien fichier est conservé, avec ses tags et ses notes, dans les sauvegardes du papier (dossier .replaced, hors des listes). Les tags et notes ne sont pas reportés sur le nouveau profil. « Garder les deux » ajoute le nouveau profil sous un autre nom et laisse l'ancien intact.",
     "profile_conflict_keep_both": "Garder les deux",
     "profile_conflict_replace": "Remplacer",
     "build_done": "Profil construit",
@@ -1364,7 +1364,8 @@
     "build_done_installable": "Prêt à installer sur l'imprimante.",
     "build_done_not_ranged": "Profil construit, mais non rangé (imprimante inconnue) — non installable.",
     "loading": "Chargement…",
-    "no_charts": "Aucune charte."
+    "no_charts": "Aucune charte.",
+    "profile_conflict_body_build": "Un profil « {{name}} » existe déjà dans la bibliothèque de ce papier. « Remplacer » y met le nouveau profil à sa place ; l'ancien fichier est conservé, avec ses tags et ses notes, dans les sauvegardes du papier (dossier .replaced, hors des listes). Les tags et notes ne sont pas reportés sur le nouveau profil. « Garder les deux » ajoute le nouveau profil sous un autre nom et laisse l'ancien intact. Les versions construites depuis cette charte restent toutes dans son historique."
   },
   "chart_create": {
     "kicker": "CHARTE LIBRE",
@@ -1713,8 +1714,8 @@
     "inactive_other": "{{count}} exclusions inactives dans ce mode",
     "holes_one": "{{count}} patch sans aucune mesure",
     "holes_other": "{{count}} patchs sans aucune mesure",
-    "newly_applied_one": "{{count}} exclusion est appliquée alors que l'ancienne règle (base « dernier scan ») l'aurait ignorée : effet de la règle actuelle, pas un nouveau constat du contrôle.",
-    "newly_applied_other": "{{count}} exclusions sont appliquées alors que l'ancienne règle (base « dernier scan ») les aurait ignorées : effet de la règle actuelle, pas un nouveau constat du contrôle.",
+    "newly_applied_one": "La construction courante utilise l'ancienne règle (base « dernier scan » sans exclusions) : {{count}} exclusion enregistrée n'y est pas appliquée ; cette construction l'appliquera. Effet de la règle, pas un nouveau constat du contrôle.",
+    "newly_applied_other": "La construction courante utilise l'ancienne règle (base « dernier scan » sans exclusions) : {{count}} exclusions enregistrées n'y sont pas appliquées ; cette construction les appliquera. Effet de la règle, pas un nouveau constat du contrôle.",
     "strong_included_one": "{{count}} mesure fortement suspecte reste incluse : vous pouvez l'examiner avant de construire.",
     "strong_included_other": "{{count}} mesures fortement suspectes restent incluses : vous pouvez les examiner avant de construire.",
     "guard": {
@@ -1757,7 +1758,9 @@
     "confirm": "Construire le profil",
     "inputs_changed": "Les mesures ou les choix ont changé depuis l'aperçu : l'aperçu a été recalculé, vérifiez-le puis confirmez à nouveau.",
     "coverage_refused": "La construction a été refusée : un point structurant n'a plus de mesure. L'aperçu a été recalculé.",
-    "selection_differs": "Vos choix actuels diffèrent aussi de ceux de la construction courante."
+    "selection_differs": "Vos choix actuels diffèrent aussi de ceux de la construction courante.",
+    "newly_applied_neutral_one": "{{count}} exclusion enregistrée sera appliquée. Le profil courant n'a pas de manifeste fiable : on ne peut pas savoir s'il en tenait compte.",
+    "newly_applied_neutral_other": "{{count}} exclusions enregistrées seront appliquées. Le profil courant n'a pas de manifeste fiable : on ne peut pas savoir s'il en tenait compte."
   },
   "profile_history": {
     "title_one": "Historique du profil ({{count}} version)",
@@ -1834,6 +1837,8 @@
       "device_white": "Blanc du support (RGB 255)",
       "device_black": "Noir (RGB 0)"
     },
-    "limits": "Écarts entre deux transformations ICC, calculés hors ligne (ArgyllCMS xicclu) sur les patchs mesurés ({{measured}}) et une grille de contrôle {{grid}}³. Ce n'est pas une nouvelle mesure : la comparaison ne dit pas quel profil imprime le mieux. Aucun profil n'est installé ni reconstruit."
+    "limits": "Écarts entre deux transformations ICC, calculés hors ligne (ArgyllCMS xicclu) sur les patchs mesurés ({{measured}}) et une grille de contrôle {{grid}}³. Ce n'est pas une nouvelle mesure : la comparaison ne dit pas quel profil imprime le mieux. Aucun profil n'est installé ni reconstruit.",
+    "perceptual_same_both": "Dans les deux profils, la table perceptuelle (A2B0) est identique octet pour octet à la table colorimétrique (A2B1) : les lignes perceptuelles répètent donc les lignes relatives.",
+    "perceptual_same_one": "Dans le profil {{side}}, la table perceptuelle (A2B0) est identique octet pour octet à la table colorimétrique (A2B1) ; l'autre profil a une table perceptuelle propre."
   }
 }

@@ -337,3 +337,60 @@ def test_builds_history_route(client, monkeypatch):
     assert m["build_id"] == b2 and m["plan"]["policy"] == "apply_all"
     assert client.get(f"/api/charts/{cid}/builds/../../x/manifest").status_code == 404
     assert client.get(f"/api/charts/{cid}/builds/20990101T000000Z-zzzzzz/manifest").status_code == 404
+
+
+def _apply_all(client, cid, **extra):
+    fp = client.post(f"/api/charts/{cid}/profile/preview", json={"policy": "apply_all", **extra}).json()["inputs_fingerprint"]
+    return client.post(f"/api/charts/{cid}/profile", json={"policy": "apply_all", "expected_fingerprint": fp, **extra})
+
+
+def test_preview_tells_which_rule_built_the_current_profile(client, monkeypatch):
+    """Phase 4E: the UI words the legacy notice from current_build_policy — historical only when
+    the current build really was legacy, neutral without a reliable manifest, absent otherwise."""
+    cid, d = _chart(client, {"a.ti3": ti3_text(G5)}, {"rejected_readings": {"a.ti3": ["7"]}})
+    _fake_colprof(monkeypatch)
+
+    def preview():
+        return client.post(f"/api/charts/{cid}/profile/preview", json={"policy": "apply_all"}).json()
+    p = preview()
+    assert p["current_build_policy"] is None and p["newly_applied_vs_legacy"]          # no profile yet
+    (d / f"{cid}.icc").write_bytes(b"PROFILE WITHOUT MANIFEST")                       # e.g. built by a release
+    assert preview()["current_build_policy"] == "unknown"
+    assert client.post(f"/api/charts/{cid}/profile", json={"name": "leg"}).status_code == 200   # older client
+    p = preview()
+    assert p["current_build_policy"] == "legacy" and p["newly_applied_vs_legacy"][0]["sids"] == ["7"]
+    assert _apply_all(client, cid, name="new").status_code == 200
+    assert preview()["current_build_policy"] == "apply_all"
+    (d / f"{cid}.icc").write_bytes(b"EDITED BY HAND")                                 # no longer the manifest's file
+    assert preview()["current_build_policy"] == "unknown"
+
+
+def test_replace_keeps_the_previous_profile_in_backups_and_chart_history(client, monkeypatch):
+    """The promise of the "Replace" dialog (phase 4E), checked on the real route: the new profile
+    takes the library name; the old file AND its tags/notes are kept in the paper's .replaced/;
+    tags/notes are not carried over; every version built from the chart stays in its history."""
+    from lib.z9_client import cache
+    cid, d = _chart(client, {"a.ti3": ti3_text(G5)})
+    _fake_colprof(monkeypatch)
+    ra = _apply_all(client, cid, name="same").json()
+    lib = Path(ra["ranged_icc_path"])
+    side = cache._repo_z9_meta_path(lib)
+    meta = json.loads(side.read_text())
+    side.write_text(json.dumps({**meta, "purpose_tags": ["expo"], "notes": "ma note"}))      # user curation
+    excl(client, cid, "a.ti3", sid_of(G5, (50, 50, 50)))
+    r = _apply_all(client, cid, name="same")
+    assert r.status_code == 409 and r.json()["detail"]["error"] == "name_conflict"
+    rb = _apply_all(client, cid, name="same", on_conflict="replace")
+    assert rb.status_code == 200, rb.text
+    a, b = ra["build_id"], rb.json()["build_id"]
+    assert Path(rb.json()["ranged_icc_path"]) == lib and lib.read_bytes() == (d / "builds" / b / "profile.icc").read_bytes()
+    kept = sorted((lib.parent / cache.REPLACED_DIR_NAME).glob("*.icc"))
+    assert len(kept) == 1 and kept[0].read_bytes() == (d / "builds" / a / "profile.icc").read_bytes()
+    kept_meta = json.loads((kept[0].parent / f".{kept[0].name}{cache.REPO_Z9_META_SUFFIX}").read_text())
+    assert kept_meta["purpose_tags"] == ["expo"] and kept_meta["notes"] == "ma note"
+    new_meta = json.loads(side.read_text())
+    assert new_meta["purpose_tags"] == [] and new_meta["notes"] != "ma note" and new_meta["replaces"]
+    assert sorted(p.name for p in lib.parent.glob("*.icc")) == [lib.name]                # backups never listed
+    h = client.get(f"/api/charts/{cid}/builds").json()
+    assert {x["build_id"] for x in h["builds"]} == {a, b} and all(x["intact"] for x in h["builds"])
+    assert h["current_build_id"] == b

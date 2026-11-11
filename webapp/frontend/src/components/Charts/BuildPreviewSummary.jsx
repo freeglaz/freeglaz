@@ -19,6 +19,8 @@ function Groups({ groups, t, reasonKey }) {
   );
 }
 
+const NEWLY_KEY = { legacy: 'build_preview.newly_applied', neutral: 'build_preview.newly_applied_neutral' };
+
 export default function BuildPreviewSummary({ preview }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -46,9 +48,9 @@ export default function BuildPreviewSummary({ preview }) {
         {s.nInactive > 0 && <span className="text-text-muted"> · {t('build_preview.inactive', { count: s.nInactive })}</span>}
         {s.nHoles > 0 && <span className="text-text-muted"> · {t('build_preview.holes', { count: s.nHoles })}</span>}
       </div>
-      {s.nNewlyApplied > 0 && (
-        <div className="flex items-start gap-1.5 text-text-strong"><Info size={13} className="mt-0.5 flex-shrink-0 text-accent"/>
-          <span>{t('build_preview.newly_applied', { count: s.nNewlyApplied })}</span></div>
+      {s.newlyNotice && (
+        <div className="flex items-start gap-1.5 text-text-strong" data-newly-notice={s.newlyNotice}><Info size={13} className="mt-0.5 flex-shrink-0 text-accent"/>
+          <span>{t(NEWLY_KEY[s.newlyNotice], { count: s.nNewlyApplied })}</span></div>
       )}
       {s.nStrongIncluded > 0 && (
         <div className="flex items-start gap-1.5 text-text-strong"><AlertTriangle size={13} className="mt-0.5 flex-shrink-0 text-icc-warn"/>

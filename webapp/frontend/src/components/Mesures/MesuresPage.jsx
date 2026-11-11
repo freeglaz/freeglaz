@@ -571,7 +571,7 @@ export default function MesuresPage({ offline }) {
         <ConfirmModal
           open
           title={t('mesures.profile_conflict_title')}
-          message={t('mesures.profile_conflict_body', { name: conflict.name })}
+          message={t('mesures.profile_conflict_body_build', { name: conflict.name })}
           cancelLabel={t('common.cancel')}
           thirdLabel={t('mesures.profile_conflict_keep_both')}
           confirmLabel={t('mesures.profile_conflict_replace')}

@@ -60,6 +60,14 @@ def test_a_local_change_is_localized_and_named():
     assert f["near"]["max"] > 2.0 and f["elsewhere"]["p95"] < 0.5   # "mainly this region, elsewhere little"
 
 
+def test_perceptual_identity_is_read_from_the_tables_not_the_options():
+    same = tags_with()                                   # A2B0 == A2B1 byte for byte
+    own = dict(tags_with(), A2B0=b"perceptual-table")    # a real perceptual table
+    r = pdf.compare_profiles("A.icc", "B.icc", lookup=fake_lookup(), tag_reader=lambda p: same if "A" in str(p) else own)
+    assert r["method"]["perceptual_same_as_relative"] == {"a": True, "b": False}
+    assert pdf.perceptual_same_as_relative({"A2B1": b"x"}) is None
+
+
 def test_perceptual_skipped_when_a_profile_has_no_a2b0():
     reader = lambda p: tags_with(a2b0="B" not in str(p))  # noqa: E731
     r = pdf.compare_profiles("A.icc", "B.icc", lookup=fake_lookup(), tag_reader=reader)
@@ -124,6 +132,7 @@ def test_real_xicclu_lookups_on_argyll_reference_profiles():
     same = pdf.compare_profiles(srgb, srgb, grid_n=5)
     assert same["intents"]["relative"]["grid"]["max"] == 0 and same["intents"]["relative"]["measured"] is None
     assert not same["method"]["perceptual_compared"]
+    assert same["method"]["perceptual_same_as_relative"] == {"a": None, "b": None}   # matrix profiles: no A2B
     diff = pdf.compare_profiles(srgb, clay, grid_n=5, focus=[{"rgb": [0, 100, 50], "label": "green"}])
     g = diff["intents"]["relative"]["grid"]
     assert g["n"] == 125 and g["max"] > 5 and g["top"][0]["rgb255"][1] == 255

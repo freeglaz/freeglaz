@@ -5,12 +5,14 @@ import { AlertTriangle } from 'lucide-react';
 // Explicit confirmation before a build that the preview shows as different from a plain build:
 // exclusions applied, earlier exclusions newly applied, strong suspects kept, coverage warnings.
 // Confirming never changes anything else than launching that build.
+const NEWLY_KEY = { legacy: 'build_preview.newly_applied', neutral: 'build_preview.newly_applied_neutral' };
+
 export default function BuildConfirmModal({ summary, onCancel, onConfirm }) {
   const { t } = useTranslation();
   if (!summary) return null;
   const lines = [
     summary.nExcluded > 0 && t('build_preview.excluded', { count: summary.nExcluded }),
-    summary.nNewlyApplied > 0 && t('build_preview.newly_applied', { count: summary.nNewlyApplied }),
+    summary.newlyNotice && t(NEWLY_KEY[summary.newlyNotice], { count: summary.nNewlyApplied }),
     summary.nHoles > 0 && t('build_preview.holes', { count: summary.nHoles }),
     summary.nStrongIncluded > 0 && t('build_preview.strong_included', { count: summary.nStrongIncluded }),
     summary.warnings.length > 0 && [...new Set(summary.warnings.map((g) => g.code))].map((c) => t(`build_preview.guard.${c}`, { defaultValue: c })).join(' · '),

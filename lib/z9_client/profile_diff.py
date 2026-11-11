@@ -24,7 +24,9 @@ that profile A and profile B give for the SAME device RGB, on
   the ``targ`` tag of both profiles), and
 * a reproducible control grid of the RGB cube,
 
-for the relative colorimetric intent and, when both profiles have one, the perceptual intent.
+for the relative colorimetric intent and, when both profiles have one, the perceptual intent
+(and says when a profile's perceptual table is a byte copy of its colorimetric one, in which case
+both intents necessarily give the same numbers).
 It reports the distribution (mean, 95th percentile, max), the most displaced colours, the
 neighbourhood of chosen focus points (e.g. a reading excluded in one build only) against the
 rest, and the white and black points. Lookups go through Argyll ``xicclu`` (float precision;
@@ -88,6 +90,15 @@ def _xyz_tag(tags: dict[str, bytes], sig: str) -> Optional[tuple[float, float, f
     return tuple(x / 65536.0 for x in struct.unpack(">3i", d[8:20]))
 
 
+def perceptual_same_as_relative(tags: dict[str, bytes]) -> Optional[bool]:
+    """True when the perceptual A2B table (A2B0) is byte-identical to the colorimetric one (A2B1):
+    the two intents then give the same lookups. None when A2B0 or A2B1 is absent. Read from the
+    profile itself, never inferred from the colprof options."""
+    if "A2B0" not in tags or "A2B1" not in tags:
+        return None
+    return tags["A2B0"] == tags["A2B1"]
+
+
 def _stats(de: np.ndarray, pts, lab_a, lab_b, top_n: int) -> dict:
     order = np.argsort(-de)[:top_n]
     return {"n": int(len(de)), "mean": round(float(de.mean()), 4), "p95": round(float(np.percentile(de, 95)), 4),
@@ -113,7 +124,9 @@ def compare_profiles(icc_a: Path, icc_b: Path, *, focus: Sequence[dict] = (), gr
         intents.append(("perceptual", "p"))
     out = {"intents": {}, "focus": [], "white_black": {}, "limits": list(LIMITS),
            "method": {"tool": "xicclu", "grid_n": grid_n, "n_measured": len(measured), "focus_radius": FOCUS_RADIUS,
-                      "perceptual_compared": len(intents) == 2}}
+                      "perceptual_compared": len(intents) == 2,
+                      "perceptual_same_as_relative": {"a": perceptual_same_as_relative(ta),
+                                                      "b": perceptual_same_as_relative(tb)}}}
     rel_cache = {}
     for name, letter in intents:
         res = {}

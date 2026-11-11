@@ -2,7 +2,7 @@
  * Tests of lib/buildPreview.js — the single build contract of the interface (phase 4D).
  * Run: node webapp/frontend/src/lib/buildPreview.test.mjs
  */
-import { buildRequestBody, chartStateStamp, classifyBuildError, previewKey, previewRequest, summarizePreview } from './buildPreview.js';
+import { buildRequestBody, chartStateStamp, classifyBuildError, newlyNotice, previewKey, previewRequest, summarizePreview } from './buildPreview.js';
 
 let pass = 0, fail = 0;
 function assert(cond, msg) { if (cond) { pass++; console.log(`  ✓ ${msg}`); } else { fail++; console.error(`  ✗ ${msg}`); } }
@@ -49,6 +49,19 @@ assert(classifyBuildError(e(409, { error: 'name_conflict' })).kind === 'name_con
 assert(classifyBuildError(e(422, { error: 'fingerprint_required' })).kind === 'fingerprint_required', 'fingerprint required');
 assert(classifyBuildError(e(422, 'too long')).kind === 'name_length' && classifyBuildError(e(400, 'x')).kind === 'name_invalid', 'name errors');
 assert(classifyBuildError(e(500, undefined)).kind === 'error', 'other');
+
+console.log('Test — legacy notice only when the CURRENT build really used the legacy rule (phase 4E)');
+const newly = [{ chart_id: 'C', scan: 'a.ti3', sids: ['7'] }];
+const base = { inputs_fingerprint: 'f', rejections_applied: newly, newly_applied_vs_legacy: newly };
+assert(newlyNotice({ ...base, current_build_policy: 'legacy' }) === 'legacy', 'current build legacy → historical notice');
+assert(newlyNotice({ ...base, current_build_policy: 'apply_all' }) === null, 'current build apply_all → no historical notice');
+assert(newlyNotice({ ...base, current_build_policy: 'unknown' }) === 'neutral', 'no reliable manifest → neutral notice');
+assert(newlyNotice({ ...base, current_build_policy: null }) === null, 'no current profile → nothing (the excluded count says it)');
+assert(newlyNotice({ ...base, newly_applied_vs_legacy: [], current_build_policy: 'legacy' }) === null, 'nothing newly applied → nothing');
+const sa = summarizePreview({ ...base, current_build_policy: 'apply_all' });
+assert(sa.newlyNotice === null && sa.needsConfirmation === true, 'apply_all: still confirmed because of the exclusion itself, without the notice');
+const sn = summarizePreview({ inputs_fingerprint: 'f', newly_applied_vs_legacy: newly, current_build_policy: 'apply_all' });
+assert(sn.needsConfirmation === false, 'a newly-applied count alone no longer forces a confirmation when the notice is not shown');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

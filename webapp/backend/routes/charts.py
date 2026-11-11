@@ -446,6 +446,15 @@ def _included_ti3_paths(chart_dir: Path) -> list[Path]:
     return [p for p in _raw_ti3_paths(chart_dir) if _scan_role(st, p.name) == "included"]
 
 
+def _build_request_record(body, flags: list, policy: str) -> dict:
+    """The build REQUEST as recorded in the manifest (what a rebuild would replay)."""
+    return {"base": body.profile_base, "extra_chart_ids": list(body.extra_chart_ids),
+            "source_profiles": [sp.path for sp in body.source_profiles],
+            "colprof_flags": body.colprof_flags, "colprof_flags_resolved": list(flags),
+            "name": body.name, "on_conflict": body.on_conflict, "policy": policy,
+            "expected_fingerprint": getattr(body, "expected_fingerprint", None)}
+
+
 def _chart_snapshot(chart_id: str, chart_dir: Path, state: dict):
     """Frozen view of a chart for a profile build (lib.z9_client.build_inputs.ChartSnapshot):
     raw scans of measurements/ + roles + rejection registry, from ONE read of scan_state."""
@@ -1082,12 +1091,18 @@ def _build_profile_now(chart_id: str, body: ProfileChartBody, set_phase) -> dict
     # rejections (now TRACED as not applied), "average" applies them, additional charts always
     # apply theirs, source profiles are used as extracted. Every write happens in a private
     # `.build/<build_id>/` directory (never in measurements/, never in another chart).
-    from lib.z9_client import build_inputs
+    from lib.z9_client import build_inputs, profile_versions
     plan = build_inputs.plan_inputs(snap, extra_snaps, build_inputs.BuildRequest(
         base=body.profile_base, source_profiles=tuple(profile_paths), colprof_flags=tuple(flags),
         policy="legacy"))
     averaged = plan.base_effective == "average"
     build_inputs.sweep_stale_build_dirs(d)                 # leftovers of an interrupted build only
+    # Recovery of an interrupted publication + preservation of a pre-versions profile (safe
+    # operations only: never modifies or deletes a version).
+    legacy_trace = {"profile_built_from": _state_for_build.get("profile_built_from"),
+                    "profile_built_rejections": _state_for_build.get("profile_built_rejections")}
+    for _action in profile_versions.repair(d, chart_id, legacy_trace=legacy_trace):
+        logger.info("profile publication repair (%s): %s", chart_id, _action)
     build_id, workdir = build_inputs.create_build_dir(d)
     try:
         eff = build_inputs.materialize(plan, workdir)
@@ -1102,9 +1117,19 @@ def _build_profile_now(chart_id: str, body: ProfileChartBody, set_phase) -> dict
         # n_patches = REAL count of the ti3 that fed colprof (header NUMBER_OF_SETS, as before).
         n_patches = _ti3_n_sets(eff.profile_ti3) or (desc.get("geometry") or {}).get("patch_count")
         icc_size = result.output_icc_size_bytes
-        # Atomic publication: the previous profile stays intact until colprof succeeded; a
-        # reader sees the old file or the new one, never a partial one.
-        os.replace(tmp_icc, out_icc)
+        manifest = build_inputs.build_manifest(
+            plan, eff, build_id=build_id, request=_build_request_record(body, flags, plan.policy),
+            snapshot={"included": list(snap.included()),
+                      "rejected": {k: list(v) for k, v in snap.rejected.items()}},
+            software=build_inputs.software_versions(),
+            result={"icc": out_icc.name, "icc_sha256": hashlib.sha256(tmp_icc.read_bytes()).hexdigest(),
+                    "icc_size_bytes": icc_size, "n_patches": n_patches, "label": label})
+        # Publication (lib/z9_client/profile_versions.py): a current profile missing from the
+        # history is preserved first, then version (atomic directory rename) → current profile
+        # (os.replace) → pointer. The previous profile is never lost; colprof failure = nothing
+        # published; an interruption between steps is detected and repaired at the next build.
+        profile_versions.preserve_current(d, chart_id, legacy_trace)
+        publication = profile_versions.publish(d, chart_id, build_id, tmp_icc, manifest)
     finally:
         build_inputs.remove_build_dir(workdir)            # success, failure or exception
 
@@ -1116,6 +1141,7 @@ def _build_profile_now(chart_id: str, body: ProfileChartBody, set_phase) -> dict
         _st["profile_built_from"] = sorted(snap.included())
         _st["profile_built_rejections"] = ({k: sorted(v) for k, v in snap.rejected.items() if v}
                                            if averaged else {})
+        _st["last_build_id"] = build_id
         _write_scan_state(d, _st)
     except OSError:
         logger.warning("profile_built_from trace not written (%s)", chart_id)
@@ -1143,23 +1169,22 @@ def _build_profile_now(chart_id: str, body: ProfileChartBody, set_phase) -> dict
                 # OS intent validated at the route ; without collision (default case) save_repo writes the
                 # exact name. replace → full overwrite (icc + fresh sidecar, no tag/note carried
                 # over — see cache.save_repo_z9_profile) ; keep_both → -N suffix.
-                on_conflict=((body.on_conflict or "").strip().lower() or None))
+                on_conflict=((body.on_conflict or "").strip().lower() or None),
+                # provenance of the stored copy: the build and its manifest (kept with the copy,
+                # which survives the deletion of the chart)
+                extra_meta={"build_id": build_id, "chart_id": chart_id,
+                            "icc_sha256": manifest["result"]["icc_sha256"],
+                            "manifest_sha256": publication["manifest_sha256"], "build": manifest})
             ranged_path = str(rp)
+            profile_versions.add_reference(d, build_id, {"kind": "repo_z9", "path": ranged_path,
+                                                         "filename": Path(ranged_path).name})
         except (OSError, ValueError):
             logger.exception("repo z9 storage failed (non-blocking) — chart %s", chart_id)
 
-    # Build manifest (description of THIS build: plan + materialized inputs + result), next to
-    # the current profile. Informational in this version (stale still uses the legacy trace).
-    try:
-        build_inputs.write_json_atomic(d / "profile_manifest.json", build_inputs.build_manifest(
-            plan, eff, build_id=build_id, result={
-                "icc": out_icc.name, "icc_sha256": hashlib.sha256(out_icc.read_bytes()).hexdigest(),
-                "icc_size_bytes": icc_size, "n_patches": n_patches, "repo_path": ranged_path,
-                "label": label}))
-    except OSError:
-        logger.warning("build manifest not written (%s)", chart_id)
-
-    return {"ok": True, "chart_id": chart_id, "icc": out_icc.name,
+    for _w in publication["warnings"]:
+        logger.warning("profile publication (%s): %s", chart_id, _w)
+    return {"ok": True, "chart_id": chart_id, "icc": out_icc.name, "build_id": build_id,
+            "publication_warnings": publication["warnings"],
             "icc_size_bytes": icc_size,
             "ranged_icc_path": ranged_path,             # None if serial unknown (backward-compat)
             # repo/z9 coordinates of the stored profile → enables "Install" on the front side

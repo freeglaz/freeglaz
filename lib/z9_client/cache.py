@@ -62,6 +62,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -931,6 +932,7 @@ def save_repo_z9_profile(
     date_str: Optional[str] = None,
     basename: Optional[str] = None,
     on_conflict: Optional[str] = None,
+    extra_meta: Optional[dict] = None,
 ) -> tuple[Path, dict]:
     """Write a refined profile into the personal Z9 space + its 3-layer sidecar.
 
@@ -972,7 +974,8 @@ def save_repo_z9_profile(
                                     taken=taken, date_str=date_str, basename=basename)
     elif on_conflict == "replace":
         path = exact                                   # FULLY overwrites (icc + fresh meta) — no
-        # preservation: same name ≠ same profile → keeping = "Keep both", not "Replace".
+        # preservation of tags/notes: same name ≠ same profile → keeping = "Keep both". The
+        # REPLACED profile itself is kept (with its sidecar) in `.replaced/`, never lost.
     else:                                              # None / "cancel" = SAFE: never overwrites
         if exact.exists():
             conflict = repo_z9_name_conflict(serial, media_id, gloss_slot, label,
@@ -980,7 +983,8 @@ def save_repo_z9_profile(
             raise ProfileNameConflictError(name=conflict["name"], suggestion=conflict["suggestion"])
         path = exact
 
-    path.write_bytes(icc_bytes)
+    replaced = _preserve_replaced_repo_profile(path) if (on_conflict == "replace" and path.exists()) else None
+    _write_bytes_atomic(path, icc_bytes)
 
     meta = {
         "schema_version": REPO_Z9_SCHEMA_VERSION,
@@ -1001,8 +1005,40 @@ def save_repo_z9_profile(
         "size_bytes": len(icc_bytes),
         "md5": md5_bytes(icc_bytes),
     }
+    if replaced:
+        meta["replaces"] = replaced                    # where the overwritten profile was kept
+    if extra_meta:
+        meta.update({k: v for k, v in extra_meta.items() if k not in meta})
     _write_json(_repo_z9_meta_path(path), meta)
     return path, meta
+
+
+REPLACED_DIR_NAME = ".replaced"
+
+
+def _write_bytes_atomic(path: Path, data: bytes) -> None:
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    with open(tmp, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def _preserve_replaced_repo_profile(path: Path) -> dict:
+    """Before a "replace" overwrites a personal profile, keep it (and its sidecar) under
+    ``<paper>/.replaced/<UTC>-<rand>-<name>`` — outside the listings (non-recursive) and
+    without a `_paper.json` entry (never proposed as a build source). No automatic purge."""
+    d = path.parent / REPLACED_DIR_NAME
+    d.mkdir(exist_ok=True)
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + f"-{os.urandom(3).hex()}"
+    dst = d / f"{stamp}-{path.name}"
+    old = path.read_bytes()
+    _write_bytes_atomic(dst, old)
+    meta_src = _repo_z9_meta_path(path)
+    if meta_src.exists():
+        _write_bytes_atomic(d / f".{dst.name}{REPO_Z9_META_SUFFIX}", meta_src.read_bytes())
+    return {"path": str(dst), "md5": md5_bytes(old), "replaced_at": _now_iso()}
 
 
 def list_repo_z9_profiles(serial: Optional[str] = None) -> list[dict]:

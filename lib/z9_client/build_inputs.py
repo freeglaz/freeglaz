@@ -62,7 +62,7 @@ REASON_NOT_USED = "not_used_by_base_last"
 REASON_EXCLUDED = "scan_excluded"
 REASON_NOT_FOUND = "scan_not_found"
 BUILD_DIR_NAME = ".build"
-_BUILD_ID_RE = re.compile(r"^\d{8}T\d{6}Z-[a-z0-9]{6}$")
+_BUILD_ID_RE = re.compile(r"^\d{8}T\d{6}(?:\d{3})?Z-[a-z0-9]{6}$")
 
 
 class BuildInputsError(ValueError):
@@ -420,12 +420,43 @@ def reconstruct_provenance(manifest: dict, scan_path: Callable[[str, str], Path]
 
 # ── manifest ────────────────────────────────────────────────────────────────
 def build_manifest(plan: InputPlan, eff: Optional[EffectiveInputs] = None, *, build_id: Optional[str] = None,
-                   result: Optional[dict] = None, created_at: Optional[str] = None) -> dict:
-    """Manifest v1: ``plan`` (known before writing anything), ``materialized`` (after the
-    working ti3 exists), ``result`` (after colprof and publication)."""
-    return {"manifest_version": MANIFEST_VERSION, "build_id": build_id,
+                   result: Optional[dict] = None, created_at: Optional[str] = None,
+                   request: Optional[dict] = None, snapshot: Optional[dict] = None,
+                   software: Optional[dict] = None, coverage: Optional[dict] = None) -> dict:
+    """Manifest v1: ``request`` (what was asked), ``snapshot`` (current chart state used),
+    ``plan`` (known before writing anything), ``coverage``, ``materialized`` (after the
+    working ti3 exists), ``result`` (after colprof), ``software`` (versions)."""
+    return {"manifest_version": MANIFEST_VERSION, "kind": "build", "build_id": build_id,
             "created_at": created_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "plan": plan.to_dict(), "materialized": eff.to_dict() if eff else None, "result": result}
+            "request": request, "snapshot": snapshot, "plan": plan.to_dict(), "coverage": coverage,
+            "materialized": eff.to_dict() if eff else None, "result": result, "software": software}
+
+
+_COLPROF_VERSION_CACHE: dict = {}
+
+
+def software_versions() -> dict:
+    """freeglaz and colprof versions (colprof read from its own banner, cached; None if absent)."""
+    out = {"build_inputs": BUILD_INPUTS_VERSION, "freeglaz": None, "colprof": None}
+    try:
+        from webapp.backend.version import __version__ as _v       # optional (lib used without webapp)
+        out["freeglaz"] = _v
+    except Exception:                                              # noqa: BLE001
+        pass
+    try:
+        from .argyll import resolve_argyll_binary
+        exe = resolve_argyll_binary("colprof")
+        key = (exe, os.path.getmtime(exe))
+        if key not in _COLPROF_VERSION_CACHE:
+            import subprocess
+            r = subprocess.run([exe], capture_output=True, text=True, timeout=20)
+            m = re.search(r"Version\s+([0-9][0-9.]*)", r.stdout + r.stderr)
+            _COLPROF_VERSION_CACHE[key] = m.group(1) if m else None
+        out["colprof"] = _COLPROF_VERSION_CACHE[key]
+        out["colprof_path"] = exe
+    except Exception:                                              # noqa: BLE001
+        pass
+    return out
 
 
 def write_json_atomic(path: Path, data: dict) -> None:
@@ -437,8 +468,16 @@ def write_json_atomic(path: Path, data: dict) -> None:
 
 # ── per-build working directories ───────────────────────────────────────────
 def new_build_id() -> str:
-    return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + "".join(
-        secrets.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(6))
+    """UTC time to the millisecond + 6 random characters: lexical order = chronological order
+    (versions are listed by build id), unique even for builds started in the same second."""
+    global _LAST_MS
+    ms = max(int(time.time() * 1000), _LAST_MS + 1)     # strictly increasing within the process
+    _LAST_MS = ms
+    return (time.strftime("%Y%m%dT%H%M%S", time.gmtime(ms / 1000)) + f"{ms % 1000:03d}Z-"
+            + "".join(secrets.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(6)))
+
+
+_LAST_MS = 0
 
 
 def create_build_dir(chart_dir: Path) -> tuple[str, Path]:

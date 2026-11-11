@@ -341,7 +341,10 @@ def test_route_publishes_atomically_after_colprof(client, monkeypatch):
     assert during["icc"] == b"PREVIOUS PROFILE"                          # untouched while colprof runs
     assert (d / f"{cid}.icc").read_bytes().startswith(b"NEW-ICC")
     icc_moves = [(a, b) for a, b in replaced if b == d / f"{cid}.icc"]
-    assert len(icc_moves) == 1 and ".build" in icc_moves[0][0].parts     # one rename from the build dir
+    assert len(icc_moves) == 1 and icc_moves[0][0].parent == d          # one os.replace from a temp file
+    assert icc_moves[0][0].name.startswith(f".{cid}.icc.")
+    bid = json.loads((d / "profile_manifest.json").read_text())["pointer"]["build_id"]
+    assert (d / "builds" / bid / "profile.icc").read_bytes() == (d / f"{cid}.icc").read_bytes()
 
 
 def test_route_snapshot_is_what_gets_traced(client, monkeypatch):

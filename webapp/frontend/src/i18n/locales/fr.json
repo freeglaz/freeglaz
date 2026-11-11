@@ -1713,8 +1713,8 @@
     "inactive_other": "{{count}} exclusions inactives dans ce mode",
     "holes_one": "{{count}} patch sans aucune mesure",
     "holes_other": "{{count}} patchs sans aucune mesure",
-    "newly_applied_one": "{{count}} exclusion enregistrée auparavant, ignorée par les constructions « dernier scan » précédentes, sera désormais appliquée (nouvelle règle, ce n'est pas un nouveau constat du contrôle).",
-    "newly_applied_other": "{{count}} exclusions enregistrées auparavant, ignorées par les constructions « dernier scan » précédentes, seront désormais appliquées (nouvelle règle, ce n'est pas un nouveau constat du contrôle).",
+    "newly_applied_one": "{{count}} exclusion est appliquée alors que l'ancienne règle (base « dernier scan ») l'aurait ignorée : effet de la règle actuelle, pas un nouveau constat du contrôle.",
+    "newly_applied_other": "{{count}} exclusions sont appliquées alors que l'ancienne règle (base « dernier scan ») les aurait ignorées : effet de la règle actuelle, pas un nouveau constat du contrôle.",
     "strong_included_one": "{{count}} mesure fortement suspecte reste incluse : vous pouvez l'examiner avant de construire.",
     "strong_included_other": "{{count}} mesures fortement suspectes restent incluses : vous pouvez les examiner avant de construire.",
     "guard": {

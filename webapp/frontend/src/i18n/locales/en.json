@@ -1713,8 +1713,8 @@
     "inactive_other": "{{count}} exclusions inactive in this mode",
     "holes_one": "{{count}} patch without any measurement",
     "holes_other": "{{count}} patches without any measurement",
-    "newly_applied_one": "{{count}} exclusion recorded earlier, ignored by the previous \"last scan\" builds, will now be applied (new rule, not a new finding of the check).",
-    "newly_applied_other": "{{count}} exclusions recorded earlier, ignored by the previous \"last scan\" builds, will now be applied (new rule, not a new finding of the check).",
+    "newly_applied_one": "{{count}} exclusion is applied although the former rule (\"last scan\" base) would have ignored it: an effect of the current rule, not a new finding of the check.",
+    "newly_applied_other": "{{count}} exclusions are applied although the former rule (\"last scan\" base) would have ignored them: an effect of the current rule, not a new finding of the check.",
     "strong_included_one": "{{count}} strongly suspect measurement stays included: you may review it before building.",
     "strong_included_other": "{{count}} strongly suspect measurements stay included: you may review them before building.",
     "guard": {

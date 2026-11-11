@@ -525,3 +525,204 @@ def sweep_stale_build_dirs(chart_dir: Path, max_age_s: float = 2 * 3600) -> list
             except OSError:
                 continue
     return removed
+
+
+# ── coverage of the effective set (phase 4C) ────────────────────────────────
+# Thresholds are PROVISIONAL (note 119 §4d), replayed on the 4A bench charts; only the
+# structural refusals (white / black) block a build, everything else is a warning.
+COVERAGE_THRESHOLDS = {"edge_fraction": 0.25, "cluster_size": 3, "cluster_knn": 6,
+                       "wide_gap_factor": 2.0, "holes_fraction": 0.02, "holes_count": 10,
+                       "holes_count_per_point": 0.01, "corners_missing": 2}
+# cluster_knn: two holes are NEIGHBOURS when one is among the other's k nearest design points
+# (density-adaptive: the 6 axis neighbours on a regular grid, the local neighbourhood on an
+# irregular targen chart). Replayed on the 4A bench (note 121): a fixed distance factor either
+# missed 39 % of real clusters on the 2000-patch chart (1.2 × spacing) or flagged scattered holes
+# on the 464-patch grid (1.5 × spacing, face diagonals included).
+_BOUND_TOL = 100.0 * 0.5 / 255.0           # same bound tolerance as measure_qc (0-100 device scale)
+_CORNERS = {(1, 0, 0): "red", (0, 1, 0): "green", (0, 0, 1): "blue",
+            (0, 1, 1): "cyan", (1, 0, 1): "magenta", (1, 1, 0): "yellow",
+            (1, 1, 1): "white", (0, 0, 0): "black"}
+_LEVEL_BY_POSITION = {"interior": "info", "face": "info", "edge": "warning", "corner": "strong_warning"}
+
+
+def device_key(rgb100) -> tuple[int, int, int]:
+    """Device value identity, independent of SAMPLE_ID (1e-4 on the 0-1 scale, like measure_qc)."""
+    return tuple(int(round(float(v) * 100)) for v in rgb100)
+
+
+def device_position(rgb100) -> tuple[str, Optional[str]]:
+    """(interior|face|edge|corner, corner name or None) in the device RGB cube."""
+    hi = [float(v) >= 100.0 - _BOUND_TOL for v in rgb100]
+    lo = [float(v) <= _BOUND_TOL for v in rgb100]
+    n = sum(h or l for h, l in zip(hi, lo))
+    pos = ("interior", "face", "edge", "corner")[n]
+    return pos, (_CORNERS[tuple(int(h) for h in hi)] if n == 3 else None)
+
+
+def _scan_rows(path: Path, expected_sha: str, what: str) -> list[tuple[str, tuple[float, float, float]]]:
+    data = Path(path).read_bytes()
+    if _sha256_bytes(data) != expected_sha:
+        raise SourceChangedError(f"{what} changed since the plan was made ({Path(path).name})")
+    try:
+        _, fmt, rows = parse_ti3(data.decode("ascii", errors="replace"))
+        i, ir, ig, ib = (fmt.index(c) for c in ("SAMPLE_ID", "RGB_R", "RGB_G", "RGB_B"))
+        return [(r[i], (float(r[ir]), float(r[ig]), float(r[ib]))) for r in rows]
+    except (ValueError, IndexError) as e:
+        raise BuildInputsError(f"unreadable ti3 {what}: {e or type(e).__name__}") from None
+
+
+def _nn_spacing(points) -> Optional[float]:
+    """Median nearest-neighbour distance (0-100 device units) of distinct design points."""
+    import numpy as np
+    pts = np.asarray(points, dtype=float)
+    if len(pts) < 2:
+        return None
+    best = np.full(len(pts), np.inf)
+    for a in range(0, len(pts), 512):
+        d = np.sqrt(((pts[a:a + 512, None, :] - pts[None, :, :]) ** 2).sum(-1))
+        d[np.arange(d.shape[0]), np.arange(a, a + d.shape[0])] = np.inf
+        best[a:a + 512] = d.min(1)
+    return float(np.median(best))
+
+
+def analyze_coverage(plan: InputPlan, qc_findings: Optional[Mapping[tuple[str, str], Sequence[str]]] = None) -> dict:
+    """Coverage of the EFFECTIVE set (used scans of the current chart and of the additional
+    charts, after the applied rejections). Read-only. Source profiles are never counted
+    (non-editable, not a compatible reading in v1).
+
+    Compatible reading = a row with the same device value (whatever its SAMPLE_ID) in a used
+    scan; for the STRUCTURAL points white and black, only the current chart's used scans
+    count (conservative v1: an additional chart or an ICC is not proof of the same print and
+    measurement conditions). Refusals (white/black lost BY EXCLUSIONS) are returned, the
+    caller decides whether they block (policy apply_all)."""
+    import numpy as np
+    design: dict[tuple, dict] = {}                 # key → {rgb, readings: [...], effective: n}
+    for s in plan.scans:
+        rows = _scan_rows(s.path, s.sha256, f"{s.chart_id}/{s.scan}")
+        rej = set(s.rejections_applied)
+        for sid, rgb in rows:
+            e = design.setdefault(device_key(rgb), {"rgb": rgb, "eff_current": 0, "eff_any": 0,
+                                                    "raw_current": 0, "excluded": []})
+            cur = s.role == "current"
+            e["raw_current"] += cur
+            if sid in rej:
+                e["excluded"].append({"chart_id": s.chart_id, "scan": s.scan, "sid": sid})
+            else:
+                e["eff_any"] += 1
+                e["eff_current"] += cur
+    thr = COVERAGE_THRESHOLDS
+    keys = list(design)
+    holes = [k for k in keys if design[k]["eff_any"] == 0]
+    out = {"design_points": len(keys), "effective_points": len(keys) - len(holes),
+           "source_profiles_counted": False, "holes": [], "guards": [], "refusals": [],
+           "recommend_remeasure": False, "reasons": [], "thresholds": dict(thr)}
+    for k in holes:
+        pos, corner = device_position(design[k]["rgb"])
+        out["holes"].append({"rgb": list(design[k]["rgb"]), "position": pos, "corner": corner,
+                             "excluded_from": design[k]["excluded"]})
+    for name in ("white", "black"):
+        k = next((k for k in keys if device_position(design[k]["rgb"])[1] == name), None)
+        info = {"in_design": k is not None, "compatible_readings": design[k]["eff_current"] if k else 0,
+                "readings_other_sources": (design[k]["eff_any"] - design[k]["eff_current"]) if k else 0}
+        out[name] = info
+        if k and design[k]["raw_current"] and info["compatible_readings"] == 0 and design[k]["excluded"]:
+            code = f"{name.upper()}_LAST_READING"
+            out["refusals"].append(code)
+            out["guards"].append({"code": code, "level": "refused", "rgb": list(design[k]["rgb"])})
+    for h in out["holes"]:
+        if h["corner"] in ("white", "black"):
+            continue
+        out["guards"].append({"code": f"HOLE_{h['position'].upper()}", "level": _LEVEL_BY_POSITION[h["position"]],
+                              "rgb": h["rgb"], "corner": h["corner"]})
+    missing_corners = [h["corner"] for h in out["holes"] if h["corner"] not in (None, "white", "black")]
+    out["missing_corners"] = missing_corners
+    spacing = _nn_spacing([design[k]["rgb"] for k in keys])
+    ind = {"nominal_spacing": round(spacing, 3) if spacing else None,
+           "holes_fraction": round(len(holes) / len(keys), 4) if keys else 0.0}
+    # edges: 12 edges, holes running along one
+    edges: dict[tuple, list] = {}
+    for k in keys:
+        rgb = design[k]["rgb"]
+        if device_position(rgb)[0] != "edge":
+            continue
+        fixed = tuple((c, "hi" if v >= 100 - _BOUND_TOL else "lo") for c, v in enumerate(rgb)
+                      if v <= _BOUND_TOL or v >= 100 - _BOUND_TOL)
+        free = next(c for c in range(3) if c not in {f[0] for f in fixed})
+        edges.setdefault(fixed, []).append((rgb[free], k in holes))
+    edge_issues = []
+    for fixed, pts in edges.items():
+        pts.sort()
+        flags = [h for _, h in pts]
+        adjacent = any(a and b for a, b in zip(flags, flags[1:]))
+        frac = sum(flags) / len(flags)
+        if adjacent or frac > thr["edge_fraction"]:
+            edge_issues.append({"edge": [list(f) for f in fixed], "points": len(flags), "holes": sum(flags),
+                                "adjacent_holes": adjacent})
+    ind["edges"] = edge_issues
+    clusters, wide = [], []
+    if holes and spacing:
+        hp = np.asarray([design[k]["rgb"] for k in holes], dtype=float)
+        allp = np.asarray([design[k]["rgb"] for k in keys], dtype=float)
+        idx = {k: i for i, k in enumerate(keys)}
+        hole_set = {idx[k] for k in holes}
+        dd = np.sqrt(((hp[:, None, :] - allp[None, :, :]) ** 2).sum(-1))
+        for i, k in enumerate(holes):
+            dd[i, idx[k]] = np.inf                                 # not its own neighbour
+        knn = np.argsort(dd, axis=1)[:, :thr["cluster_knn"]]
+        pos_of = {idx[k]: i for i, k in enumerate(holes)}
+        parent = list(range(len(holes)))
+
+        def find(i):
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+        for i in range(len(holes)):
+            for j in knn[i]:
+                if int(j) in hole_set:
+                    parent[find(i)] = find(pos_of[int(j)])
+        groups: dict[int, list] = {}
+        for i in range(len(holes)):
+            groups.setdefault(find(i), []).append(list(design[holes[i]]["rgb"]))
+        clusters = [g for g in groups.values() if len(g) >= thr["cluster_size"]]
+        eff = np.asarray([design[k]["rgb"] for k in keys if design[k]["eff_any"]], dtype=float)
+        if len(eff):
+            dmin = np.sqrt(((hp[:, None, :] - eff[None, :, :]) ** 2).sum(-1)).min(1)
+            wide = [{"rgb": list(design[holes[i]]["rgb"]), "nearest": round(float(dmin[i]), 3)}
+                    for i in range(len(holes)) if dmin[i] > thr["wide_gap_factor"] * spacing]
+    ind["clusters"], ind["wide_gaps"] = clusters, wide
+    out["indicators"] = ind
+    reasons = []
+    if out["refusals"]:
+        reasons.append("STRUCTURAL_POINT_LOST")
+    if len(missing_corners) >= thr["corners_missing"]:
+        reasons.append("CORNERS_MISSING")
+    if edge_issues:
+        reasons.append("EDGE_COVERAGE")
+    if clusters:
+        reasons.append("HOLE_CLUSTER")
+    if wide:
+        reasons.append("WIDE_GAP")
+    count_limit = max(thr["holes_count"], thr["holes_count_per_point"] * len(keys))
+    if holes and (ind["holes_fraction"] > thr["holes_fraction"] or len(holes) > count_limit):
+        reasons.append("TOO_MANY_HOLES")
+    for (cid, scan), codes in (qc_findings or {}).items():
+        used = next((s for s in plan.scans if s.chart_id == cid and s.scan == scan), None)
+        if used is None:
+            continue
+        if "ZONE_INCOHERENT" in codes:
+            reasons.append("QC_ZONE_INCOHERENT")
+            out["guards"].append({"code": "QC_ZONE_INCOHERENT", "level": "warning", "chart_id": cid, "scan": scan})
+        if "SET_INCOHERENT" in codes and used.rejections_applied:
+            reasons.append("QC_SET_INCOHERENT_ISOLATED_EXCLUSIONS")
+            out["guards"].append({"code": "QC_SET_INCOHERENT_ISOLATED_EXCLUSIONS", "level": "warning",
+                                  "chart_id": cid, "scan": scan})
+    out["reasons"] = sorted(set(reasons))
+    out["recommend_remeasure"] = bool(out["reasons"])
+    return out
+
+
+def read_device_rows(path: Path, what: str = "") -> list[tuple[str, tuple[float, float, float]]]:
+    """[(SAMPLE_ID, (R, G, B) 0-100)] of a ti3 (public reader for the exclusion impact)."""
+    p = Path(path)
+    return _scan_rows(p, _sha256_file(p), what or p.name)

@@ -36,6 +36,7 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -412,7 +413,12 @@ def _read_scan_state(chart_dir: Path) -> dict:
     # anchored on SAMPLE_ID (never line index). Lists (serializable) ; sets on the logic side.
     rejected = {k: [str(s) for s in (v or [])]
                 for k, v in (st.get("rejected_readings") or {}).items() if v}
+    # Other keys (last_build_id, rejection_meta…) are KEPT: a route that rewrites the state
+    # (role, rejection) must never drop what it does not manage. Legacy `excluded` = migrated.
+    extra = {k: v for k, v in st.items() if k not in
+             ("roles", "excluded", "profile_built_from", "rejected_readings", "profile_built_rejections")}
     return {
+        **extra,
         "roles": roles,
         "profile_built_from": list(st.get("profile_built_from") or []),
         "rejected_readings": rejected,
@@ -429,6 +435,14 @@ def _rejected_map(state: dict) -> dict:
 def _write_scan_state(chart_dir: Path, state: dict) -> None:
     import json
     import os
+    # rejection_meta is INFORMATIVE only (why/when a reading was excluded): the registry is
+    # rejected_readings; meta of a reading no longer rejected is dropped.
+    meta = state.get("rejection_meta")
+    if isinstance(meta, dict):
+        rej = {k: set(v) for k, v in (state.get("rejected_readings") or {}).items()}
+        state["rejection_meta"] = {scan: {sid: m for sid, m in sids.items() if sid in rej.get(scan, ())}
+                                   for scan, sids in meta.items() if isinstance(sids, dict)}
+        state["rejection_meta"] = {k: v for k, v in state["rejection_meta"].items() if v}
     p = chart_dir / "scan_state.json"
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -802,6 +816,115 @@ def set_reading_rejected(chart_id: str, ti3: str, sample_id: str, body: RejectRe
             "rejected": body.rejected, "n_rejected": n_rejected}
 
 
+class ExclusionBody(BaseModel):
+    """Explicit exclusion API (phase 4C) — distinct from the legacy /reject route, whose rule
+    ("never the last valid reading of a patch") stays unchanged for the current interface."""
+    excluded: bool = True                     # False = re-include (always allowed)
+    reason: Optional[str] = Field(default=None, max_length=200)
+    dry_run: bool = False                     # True = impact only, nothing written
+    extra_chart_ids: list[str] = []           # context: additional charts of the next build
+
+
+_SEVERITY = ("ok", "info", "warning", "strong_warning", "refused")
+
+
+def _exclusion_impact(chart_id: str, d: Path, state: dict, ti3: str, sid: str,
+                      extra_chart_ids: list) -> dict:
+    """Foreseeable consequences of excluding (ti3, sid), per base, with the SAME planning and
+    coverage engine as the build. Chart-level refusal only for white/black left without any
+    compatible reading in the chart's included scans (the build plan decides the rest)."""
+    from lib.z9_client import build_inputs as bi
+    rows = dict(bi.read_device_rows(d / "measurements" / ti3, f"{chart_id}/{ti3}"))
+    rgb = rows[sid]
+    key, (pos, corner) = bi.device_key(rgb), bi.device_position(rgb)
+    after = {k: list(v) for k, v in state["rejected_readings"].items()}
+    after[ti3] = sorted(set(after.get(ti3, [])) | {sid})
+    included = [p.name for p in _raw_ti3_paths(d) if _scan_role(state, p.name) == "included"]
+    others = 0
+    for scan in included:
+        rej = set(after.get(scan, []))
+        others += sum(1 for r_sid, r_rgb in bi.read_device_rows(d / "measurements" / scan)
+                      if bi.device_key(r_rgb) == key and r_sid not in rej)
+    refusal = f"{corner.upper()}_LAST_READING" if corner in ("white", "black") and others == 0 else None
+    media_id, ref_ge = _chart_paper_ge(chart_id)
+    extras = []
+    for x in extra_chart_ids:
+        xm, xge = _chart_paper_ge(x)
+        _assert_source_compatible(media_id, ref_ge, xm, xge, f"chart {x}")
+        extras.append(_chart_snapshot(x, _chart_dir(x), _read_scan_state(_chart_dir(x))))
+    snap_after = _chart_snapshot(chart_id, d, {**state, "rejected_readings": after})
+    bases = {}
+    for base in ("last", "average"):
+        plan = bi.plan_inputs(snap_after, extras, bi.BuildRequest(base=base, policy="apply_all"))
+        if base == "average" and plan.base_effective != "average":
+            continue                                          # fewer than 2 included scans
+        used = any(s.chart_id == chart_id and s.scan == ti3 for s in plan.current)
+        cov = bi.analyze_coverage(plan, _qc_findings_cached(plan))
+        hole = any(bi.device_key(h["rgb"]) == key for h in cov["holes"])
+        lost = corner in ("white", "black") and f"{corner.upper()}_LAST_READING" in cov["refusals"]
+        level = ("ok" if not used else "refused" if lost
+                 else bi._LEVEL_BY_POSITION[pos] if hole else "ok")
+        bases[base] = {"base_effective": plan.base_effective, "reading_used": used, "hole": hole,
+                       "level": level, "refusals": cov["refusals"], "guards": cov["guards"],
+                       "recommend_remeasure": cov["recommend_remeasure"], "reasons": cov["reasons"]}
+    level = max([b["level"] for b in bases.values()] + (["refused"] if refusal else ["ok"]), key=_SEVERITY.index)
+    return {"reading": {"chart_id": chart_id, "scan": ti3, "sid": sid, "rgb": list(rgb), "position": pos,
+                        "corner": corner},
+            "other_compatible_readings_in_chart": others, "chart_level_refusal": refusal,
+            "level": level, "bases": bases}
+
+
+@router.post("/{chart_id}/scans/{ti3}/readings/{sample_id}/exclusion")
+def set_reading_exclusion(chart_id: str, ti3: str, sample_id: str, body: ExclusionBody) -> dict:
+    """Explicit, reversible exclusion of ONE reading (scan × SAMPLE_ID), also possible with a
+    single scan. Writes only scan_state.json (rejected_readings = the registry, rejection_meta =
+    informative). Returns the foreseeable impact per base; refuses (409) only the last
+    compatible reading of white or black in the chart. ``dry_run`` writes nothing. Never
+    automatic, no Z9 act, the ti3 is never touched."""
+    from webapp.backend.services import scan_delta
+    d = _chart_dir(chart_id)
+    if ti3 not in {p.name for p in _raw_ti3_paths(d)}:
+        raise HTTPException(404, detail={"error": "unknown_scan", "message": f"unknown scan: {ti3}"})
+    st = _read_scan_state(d)
+    if _scan_role(st, ti3) != "included":
+        raise HTTPException(409, detail={"error": "scan_excluded",
+                                         "message": "the scan is excluded: exclusions apply to included scans"})
+    try:
+        sids = scan_delta.ti3_sample_ids(d / "measurements" / ti3)
+    except (OSError, ValueError) as e:
+        raise HTTPException(422, detail={"error": "unreadable", "message": f"unreadable ti3: {e}"})
+    if sample_id not in sids:
+        raise HTTPException(404, detail={"error": "unknown_reading", "message": f"unknown reading in {ti3}: {sample_id}"})
+    cur = set(st["rejected_readings"].get(ti3, []))
+    if not body.excluded:
+        if not body.dry_run and sample_id in cur:
+            cur.discard(sample_id)
+            st["rejected_readings"] = {**st["rejected_readings"], ti3: sorted(cur)}
+            st["rejected_readings"] = {k: v for k, v in st["rejected_readings"].items() if v}
+            _write_scan_state(d, st)
+        return {"ok": True, "chart_id": chart_id, "scan": ti3, "sid": sample_id, "excluded": False,
+                "applied": not body.dry_run, "decision": "accepted"}
+    try:
+        impact = _exclusion_impact(chart_id, d, st, ti3, sample_id, body.extra_chart_ids)
+    except (ValueError, HTTPException) as e:
+        raise HTTPException(422, detail={"error": "impact_failed", "message": str(getattr(e, "detail", e))})
+    if impact["chart_level_refusal"]:
+        raise HTTPException(409, detail={"error": "exclusion_refused", "code": impact["chart_level_refusal"],
+                                         "message": "last compatible reading of a structural point",
+                                         "impact": impact})
+    if not body.dry_run and sample_id not in cur:
+        from datetime import datetime, timezone
+        st["rejected_readings"] = {**st["rejected_readings"], ti3: sorted(cur | {sample_id})}
+        meta = st.get("rejection_meta") if isinstance(st.get("rejection_meta"), dict) else {}
+        meta.setdefault(ti3, {})[sample_id] = {
+            "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "origin": "user",
+            "api": "exclusion/v1", "reason": body.reason, "impact_level": impact["level"]}
+        st["rejection_meta"] = meta
+        _write_scan_state(d, st)
+    return {"ok": True, "chart_id": chart_id, "scan": ti3, "sid": sample_id, "excluded": True,
+            "applied": not body.dry_run, "decision": "accepted", "impact": impact}
+
+
 @router.get("/{chart_id}/scan/qc")
 def scan_qc(chart_id: str) -> dict:
     """QC matrix patch × scan on the INCLUDED scans (≥2) : one L/a/b reading per scan,
@@ -914,6 +1037,11 @@ class ProfileChartBody(BaseModel):
     # Collision resolution intent (OS paradigm) : None/"cancel" = SAFE (collision → 409,
     # no write) ; "replace" = overwrite + preserve tags/notes ; "keep_both" = -N suffix.
     on_conflict: Optional[str] = None
+    # Rejection policy (phase 4C). None/"legacy" = historical behaviour (base "last" ignores the
+    # current chart's rejections). "apply_all" applies them in every mode; it must be requested
+    # explicitly AND carry the fingerprint returned by POST /profile/preview.
+    policy: Optional[str] = None
+    expected_fingerprint: Optional[str] = None
 
 
 _VALID_ON_CONFLICT = {"cancel", "replace", "keep_both"}
@@ -990,6 +1118,28 @@ def profile_chart(chart_id: str, body: ProfileChartBody) -> dict:
     if body.name and body.name.strip():
         from webapp.backend.routes.papers import _validate_profile_name
         _validate_profile_name(body.name.strip())     # 400 if non-ASCII / forbidden chars / >63
+    # Phase 4C: "apply_all" only on explicit request, and only for the inputs the user previewed.
+    try:
+        policy = _build_policy(body)
+    except ValueError as e:
+        raise HTTPException(422, detail=str(e))
+    if policy == "apply_all" and not body.expected_fingerprint:
+        raise HTTPException(422, detail={"error": "fingerprint_required", "message":
+                                         "policy apply_all requires expected_fingerprint (POST /profile/preview first)"})
+    if body.expected_fingerprint:
+        try:
+            ctx = _prepare_build(chart_id, body)
+        except ValueError as e:
+            raise HTTPException(422, detail=str(e))
+        if ctx.plan.fingerprint != body.expected_fingerprint:
+            raise HTTPException(409, detail={"error": "inputs_changed", "expected": body.expected_fingerprint,
+                                             "actual": ctx.plan.fingerprint,
+                                             "message": "the inputs changed since the preview: preview again"})
+        if policy == "apply_all":
+            refusals = _coverage_for(ctx).get("refusals") or []
+            if refusals:
+                raise HTTPException(409, detail={"error": "coverage_refused", "refusals": refusals,
+                                                 "message": "a structural point (white/black) would have no reading left"})
     if oc in (None, "cancel"):
         coll = _build_profile_conflict(chart_id, body)
         if coll:
@@ -1010,6 +1160,90 @@ def profile_chart(chart_id: str, body: ProfileChartBody) -> dict:
     return resp
 
 
+def _selection_key(request: dict) -> tuple:
+    """What a user CHOOSES for a build (compared with the current build's request)."""
+    return (request.get("base") or "last", tuple(request.get("extra_chart_ids") or ()),
+            tuple(request.get("source_profiles") or ()), tuple(request.get("colprof_flags_resolved") or ()),
+            request.get("policy") or "legacy")
+
+
+@router.post("/{chart_id}/profile/preview")
+def profile_preview(chart_id: str, body: ProfileChartBody) -> dict:
+    """What a build with this request WOULD use, without building: same planning engine as the
+    build (build_inputs.plan_inputs), no working ti3, no colprof, no write. Returns the inputs
+    fingerprint to send back as ``expected_fingerprint``; the build refuses if it changed."""
+    from lib.z9_client import profile_versions
+    d = _chart_dir(chart_id)
+    try:
+        ctx = _prepare_build(chart_id, body)
+        cov = _coverage_for(ctx)
+    except ValueError as e:
+        raise HTTPException(422, detail=str(e))
+    req = _build_request_record(body, ctx.flags, ctx.plan.policy)
+    ptr = profile_versions.read_pointer(d) or {}
+    cur_req = ptr.get("request")
+    plan = ctx.plan.to_dict()
+    return {"chart_id": chart_id, "policy": ctx.plan.policy, "base_requested": ctx.plan.base_requested,
+            "base_effective": ctx.plan.base_effective, "inputs_fingerprint": ctx.plan.fingerprint,
+            "sources": {"current_scans": plan["current_scans"], "extra_scans": plan["extra_scans"],
+                        "source_profiles": plan["source_profiles"]},
+            "rejections_applied": [{"chart_id": x["chart_id"], "scan": x["scan"], "sids": x["rejections_applied"]}
+                                   for x in plan["current_scans"] + plan["extra_scans"] if x["rejections_applied"]],
+            "rejections_not_applied": plan["rejections_not_applied"],
+            "rejections_unmatched": plan["rejections_unmatched"],
+            "holes": cov.get("holes", []), "guards": cov.get("guards", []), "refusals": cov.get("refusals", []),
+            "would_be_refused": ctx.plan.policy == "apply_all" and bool(cov.get("refusals")),
+            "recommend_remeasure": cov.get("recommend_remeasure", False), "reasons": cov.get("reasons", []),
+            "coverage": cov, "colprof_flags": list(ctx.flags),
+            "current_build_id": (ptr.get("pointer") or {}).get("build_id"),
+            "differs_from_current_build": (None if not cur_req else _selection_key(cur_req) != _selection_key(req))}
+
+
+def _profile_status(chart_id: str, d: Path) -> dict:
+    """New semantics (phase 4C, not displayed yet): the current profile is STALE if the same
+    request, replanned now, would use different inputs. unknown = no reliable manifest (never
+    presumed up to date). missing_input = a used source no longer exists. toolchain_changed =
+    colprof version differs from the one recorded."""
+    from lib.z9_client import build_inputs, profile_versions
+    ptr = profile_versions.read_pointer(d) or {}
+    bid = (ptr.get("pointer") or {}).get("build_id")
+    base = {"state": "unknown", "stale": None, "missing_input": [], "toolchain_changed": None, "build_id": bid}
+    if not (d / f"{chart_id}.icc").is_file():
+        return {**base, "state": "no_profile"}
+    req, fp = ptr.get("request"), (ptr.get("plan") or {}).get("inputs_fingerprint")
+    icc_sha = hashlib_sha256((d / f"{chart_id}.icc").read_bytes())
+    if not (req and fp) or ptr.get("kind") != "build" or (ptr.get("pointer") or {}).get("icc_sha256") != icc_sha:
+        return base
+    missing = []
+    plan = ptr["plan"]
+    for x in plan.get("current_scans", []) + plan.get("extra_scans", []):
+        cd = d if x["chart_id"] == chart_id else _cache.locate_chart_dir(x["chart_id"])
+        if cd is None or not (cd / "measurements" / x["scan"]).is_file():
+            missing.append({"kind": "scan", "chart_id": x["chart_id"], "scan": x["scan"]})
+    missing += [{"kind": "profile", "path": p} for p in req.get("source_profiles") or [] if not Path(p).is_file()]
+    cur_colprof = build_inputs.software_versions().get("colprof")
+    built_colprof = (ptr.get("software") or {}).get("colprof")
+    toolchain = bool(cur_colprof and built_colprof and cur_colprof != built_colprof)
+    if missing:
+        return {**base, "state": "missing_input", "stale": True, "missing_input": missing, "toolchain_changed": toolchain}
+    replay = ProfileChartBody(colprof_flags=req.get("colprof_flags"), profile_base=req.get("base"),
+                              extra_chart_ids=req.get("extra_chart_ids") or [],
+                              source_profiles=[SourceProfileRef(path=p) for p in req.get("source_profiles") or []],
+                              policy=req.get("policy"))
+    try:
+        now_fp = _prepare_build(chart_id, replay).plan.fingerprint
+    except (ValueError, HTTPException) as e:
+        return {**base, "state": "missing_input", "stale": True, "toolchain_changed": toolchain,
+                "missing_input": [{"kind": "replan_failed", "detail": str(getattr(e, "detail", e))}]}
+    stale = now_fp != fp
+    return {**base, "state": "stale" if stale else "up_to_date", "stale": stale, "toolchain_changed": toolchain}
+
+
+def hashlib_sha256(data: bytes) -> str:
+    import hashlib
+    return hashlib.sha256(data).hexdigest()
+
+
 @router.get("/{chart_id}/profile/status")
 def profile_status(chart_id: str) -> dict:
     """State of the CURRENT/last build for THIS chart (background job) → re-attaches the front
@@ -1021,19 +1255,22 @@ def profile_status(chart_id: str) -> dict:
     return {"state": "idle", "chart_id": chart_id, "phase": None, "result": None, "error": None}
 
 
-def _build_profile_now(chart_id: str, body: ProfileChartBody, set_phase) -> dict:
-    """Builds the ICC (concat included−rejections → colprof → disk storage). Run by the
-    chart_profile_job worker (background thread, or inline in test). Raises SIMPLE exceptions
-    (ValueError/RuntimeError), NEVER HTTPException (outside request context). set_phase(str)
-    reports progress (preparing → building). NO Z9 : colprof + disk copy."""
-    import hashlib
+def _build_policy(body) -> str:
+    """Rejection policy of a build: "legacy" unless "apply_all" is EXPLICITLY requested."""
+    p = (getattr(body, "policy", None) or "legacy").strip().lower()
+    if p not in ("legacy", "apply_all"):
+        raise ValueError(f"unknown build policy: {p!r}")
+    return p
+
+
+def _prepare_build(chart_id: str, body: "ProfileChartBody"):
+    """Shared by the build, the preview and the profile status: frozen snapshot, paper/GE
+    guards of the additional sources, resolved flags, and the PLAN (build_inputs.plan_inputs).
+    No side effect: reads only (no repair, no build directory, no ti3 written).
+    Raises ValueError (or HTTPException for an unknown chart) like the build did."""
     import json
-    import os
     import shlex
     from datetime import date
-    from lib.z9_client.profiling import ProfilingOps
-
-    set_phase("preparing")
     d = _chart_dir(chart_id)
     # FROZEN snapshot (read ONCE): the same state decides the inputs AND writes the trace —
     # a role/rejection changed during colprof never pretends to have been used.
@@ -1064,7 +1301,6 @@ def _build_profile_now(chart_id: str, body: ProfileChartBody, set_phase) -> dict
     out_icc = d / f"{chart_id}.icc"                       # current profile in the chart folder
     serial = _resolve_serial_for_ranging(desc)
     media_id = paper.get("media_id")
-    origin = "free_chart_argyll"
 
     # ── ADDITIONAL sources (paper+GE guard, authoritative server-side identity) ──
     # (b) other charts: their included scans with THEIR rejections ; (c) existing profiles
@@ -1091,10 +1327,66 @@ def _build_profile_now(chart_id: str, body: ProfileChartBody, set_phase) -> dict
     # rejections (now TRACED as not applied), "average" applies them, additional charts always
     # apply theirs, source profiles are used as extracted. Every write happens in a private
     # `.build/<build_id>/` directory (never in measurements/, never in another chart).
-    from lib.z9_client import build_inputs, profile_versions
+    from lib.z9_client import build_inputs
     plan = build_inputs.plan_inputs(snap, extra_snaps, build_inputs.BuildRequest(
         base=body.profile_base, source_profiles=tuple(profile_paths), colprof_flags=tuple(flags),
-        policy="legacy"))
+        policy=_build_policy(body)))
+    return SimpleNamespace(d=d, snap=snap, state=_state_for_build, desc=desc, paper=paper,
+                           paper_name=paper_name, custom_name=custom_name, label=label, flags=flags,
+                           out_icc=out_icc, serial=serial, media_id=media_id, extra_snaps=extra_snaps,
+                           profile_paths=profile_paths, plan=plan)
+
+
+def _qc_findings_cached(plan) -> dict:
+    """{(chart, scan): [finding codes]} from the CACHED measurement-QC summaries only."""
+    from webapp.backend.services import measure_qc as qc_service
+    out = {}
+    for s in plan.scans:
+        summ = qc_service.cached_summary(s.path)
+        if summ:
+            out[(s.chart_id, s.scan)] = list(summ.get("findings") or [])
+    return out
+
+
+def _coverage_for(ctx) -> dict:
+    """Coverage of the effective set (build_inputs.analyze_coverage). Policy legacy: informative
+    and best-effort (never changes a legacy build); apply_all: errors propagate."""
+    from lib.z9_client import build_inputs
+    try:
+        return build_inputs.analyze_coverage(ctx.plan, _qc_findings_cached(ctx.plan))
+    except Exception as e:                                         # noqa: BLE001
+        if ctx.plan.policy == "apply_all":
+            raise
+        logger.warning("coverage not computed (legacy build): %s", e)
+        return {"error": str(e), "refusals": [], "guards": []}
+
+
+def _build_profile_now(chart_id: str, body: ProfileChartBody, set_phase) -> dict:
+    """Builds the ICC (concat included−rejections → colprof → disk storage). Run by the
+    chart_profile_job worker (background thread, or inline in test). Raises SIMPLE exceptions
+    (ValueError/RuntimeError), NEVER HTTPException (outside request context). set_phase(str)
+    reports progress (preparing → building). NO Z9 : colprof + disk copy."""
+    import hashlib
+    import json
+    import os
+    import shlex
+    from datetime import date
+    from lib.z9_client.profiling import ProfilingOps
+
+    set_phase("preparing")
+    from lib.z9_client import build_inputs, profile_versions
+    ctx = _prepare_build(chart_id, body)
+    d, snap, _state_for_build, desc, paper = ctx.d, ctx.snap, ctx.state, ctx.desc, ctx.paper
+    paper_name, custom_name, label, flags = ctx.paper_name, ctx.custom_name, ctx.label, ctx.flags
+    out_icc, serial, media_id, plan = ctx.out_icc, ctx.serial, ctx.media_id, ctx.plan
+    origin = "free_chart_argyll"
+    # The inputs shown in a preview are the ones built, or nothing is built.
+    if body.expected_fingerprint and plan.fingerprint != body.expected_fingerprint:
+        raise ValueError(f"inputs changed since the preview (expected {body.expected_fingerprint}, "
+                         f"now {plan.fingerprint}): preview again")
+    coverage = _coverage_for(ctx)
+    if plan.policy == "apply_all" and coverage.get("refusals"):
+        raise ValueError("build refused: " + ", ".join(coverage["refusals"]))
     averaged = plan.base_effective == "average"
     build_inputs.sweep_stale_build_dirs(d)                 # leftovers of an interrupted build only
     # Recovery of an interrupted publication + preservation of a pre-versions profile (safe
@@ -1119,6 +1411,7 @@ def _build_profile_now(chart_id: str, body: ProfileChartBody, set_phase) -> dict
         icc_size = result.output_icc_size_bytes
         manifest = build_inputs.build_manifest(
             plan, eff, build_id=build_id, request=_build_request_record(body, flags, plan.policy),
+            coverage=coverage,
             snapshot={"included": list(snap.included()),
                       "rejected": {k: list(v) for k, v in snap.rejected.items()}},
             software=build_inputs.software_versions(),
@@ -1541,6 +1834,9 @@ def chart_detail(chart_id: str) -> dict:
             "built": True, "icc_path": str(icc),
             "built_from": built_from,
             "stale": stale,
+            # phase 4C semantics (not displayed yet): replan of the same request → stale /
+            # missing_input / toolchain_changed / unknown (no reliable manifest)
+            "status": _profile_status(chart_id, d),
         }
 
     return {"identity": identity, "scans": scans, "profile": profile}

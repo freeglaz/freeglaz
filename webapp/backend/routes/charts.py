@@ -446,28 +446,15 @@ def _included_ti3_paths(chart_dir: Path) -> list[Path]:
     return [p for p in _raw_ti3_paths(chart_dir) if _scan_role(st, p.name) == "included"]
 
 
-def _apply_patch_rejections(chart_dir: Path, paths: list[Path]) -> tuple[list[Path], list[Path]]:
-    """Applies a chart's patch rejections (scan_state.rejected_readings) to ITS ti3 :
-    for each scan with rejected readings, writes a filtered `_qcfilt` COPY (rejected
-    rows removed, SAMPLE_ID anchoring — SAME `scan_delta.filter_ti3_text` mechanism as the
-    "average" base of the current chart). Returns (paths TO CONCATENATE, temporary copies
-    TO CLEAN UP). → a source contributes "included scans × kept patches", symmetric to the
-    current chart (the patch averages over its remaining readings ; keeps ≥1-reading/patch upstream)."""
-    from webapp.backend.services import scan_delta
-    rej = _rejected_map(_read_scan_state(chart_dir))
-    used: list[Path] = []
-    tmp: list[Path] = []
-    for p in paths:
-        rj = rej.get(p.name)
-        if rj:
-            filt = chart_dir / "measurements" / f"{p.stem}_qcfilt.ti3"
-            filt.write_text(scan_delta.filter_ti3_text(
-                p.read_text(encoding="ascii", errors="replace"), rj), encoding="ascii")
-            used.append(filt)
-            tmp.append(filt)
-        else:
-            used.append(p)
-    return used, tmp
+def _chart_snapshot(chart_id: str, chart_dir: Path, state: dict):
+    """Frozen view of a chart for a profile build (lib.z9_client.build_inputs.ChartSnapshot):
+    raw scans of measurements/ + roles + rejection registry, from ONE read of scan_state."""
+    from lib.z9_client.build_inputs import ChartSnapshot
+    return ChartSnapshot(
+        chart_id=chart_id, chart_dir=chart_dir,
+        raw_scans=tuple(p.name for p in _raw_ti3_paths(chart_dir)),
+        roles=dict(state.get("roles") or {}),
+        rejected={k: tuple(v) for k, v in (state.get("rejected_readings") or {}).items() if v})
 
 
 def _ti3_scanned_at(ti3_name: str):
@@ -1030,17 +1017,21 @@ def _build_profile_now(chart_id: str, body: ProfileChartBody, set_phase) -> dict
     chart_profile_job worker (background thread, or inline in test). Raises SIMPLE exceptions
     (ValueError/RuntimeError), NEVER HTTPException (outside request context). set_phase(str)
     reports progress (preparing → building). NO Z9 : colprof + disk copy."""
+    import hashlib
     import json
+    import os
     import shlex
     from datetime import date
     from lib.z9_client.profiling import ProfilingOps
 
     set_phase("preparing")
     d = _chart_dir(chart_id)
-    included_paths = _included_ti3_paths(d)    # INCLUDED scans (excluded ones don't feed the profile)
-    if not included_paths:
+    # FROZEN snapshot (read ONCE): the same state decides the inputs AND writes the trace —
+    # a role/rejection changed during colprof never pretends to have been used.
+    _state_for_build = _read_scan_state(d)
+    snap = _chart_snapshot(chart_id, d, _state_for_build)
+    if not snap.included():
         raise ValueError("no included scan")
-    ti3 = included_paths[-1]              # last INCLUDED scan (base "last"/default)
     desc = json.loads((d / "chart.json").read_text(encoding="utf-8"))
     paper = desc.get("paper") or {}
     paper_name = paper.get("name") or paper.get("media_id") or chart_id
@@ -1061,141 +1052,69 @@ def _build_profile_now(chart_id: str, body: ProfileChartBody, set_phase) -> dict
         flags = resolve_gamut_aliases_in_flags(flags)
     except FileNotFoundError as e:
         raise ValueError(f"invalid colprof source gamut (-s/-S): {e}") from e
-    out_icc = d / f"{chart_id}.icc"                       # original in the chart folder
+    out_icc = d / f"{chart_id}.icc"                       # current profile in the chart folder
     serial = _resolve_serial_for_ranging(desc)
     media_id = paper.get("media_id")
-
-    profile_ti3 = ti3
     origin = "free_chart_argyll"
 
-    # Base "average" (§4d) : AVERAGE of the INCLUDED scans (durable measurements/ set, excluding excluded).
-    # concat of the ti3 (≥2) dedup="keep" → colprof averages the repeated measurements per patch (below
-    # the mono-scan floor ≈0.10 ΔE). Reuses concat_ti3 (validated). base="last"/None →
-    # last included. Works session AND pre-session chart.
-    # Patch rejections : applied ONLY to the "average" base (the multi-scan scalpel).
-    # Each included scan with rejected readings is concatenated via a filtered COPY (rejected
-    # rows removed, SAMPLE_ID anchoring) → colprof averages the patch over its remaining readings
-    # in the other scans. The ≥1-valid-reading-per-patch guard (POST reject) prevents any hole.
-    _state_for_build = _read_scan_state(d)
-    _rej_for_build = _rejected_map(_state_for_build)
-    averaged = False
-    if body.profile_base == "average":
-        paths = included_paths
-        if len(paths) >= 2:
-            from webapp.backend.services import scan_delta
-            from lib.z9_client.multipass import concat_ti3
-            concat_paths: list[Path] = []
-            for p in paths:
-                rj = _rej_for_build.get(p.name)
-                if rj:
-                    filt = d / "measurements" / f"{p.stem}_qcfilt.ti3"
-                    filt.write_text(scan_delta.filter_ti3_text(
-                        p.read_text(encoding="ascii", errors="replace"), rj), encoding="ascii")
-                    concat_paths.append(filt)
-                else:
-                    concat_paths.append(p)
-            merged = d / "measurements" / f"{chart_id}_avg.ti3"
-            try:
-                concat_ti3(concat_paths, merged,
-                           labels=[f"scan{i + 1}" for i in range(len(concat_paths))],
-                           dedup_strategy="keep", descriptor=f"freeglaz average {chart_id}")
-            except (ValueError, FileNotFoundError) as e:
-                raise ValueError(f"Scan averaging refused (inconsistent measurements): {e}")
-            finally:
-                for cp in concat_paths:                       # cleans temporary filtered copies
-                    if cp.stem.endswith("_qcfilt"):
-                        cp.unlink(missing_ok=True)
-            profile_ti3 = merged
-            averaged = True
-        # < 2 "kept" scans → cleanly falls back to the last ti3 (average of 1 = itself)
-
-    # ── multi-source foundation (non-regressive) ────────────────────────────
-    # The CURRENT CHART's contribution is `profile_ti3` (last scan /
-    # _avg depending on the branch above). We expose it as the 1st entry of a
-    # source list ; the additional charts/profiles are added there (after
-    # paper+GE guard). Rule : 1 source → PASSTHROUGH (strict file identity
-    # of the current case) ; ≥2 → A single concat_ti3(keep) (renumbers the SAMPLE_ID,
-    # dedup by RGB device — cf. findings). Here the list always has 1 entry
-    # → colprof receives the SAME `profile_ti3` as before → identical .icc by
-    # construction (average/last-scan unchanged).
-    source_paths: list[Path] = [profile_ti3]
-    # ── resolution of the ADDITIONAL sources (paper+GE guard) ──
-    # Any exception is converted to ValueError (no HTTPException outside request).
+    # ── ADDITIONAL sources (paper+GE guard, authoritative server-side identity) ──
+    # (b) other charts: their included scans with THEIR rejections ; (c) existing profiles
+    # (measurements extracted from CIED/targ/CxF). Any exception → ValueError (no HTTPException
+    # outside request context).
     ref_ge = _norm_ge(paper.get("gloss_enhancer"))
-    _tmp_src = None
-    _extra_qcfilt: list[Path] = []     # temporary _qcfilt copies of the source charts (to clean up)
-    if body.extra_chart_ids or body.source_profiles:
-        # (b) other charts : INCLUDED ti3 of their measurements/, AFTER paper+GE guard
-        # AND AFTER applying THEIR OWN patch rejections (symmetry with current chart :
-        # a source contributes included scans × kept patches, not the hand-discarded readings).
-        for xcid in body.extra_chart_ids:
-            try:
-                xm, xge = _chart_paper_ge(xcid)
-            except HTTPException:
-                raise ValueError(f"source chart not found/invalid: {xcid}")
-            _assert_source_compatible(media_id, ref_ge, xm, xge, f"chart {xcid}")
-            xpaths = _included_ti3_paths(_chart_dir(xcid))
-            if not xpaths:
-                raise ValueError(f"source chart {xcid}: no included scan")
-            xused, xtmp = _apply_patch_rejections(_chart_dir(xcid), xpaths)
-            source_paths.extend(xused)
-            _extra_qcfilt.extend(xtmp)
-        # (c) existing profiles : paper/GE identity derived SERVER-SIDE from the
-        # adjacent manifest (_profile_identity, authoritative — zero client
-        # trust), guard, then ti3 extracted from the CIED. Clean refusal if not
-        # authenticatable (raises BEFORE extraction/concat).
-        for i, sp in enumerate(body.source_profiles):
-            sm, sge = _profile_identity(sp.path)
-            _assert_source_compatible(media_id, ref_ge, sm, sge, f"profile {Path(sp.path).name}")
-            if _tmp_src is None:
-                import tempfile
-                _tmp_src = Path(tempfile.mkdtemp(prefix="freeglaz_src_"))
-            sp_ti3 = _tmp_src / f"src_profile_{i}.ti3"
-            try:
-                ProfilingOps().extract_cgats_from_icc(
-                    sp.path, sp_ti3, descriptor=f"freeglaz source {Path(sp.path).name}")
-            except (FileNotFoundError, ValueError) as e:
-                raise ValueError(f"source profile {Path(sp.path).name}: extraction failed ({e})")
-            source_paths.append(sp_ti3)
-
-    if len(source_paths) > 1:
-        from lib.z9_client.multipass import concat_ti3
-        merged_ms = d / "measurements" / f"{chart_id}_multisource.ti3"
+    extra_snaps = []
+    for xcid in body.extra_chart_ids:
         try:
-            concat_ti3(source_paths, merged_ms, dedup_strategy="keep",
-                       descriptor=f"freeglaz multi-source {chart_id}")
-        except (ValueError, FileNotFoundError) as e:
-            raise ValueError(f"multi-source concat refused (inconsistent measurements): {e}")
-        finally:
-            if _tmp_src is not None:
-                import shutil as _sh
-                _sh.rmtree(_tmp_src, ignore_errors=True)
-            for cp in _extra_qcfilt:                     # temporary filtered copies of the sources
-                cp.unlink(missing_ok=True)
-        profile_ti3 = merged_ms
+            xm, xge = _chart_paper_ge(xcid)
+        except HTTPException:
+            raise ValueError(f"source chart not found/invalid: {xcid}")
+        _assert_source_compatible(media_id, ref_ge, xm, xge, f"chart {xcid}")
+        xd = _chart_dir(xcid)
+        extra_snaps.append(_chart_snapshot(xcid, xd, _read_scan_state(xd)))
+    profile_paths = []
+    for sp in body.source_profiles:
+        sm, sge = _profile_identity(sp.path)
+        _assert_source_compatible(media_id, ref_ge, sm, sge, f"profile {Path(sp.path).name}")
+        profile_paths.append(sp.path)
 
-    set_phase("building")              # colprof — ~2.5 min on ~1400 measurements (the job holds the duration)
-    base_icc = profile_ti3.with_suffix(".icc")   # <base>.icc written by colprof BEFORE the atomic move
+    # ── ONE preparation for every mode (lib/z9_client/build_inputs.py) ──
+    # Policy "legacy" = historical behaviour, unchanged: base "last" ignores the current chart's
+    # rejections (now TRACED as not applied), "average" applies them, additional charts always
+    # apply theirs, source profiles are used as extracted. Every write happens in a private
+    # `.build/<build_id>/` directory (never in measurements/, never in another chart).
+    from lib.z9_client import build_inputs
+    plan = build_inputs.plan_inputs(snap, extra_snaps, build_inputs.BuildRequest(
+        base=body.profile_base, source_profiles=tuple(profile_paths), colprof_flags=tuple(flags),
+        policy="legacy"))
+    averaged = plan.base_effective == "average"
+    build_inputs.sweep_stale_build_dirs(d)                 # leftovers of an interrupted build only
+    build_id, workdir = build_inputs.create_build_dir(d)
     try:
-        result = ProfilingOps().build_profile(
-            profile_ti3.with_suffix(""), descriptor=label, output_icc_path=out_icc,
-            colprof_flags=flags)
-    except (FileNotFoundError, RuntimeError) as e:
-        raise RuntimeError(f"colprof failed: {e}")
+        eff = build_inputs.materialize(plan, workdir)
+        set_phase("building")          # colprof — ~2.5 min on ~1400 measurements (the job holds the duration)
+        tmp_icc = workdir / f"{chart_id}.icc"
+        try:
+            result = ProfilingOps().build_profile(
+                eff.profile_ti3.with_suffix(""), descriptor=label, output_icc_path=tmp_icc,
+                colprof_flags=flags)
+        except (FileNotFoundError, RuntimeError) as e:
+            raise RuntimeError(f"colprof failed: {e}")
+        # n_patches = REAL count of the ti3 that fed colprof (header NUMBER_OF_SETS, as before).
+        n_patches = _ti3_n_sets(eff.profile_ti3) or (desc.get("geometry") or {}).get("patch_count")
+        icc_size = result.output_icc_size_bytes
+        # Atomic publication: the previous profile stays intact until colprof succeeded; a
+        # reader sees the old file or the new one, never a partial one.
+        os.replace(tmp_icc, out_icc)
     finally:
-        # atomic hygiene : build_profile moves <base>.icc → out_icc ON SUCCESS. If colprof was
-        # interrupted (reap), a PARTIAL <base>.icc (0 bytes) may remain → we remove it (never
-        # a file that looks like a valid ICC ; out_icc stays complete-or-absent).
-        if base_icc != out_icc and base_icc.exists():
-            base_icc.unlink(missing_ok=True)
+        build_inputs.remove_build_dir(workdir)            # success, failure or exception
 
-    # Trace of the EFFECTIVE SET that fed this profile → "stale" if we change included/excluded OR
-    # the patch rejections afterward (the detail compares to the current set). Rejections only bite
-    # the "average" base → we only trace rejections IN THAT CASE (otherwise rejection set = empty). Best-effort.
+    # Trace (legacy keys, still read by `stale`): written FROM THE SNAPSHOT. Rejections only
+    # bite the "average" base in the legacy policy → traced in that case only. Best-effort ;
+    # the CURRENT state is re-read only to preserve the user's concurrent edits (roles…).
     try:
         _st = _read_scan_state(d)
-        _st["profile_built_from"] = sorted(p.name for p in _included_ti3_paths(d))
-        _st["profile_built_rejections"] = ({k: sorted(v) for k, v in _rej_for_build.items() if v}
+        _st["profile_built_from"] = sorted(snap.included())
+        _st["profile_built_rejections"] = ({k: sorted(v) for k, v in snap.rejected.items() if v}
                                            if averaged else {})
         _write_scan_state(d, _st)
     except OSError:
@@ -1207,12 +1126,10 @@ def _build_profile_now(chart_id: str, body: ProfileChartBody, set_phase) -> dict
     if serial and media_id:
         try:
             cm = desc.get("color_management") or {}
-            # n_patches = REAL count of the ti3 that fed colprof (final profile_ti3, after
-            # passthrough / _avg / _multisource / rejection-filtered) — single source of truth, not
-            # the chart geometry (which ignores the additional sources and the rejections).
-            n_patches = _ti3_n_sets(profile_ti3) or (desc.get("geometry") or {}).get("patch_count")
+            # n_patches = REAL count of the ti3 that fed colprof (computed above, before the
+            # build directory was removed) — not the chart geometry.
             rp, _ = _cache.save_repo_z9_profile(
-                icc_bytes=Path(result.output_icc_path).read_bytes(),
+                icc_bytes=out_icc.read_bytes(),
                 serial=serial, media_id=media_id, paper_name=paper_name,
                 # Custom name (basename, slugified, WITHOUT date) OR auto <paper>_GE-<slot>_<date>.
                 label=(custom_name or paper_name),
@@ -1224,21 +1141,33 @@ def _build_profile_now(chart_id: str, body: ProfileChartBody, set_phase) -> dict
                 origin=origin,
                 notes=f"chart {chart_id}",
                 # OS intent validated at the route ; without collision (default case) save_repo writes the
-                # exact name. replace → overwrite+preserve tags/notes ; keep_both → -N suffix.
+                # exact name. replace → full overwrite (icc + fresh sidecar, no tag/note carried
+                # over — see cache.save_repo_z9_profile) ; keep_both → -N suffix.
                 on_conflict=((body.on_conflict or "").strip().lower() or None))
             ranged_path = str(rp)
         except (OSError, ValueError):
             logger.exception("repo z9 storage failed (non-blocking) — chart %s", chart_id)
 
-    return {"ok": True, "chart_id": chart_id, "icc": Path(result.output_icc_path).name,
-            "icc_size_bytes": result.output_icc_size_bytes,
+    # Build manifest (description of THIS build: plan + materialized inputs + result), next to
+    # the current profile. Informational in this version (stale still uses the legacy trace).
+    try:
+        build_inputs.write_json_atomic(d / "profile_manifest.json", build_inputs.build_manifest(
+            plan, eff, build_id=build_id, result={
+                "icc": out_icc.name, "icc_sha256": hashlib.sha256(out_icc.read_bytes()).hexdigest(),
+                "icc_size_bytes": icc_size, "n_patches": n_patches, "repo_path": ranged_path,
+                "label": label}))
+    except OSError:
+        logger.warning("build manifest not written (%s)", chart_id)
+
+    return {"ok": True, "chart_id": chart_id, "icc": out_icc.name,
+            "icc_size_bytes": icc_size,
             "ranged_icc_path": ranged_path,             # None if serial unknown (backward-compat)
             # repo/z9 coordinates of the stored profile → enables "Install" on the front side
             "ranged": ({"serial": serial, "media_id": media_id,
                         "filename": Path(ranged_path).name} if ranged_path else None),
             "paper_name": paper_name,
             "averaged": averaged,                       # base = average of the stable scans (§4d)
-            "n_scans_averaged": len(paths) if averaged else None,
+            "n_scans_averaged": len(plan.current) if averaged else None,
             "installable": ranged_path is not None}     # → installable from Papers/Profiles
 
 

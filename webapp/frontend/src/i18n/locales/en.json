@@ -1218,7 +1218,13 @@
       "title_other": "Measurements — {{count}} patches",
       "view": "View measurements",
       "delete": "Delete this measurement set",
-      "unavailable": "measurements unavailable"
+      "title_plain": "Measurements",
+      "loading": "Loading measurements…",
+      "error": {
+        "not_found": "Scan not found: this measurement file no longer exists in the chart.",
+        "unreadable": "Unreadable measurements: this scan's ti3 file is damaged or incomplete. The technical details are recorded in the freeglaz log (freeglaz.log).",
+        "unavailable": "Measurements unavailable: technical error while reading. Try again."
+      }
     },
     "qc": {
       "title_one": "Quality control — {{count}} patch",
@@ -1453,5 +1459,154 @@
     "profile_done_local": "Profile built (in the chart folder). Filing by paper unavailable (printer not identified at creation).",
     "colprof_line": "colprof options (profile generation)",
     "colprof_help": "colprof help"
+  },
+  "measure_qc": {
+    "open": "See details",
+    "open_measures": "See the measurements and the check",
+    "export_title": "Exports all measurements (not only the filter), with the check columns when available.",
+    "summary": {
+      "loading": "Checking measurement consistency…",
+      "attention_one": "{{count}} measurement deserves your attention.",
+      "attention_other": "{{count}} measurements deserve your attention.",
+      "limited_one": "No inconsistency detected by this check, with one limit: {{count}} measurement not assessable.",
+      "limited_other": "No inconsistency detected by this check, with limits: {{count}} measurements not assessable.",
+      "limited_no_na": "No inconsistency detected by this check, with limits (see below).",
+      "limited_check": "Limited consistency check.",
+      "attention_findings": "Overall inconsistency detected: see below.",
+      "clean": "No inconsistency detected by this check.",
+      "counts": "{{n}} patches examined · {{strong}} strongly suspect · {{to_check}} to check · {{na}} not assessable",
+      "disclaimer": "Advisory check: each measurement is compared with the other colours of the same chart. It removes nothing, does not validate the measurements and does not guarantee the profile. A smooth drift of a whole region can escape it."
+    },
+    "state": {
+      "invalid": "Check impossible: measurements not analysable ({{reason}}). This is not a \"no anomaly\" result.",
+      "unavailable": "Quality check unavailable for this scan.",
+      "error": "Technical error in the quality check. This is not a \"no anomaly\" result.",
+      "measurements_shown": "The readable measurements are still shown below, without the consistency check."
+    },
+    "error": {
+      "unknown": "unknown reason",
+      "TRUNCATED": "truncated ti3 file",
+      "NO_DATA": "no measurement data",
+      "MERGED_FILE": "file merging several scans",
+      "MISSING_COLUMNS": "required columns missing",
+      "SHORT_ROW": "incomplete measurement row",
+      "DUPLICATE_SAMPLE_ID": "duplicate patch identifiers",
+      "INVALID_VALUE": "non-numeric value",
+      "RGB_OUT_OF_RANGE": "RGB values outside 0–100",
+      "INVALID_COLORIMETRY": "missing or invalid colorimetry (XYZ/Lab)",
+      "SCAN_NOT_FOUND": "scan not found",
+      "NOT_A_RAW_SCAN": "not a raw scan file",
+      "UNREADABLE": "unreadable file"
+    },
+    "status": {
+      "strong": "Strongly suspect",
+      "to_check": "To check",
+      "not_assessable": "Not assessable",
+      "coherent": "Consistent"
+    },
+    "status_title": {
+      "strong": "Large and reliable deviation from the other colours of the chart, or a failed physical check. Worth examining: it does not prove the measurement is wrong.",
+      "to_check": "Moderate deviation from the other colours of the chart: worth a look, no conclusion.",
+      "not_assessable": "The check cannot judge this measurement (insufficient or inconsistent neighbourhood). This is a limit of the check: neither a validation nor an error.",
+      "coherent": "Consistent with the other colours of the chart according to this check (not a validation)."
+    },
+    "position": {
+      "interior": "interior",
+      "face": "face",
+      "edge": "edge",
+      "corner": "corner"
+    },
+    "model": {
+      "linear": "linear",
+      "quadratic": "quadratic"
+    },
+    "reliability": {
+      "ok": "reliable ({{model}})",
+      "short_ok": "reliable",
+      "weak": "unreliable",
+      "assessable": "reliable prediction",
+      "not_assessable": "unreliable prediction"
+    },
+    "reason": {
+      "PHYS_LIGHTER_THAN_PAPER": "Lighter than the paper (L* {{l}} > white {{white_l}})",
+      "PHYS_WHITE_SUSPECT": "Paper white reading suspect: {{n_lighter}} patches lighter than it",
+      "PHYS_CHROMA": "Physically implausible chroma ({{chroma}})",
+      "PHYS_NEGATIVE_XYZ": "Negative XYZ values",
+      "DUP_DISCORDANT": "Discordant repeated readings: {{dist_to_median}} ΔE00 from the median of the {{n}} readings of this patch",
+      "DUP_PAIR_DIVERGENT": "The 2 readings of this patch differ by {{disagreement}} ΔE00",
+      "DUP_TWIN_DIVERGES": "Its duplicate deviates from the neighbours; this reading is consistent",
+      "DUP_CONFIRMED": "Confirmed by {{n}} agreeing readings of this patch",
+      "MODEL_RESIDUAL": "Inconsistent with the neighbouring patches: deviation {{residual}} ΔE00 (score {{score}})",
+      "MODEL_EXTRAPOLATION": "Unreliable prediction: extrapolation (edge or corner of the cube)",
+      "MODEL_INCOHERENT_NEIGHBORHOOD": "Unreliable prediction: neighbours inconsistent with each other or a very curved response",
+      "MODEL_SPARSE": "Unreliable prediction: neighbourhood too sparse",
+      "HIGH_DEVIATION_UNRELIABLE_PREDICTION": "Large deviation ({{residual}} ΔE00) but unreliable prediction: re-measure rather than conclude",
+      "MONOTONIC_INVERSION": "Lightness inversion: darker than patches carrying more ink ({{n_inversions}})"
+    },
+    "finding": {
+      "SET_INCOHERENT": "Globally inconsistent set: {{pct}} % of the patches have an inconsistent neighbourhood. Check the chart (offset, wrong file) before examining patches one by one.",
+      "ZONE_INCOHERENT": "Inconsistent zone: {{n}} patches around RGB ({{rgb}}). Re-measuring the zone is safer than judging each patch.",
+      "SET_INCOHERENT_LOW_DENSITY": "Neighbourhoods often inconsistent ({{pct}} % of the patches) on a sparse chart: this may come from the low density rather than from a mis-attributed chart. The check is not very conclusive on this chart.",
+      "LOW_DENSITY": "Sparse chart ({{n}} patches): the sensitivity of the check is reduced."
+    },
+    "warning": {
+      "LAB_COLUMNS_INCONSISTENT_WITH_XYZ": "The file's Lab columns do not match its XYZ: the check uses the XYZ (what colprof reads).",
+      "NO_XYZ_LAB_COLUMNS_USED": "No XYZ in the file: the check uses the Lab columns.",
+      "XYZ_SCALE_0_1_RESCALED": "XYZ given on the 0–1 scale: rescaled to 0–100 for the check.",
+      "NUMBER_OF_SETS_MISMATCH": "The patch count declared in the file does not match the rows present.",
+      "MERGED_FILE_ANALYSED": "A file merging several sources was analysed: duplicates come from other scans.",
+      "IDENTICAL_DUPLICATE_ROWS": "Strictly identical measurement rows: not counted as independent readings."
+    },
+    "table": {
+      "status": "Check",
+      "swatch": "Preview ≈",
+      "swatch_title": "Approximate on-screen preview (sRGB): measured | predicted. Not faithful outside the sRGB gamut; the numbers are the reference.",
+      "swatch_cell": "≈ sRGB — measured Lab {{measured}} | predicted Lab {{predicted}}",
+      "out_of_srgb": "colour outside sRGB: approximate preview",
+      "device_swatch_title": "RGB value sent to the printer (not the measured colour)",
+      "de00": "ΔE pred.",
+      "de00_title": "ΔE00 between the measurement and the prediction made from the other patches",
+      "position": "Position",
+      "reason": "Reason",
+      "reliability": "Prediction",
+      "reliability_title": "Reliability of the prediction (not of the measurement)"
+    },
+    "sort": {
+      "suspicion": "By suspicion",
+      "natural": "Patch order"
+    },
+    "filter": {
+      "all": "All ({{n}})",
+      "flagged": "Flagged ({{n}})",
+      "not_assessable": "Not assessable ({{n}})",
+      "all_title": "All measurements",
+      "flagged_title": "Strongly suspect, to check AND not assessable",
+      "not_assessable_title": "Measurements the check cannot judge",
+      "empty": "No measurement in this filter."
+    },
+    "detail": {
+      "lab_measured": "Measured Lab",
+      "lab_predicted": "Predicted Lab",
+      "de00": "ΔE00 measured–predicted",
+      "score": "Score",
+      "position": "Position in the RGB cube",
+      "neighbors": "Neighbourhood",
+      "neighbors_value": "{{n}} neighbours · {{model}} model · effective neighbours {{neff}}",
+      "reliability": "Reliability",
+      "duplicates": "Repeated readings",
+      "duplicates_value": "{{n}} readings ({{ids}}) · max disagreement {{dis}} ΔE00",
+      "identical_values": "strictly identical values",
+      "reasons": "Reasons",
+      "no_reason": "none"
+    },
+    "badge": {
+      "attention_one": "{{count}} to examine",
+      "attention_other": "{{count}} to examine",
+      "limits_one": "{{count}} not assessable",
+      "limits_other": "{{count}} not assessable",
+      "finding": "overall inconsistency",
+      "limited_check": "limited check",
+      "title": "Measurement consistency check of this scan (advisory). Click for details."
+    }
   }
 }

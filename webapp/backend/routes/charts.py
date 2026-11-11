@@ -835,7 +835,9 @@ def scan_patches(chart_id: str, ti3: str) -> dict:
     try:
         data, lab_integrity = scan_delta.read_scan(p)
     except (OSError, ValueError) as e:
-        raise HTTPException(422, detail=f"unreadable ti3: {e}")
+        # Raw cause kept in the logs (freeglaz.log); the UI localizes from the stable code.
+        logger.warning("measurements unreadable — chart %s scan %s: %s", chart_id, ti3, e)
+        raise HTTPException(422, detail={"code": "UNREADABLE", "message": f"unreadable ti3: {e}"})
     patches = [{"id": sid, "rgb": v["rgb"], "lab": [round(x, 2) for x in v["lab"]]}
                for sid, v in data.items()]
     # lab_integrity: Lab recomputed from XYZ (Argyll D50) when present; stored LAB_* only checked.
@@ -858,6 +860,7 @@ def scan_measure_qc(chart_id: str, ti3: str) -> dict:
         out = qc_service.get_report(p)
     except qc_service.ScanQCError as e:
         status = 404 if e.code == "SCAN_NOT_FOUND" else 422
+        logger.info("measure QC not possible — chart %s scan %s: %s (%s)", chart_id, ti3, e.code, e)
         raise HTTPException(status, detail={"code": e.code, "message": str(e)})
     return {"chart_id": chart_id, "ti3": ti3, **out}
 

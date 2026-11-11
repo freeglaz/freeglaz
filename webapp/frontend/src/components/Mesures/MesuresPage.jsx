@@ -515,7 +515,8 @@ export default function MesuresPage({ offline }) {
           onClose={() => { setAllOpen(false); loadDetail(selected); }}/>
       )}
       {viewTi3 && detail && (
-        <MeasurementsModal open chartId={id.chart_id} ti3={viewTi3} onClose={() => setViewTi3(null)}/>
+        <MeasurementsModal open chartId={id.chart_id} ti3={viewTi3}
+          onClose={() => { setViewTi3(null); loadDetail(selected); }}/>
       )}
       {confirm && (
         <ConfirmModal

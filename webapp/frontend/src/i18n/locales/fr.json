@@ -1218,7 +1218,13 @@
       "title_other": "Mesures — {{count}} patches",
       "view": "Voir les mesures",
       "delete": "Supprimer ce set de mesures",
-      "unavailable": "mesures indisponibles"
+      "title_plain": "Mesures",
+      "loading": "Chargement des mesures…",
+      "error": {
+        "not_found": "Scan introuvable : ce fichier de mesures n'existe plus dans la charte.",
+        "unreadable": "Mesures illisibles : le fichier ti3 de ce scan est endommagé ou incomplet. Le détail technique est consigné dans le journal de freeglaz (freeglaz.log).",
+        "unavailable": "Mesures indisponibles : erreur technique pendant la lecture. Réessayez."
+      }
     },
     "qc": {
       "title_one": "Contrôle qualité — {{count}} patch",
@@ -1453,5 +1459,154 @@
     "profile_done_local": "Profil construit (dans le dossier charte). Rangement par papier indisponible (imprimante non identifiée à la création).",
     "colprof_line": "Options colprof (génération du profil)",
     "colprof_help": "aide colprof"
+  },
+  "measure_qc": {
+    "open": "Voir le détail",
+    "open_measures": "Voir les mesures et le contrôle",
+    "export_title": "Exporte toutes les mesures (pas seulement le filtre), avec les colonnes du contrôle quand il est disponible.",
+    "summary": {
+      "loading": "Contrôle de cohérence des mesures en cours…",
+      "attention_one": "{{count}} mesure mérite votre attention.",
+      "attention_other": "{{count}} mesures méritent votre attention.",
+      "limited_one": "Aucune incohérence détectée par ce contrôle, avec une limite : {{count}} mesure non évaluable.",
+      "limited_other": "Aucune incohérence détectée par ce contrôle, avec des limites : {{count}} mesures non évaluables.",
+      "limited_no_na": "Aucune incohérence détectée par ce contrôle, avec des limites (voir ci-dessous).",
+      "limited_check": "Contrôle de cohérence limité.",
+      "attention_findings": "Incohérence d'ensemble détectée : voir ci-dessous.",
+      "clean": "Aucune incohérence détectée par ce contrôle.",
+      "counts": "{{n}} patchs examinés · {{strong}} fortement suspectes · {{to_check}} à vérifier · {{na}} non évaluables",
+      "disclaimer": "Contrôle consultatif : chaque mesure est comparée aux autres couleurs de la même charte. Il ne supprime rien, ne valide pas les mesures et ne garantit pas le profil. Une dérive régulière de toute une zone peut lui échapper."
+    },
+    "state": {
+      "invalid": "Contrôle impossible : mesures non analysables ({{reason}}). Ce n'est pas un résultat « aucune anomalie ».",
+      "unavailable": "Contrôle qualité indisponible pour ce scan.",
+      "error": "Erreur technique du contrôle qualité. Ce n'est pas un résultat « aucune anomalie ».",
+      "measurements_shown": "Les mesures lisibles restent affichées ci-dessous, sans contrôle de cohérence."
+    },
+    "error": {
+      "unknown": "raison inconnue",
+      "TRUNCATED": "fichier ti3 tronqué",
+      "NO_DATA": "aucune donnée de mesure",
+      "MERGED_FILE": "fichier fusionnant plusieurs scans",
+      "MISSING_COLUMNS": "colonnes indispensables absentes",
+      "SHORT_ROW": "ligne de mesure incomplète",
+      "DUPLICATE_SAMPLE_ID": "identifiants de patchs en double",
+      "INVALID_VALUE": "valeur non numérique",
+      "RGB_OUT_OF_RANGE": "valeurs RGB hors de 0–100",
+      "INVALID_COLORIMETRY": "colorimétrie absente ou invalide (XYZ/Lab)",
+      "SCAN_NOT_FOUND": "scan introuvable",
+      "NOT_A_RAW_SCAN": "fichier qui n'est pas un scan brut",
+      "UNREADABLE": "fichier illisible"
+    },
+    "status": {
+      "strong": "Fortement suspecte",
+      "to_check": "À vérifier",
+      "not_assessable": "Non évaluable",
+      "coherent": "Cohérente"
+    },
+    "status_title": {
+      "strong": "Écart important et fiable avec les autres couleurs de la charte, ou contrôle physique non satisfait. À examiner : cela ne prouve pas que la mesure soit fausse.",
+      "to_check": "Écart modéré avec les autres couleurs de la charte : à regarder, sans conclusion.",
+      "not_assessable": "Le contrôle ne peut pas juger cette mesure (voisinage insuffisant ou incohérent). C'est une limite du contrôle : ni une validation, ni une erreur.",
+      "coherent": "Cohérente avec les autres couleurs de la charte selon ce contrôle (ce n'est pas une validation)."
+    },
+    "position": {
+      "interior": "intérieur",
+      "face": "face",
+      "edge": "arête",
+      "corner": "coin"
+    },
+    "model": {
+      "linear": "linéaire",
+      "quadratic": "quadratique"
+    },
+    "reliability": {
+      "ok": "fiable ({{model}})",
+      "short_ok": "fiable",
+      "weak": "peu fiable",
+      "assessable": "prédiction fiable",
+      "not_assessable": "prédiction peu fiable"
+    },
+    "reason": {
+      "PHYS_LIGHTER_THAN_PAPER": "Plus claire que le papier (L* {{l}} > blanc {{white_l}})",
+      "PHYS_WHITE_SUSPECT": "Lecture du blanc papier suspecte : {{n_lighter}} patchs plus clairs que lui",
+      "PHYS_CHROMA": "Chroma physiquement improbable ({{chroma}})",
+      "PHYS_NEGATIVE_XYZ": "Valeurs XYZ négatives",
+      "DUP_DISCORDANT": "Lectures répétées discordantes : {{dist_to_median}} ΔE00 de la médiane des {{n}} lectures du même patch",
+      "DUP_PAIR_DIVERGENT": "Les 2 lectures de ce patch divergent de {{disagreement}} ΔE00",
+      "DUP_TWIN_DIVERGES": "Son doublon s'écarte des voisins ; cette lecture-ci est cohérente",
+      "DUP_CONFIRMED": "Confirmée par {{n}} lectures concordantes du même patch",
+      "MODEL_RESIDUAL": "Incohérente avec les patchs voisins : écart {{residual}} ΔE00 (score {{score}})",
+      "MODEL_EXTRAPOLATION": "Prédiction peu fiable : extrapolation (bord ou coin du cube)",
+      "MODEL_INCOHERENT_NEIGHBORHOOD": "Prédiction peu fiable : voisins incohérents entre eux ou réponse très courbe",
+      "MODEL_SPARSE": "Prédiction peu fiable : voisinage trop clairsemé",
+      "HIGH_DEVIATION_UNRELIABLE_PREDICTION": "Écart élevé ({{residual}} ΔE00) mais prédiction peu fiable : remesurer plutôt que conclure",
+      "MONOTONIC_INVERSION": "Inversion de luminance : plus sombre que des patchs plus encrés ({{n_inversions}})"
+    },
+    "finding": {
+      "SET_INCOHERENT": "Jeu globalement incohérent : {{pct}} % des patchs ont un voisinage incohérent. Vérifiez la charte (décalage, mauvais fichier) avant d'examiner les patchs un par un.",
+      "ZONE_INCOHERENT": "Zone incohérente : {{n}} patchs autour de RGB ({{rgb}}). Remesurer la zone est plus sûr que juger chaque patch.",
+      "SET_INCOHERENT_LOW_DENSITY": "Voisinages souvent incohérents ({{pct}} % des patchs) sur une charte peu dense : cela peut venir de la faible densité plutôt que d'une erreur d'attribution. Le contrôle est peu concluant sur cette charte.",
+      "LOW_DENSITY": "Charte peu dense ({{n}} patchs) : la sensibilité du contrôle est réduite."
+    },
+    "warning": {
+      "LAB_COLUMNS_INCONSISTENT_WITH_XYZ": "Les colonnes Lab du fichier ne correspondent pas à ses XYZ : le contrôle utilise les XYZ (ce que lit colprof).",
+      "NO_XYZ_LAB_COLUMNS_USED": "Pas de XYZ dans le fichier : contrôle effectué sur les colonnes Lab.",
+      "XYZ_SCALE_0_1_RESCALED": "XYZ fournis sur l'échelle 0–1 : remis à l'échelle 0–100 pour le contrôle.",
+      "NUMBER_OF_SETS_MISMATCH": "Le nombre de patchs annoncé dans le fichier ne correspond pas aux lignes présentes.",
+      "MERGED_FILE_ANALYSED": "Fichier fusionnant plusieurs sources analysé : les doublons viennent d'autres scans.",
+      "IDENTICAL_DUPLICATE_ROWS": "Lignes de mesure strictement identiques : elles ne sont pas comptées comme des lectures indépendantes."
+    },
+    "table": {
+      "status": "Contrôle",
+      "swatch": "Aperçu ≈",
+      "swatch_title": "Aperçu approximatif à l'écran (sRGB) : mesure | prédiction. Non fidèle hors gamut sRGB ; les valeurs numériques font foi.",
+      "swatch_cell": "≈ sRGB — mesure Lab {{measured}} | prédiction Lab {{predicted}}",
+      "out_of_srgb": "couleur hors sRGB : aperçu approximatif",
+      "device_swatch_title": "Valeur RGB envoyée à l'imprimante (pas la couleur mesurée)",
+      "de00": "ΔE pred.",
+      "de00_title": "ΔE00 entre la mesure et la prédiction faite à partir des autres patchs",
+      "position": "Position",
+      "reason": "Motif",
+      "reliability": "Prédiction",
+      "reliability_title": "Fiabilité de la prédiction (pas de la mesure)"
+    },
+    "sort": {
+      "suspicion": "Par suspicion",
+      "natural": "Ordre des patchs"
+    },
+    "filter": {
+      "all": "Toutes ({{n}})",
+      "flagged": "Signalées ({{n}})",
+      "not_assessable": "Non évaluables ({{n}})",
+      "all_title": "Toutes les mesures",
+      "flagged_title": "Fortement suspectes, à vérifier ET non évaluables",
+      "not_assessable_title": "Mesures que le contrôle ne peut pas juger",
+      "empty": "Aucune mesure dans ce filtre."
+    },
+    "detail": {
+      "lab_measured": "Lab mesuré",
+      "lab_predicted": "Lab prédit",
+      "de00": "ΔE00 mesure–prédiction",
+      "score": "Score",
+      "position": "Position dans le cube RGB",
+      "neighbors": "Voisinage",
+      "neighbors_value": "{{n}} voisins · modèle {{model}} · voisins effectifs {{neff}}",
+      "reliability": "Fiabilité",
+      "duplicates": "Lectures répétées",
+      "duplicates_value": "{{n}} lectures ({{ids}}) · désaccord max {{dis}} ΔE00",
+      "identical_values": "valeurs strictement identiques",
+      "reasons": "Motifs",
+      "no_reason": "aucun"
+    },
+    "badge": {
+      "attention_one": "{{count}} à examiner",
+      "attention_other": "{{count}} à examiner",
+      "limits_one": "{{count}} non évaluable",
+      "limits_other": "{{count}} non évaluables",
+      "finding": "incohérence d'ensemble",
+      "limited_check": "contrôle limité",
+      "title": "Contrôle de cohérence des mesures de ce scan (consultatif). Cliquer pour voir le détail."
+    }
   }
 }

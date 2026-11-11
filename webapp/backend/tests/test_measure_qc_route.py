@@ -4,6 +4,7 @@ No printer: the Z9 dependency, the SOL measure entry point and outgoing sockets 
 replaced by fakes that fail on ANY use while the QC route runs."""
 import hashlib
 import json
+import logging
 import socket
 import threading
 
@@ -124,6 +125,26 @@ def test_unanalysable_scan_returns_coded_422(client, no_printer, text, code):
     r = client.get(f"/api/charts/{cid}/scans/{TI3}/qc")
     assert r.status_code == 422 and r.json()["detail"]["code"] == code
     assert not list((meas / ".qc").glob("*.json"))                     # nothing cached on failure
+
+
+def test_unreadable_measurements_give_a_coded_422_and_the_cause_is_logged(client, no_printer, caplog):
+    """/patches on a damaged ti3: a stable code the UI localizes (never the raw text on screen),
+    while the raw technical cause stays in the logs (freeglaz.log). The QC refusal is logged too."""
+    text = "CTI3\nBEGIN_DATA_FORMAT\nSAMPLE_ID RGB_R RGB_G RGB_B XYZ_X XYZ_Y XYZ_Z\nEND_DATA_FORMAT\nBEGIN_DATA\n1 0 0 0 1 1 1\n"
+    cid, meas = _chart_with_scan(client, text=text)
+    with caplog.at_level(logging.INFO, logger="webapp.backend.routes.charts"):
+        r = client.get(f"/api/charts/{cid}/scans/{TI3}/patches")
+        q = client.get(f"/api/charts/{cid}/scans/{TI3}/qc")
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert detail["code"] == "UNREADABLE" and "truncated" in detail["message"]
+    recs = [x for x in caplog.records if x.name == "webapp.backend.routes.charts"]
+    warn = [x.getMessage() for x in recs if x.levelno == logging.WARNING]
+    assert any(cid in m and TI3 in m and "truncated" in m for m in warn), warn
+    assert q.status_code == 422 and q.json()["detail"]["code"] == "TRUNCATED"
+    assert any("TRUNCATED" in x.getMessage() and x.levelno == logging.INFO for x in recs)
+    assert client.get(f"/api/charts/{cid}/scans/nope.ti3/patches").status_code == 404     # unchanged
+    assert (meas / TI3).read_text() == text                                                # read-only
 
 
 def test_deleting_a_scan_purges_its_qc_cache(client, no_printer):

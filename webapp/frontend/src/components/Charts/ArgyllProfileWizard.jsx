@@ -17,6 +17,9 @@ import AllPatchesModal from '../Profiles/AllPatchesModal.jsx';
 import ScanDeltaCard from './ScanDeltaCard.jsx';   // extracted (shared wizard + Measurements tab)
 import ChartCard from './ChartCard.jsx';           // extracted chart-card (shared)
 import ScanKeepList from './ScanKeepList.jsx';     // keep/exclude toggle (shared)
+import MeasurementsModal from './MeasurementsModal.jsx';   // single-scan view + intrinsic QC (shared with Measurements)
+import MeasureQcSummary from './MeasureQcSummary.jsx';     // QC summary (shared with MeasurementsModal)
+import { qcPanelState } from '../../lib/measureQc.js';
 
 /**
  * ArgyllProfileWizard — custom profiling (Argyll) as an ACTION ON THE SLOT, mirroring
@@ -151,6 +154,10 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
   const [chartDetail, setChartDetail] = useState(null);  // scans+kept (keep/exclude toggle)
   const [concordanceDelta, setConcordanceDelta] = useState(null);  // report opened from the chart view
   const [deltaAllOpen, setDeltaAllOpen] = useState(false);
+  // Intrinsic measurement QC of the scan JUST acquired (advisory, separate from the acquisition:
+  // its failure never turns a successful scan into a failed one).
+  const [qcScan, setQcScan] = useState({ key: null, loading: false, report: null, error: null });
+  const [measuresOpen, setMeasuresOpen] = useState(false);
 
   // reset on opening
   useEffect(() => {
@@ -164,6 +171,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
     setError(null); setBusy(false); setSelected(directScan ? initialChart : null); setResult(null);
     setScanInfo(null); setProfInfo(null); setPrintInfo(null); setConfirmPrint(false);
     setScanProg(null); setCooldownSec(0); setNScans(0);
+    setQcScan({ key: null, loading: false, report: null, error: null }); setMeasuresOpen(false);
     setProfileBase('average'); setChartMovedAsk(false);
     setCChoice('zero');                 // reset precond default (Start from scratch) each open
     formatDefaultedRef.current = false; // re-arm the format default (applied once formats load)
@@ -381,6 +389,16 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
     }, 1000);
   }
 
+  // Explicit QC of the NEW scan (cached server-side → Measurements shows it without recomputing).
+  function _runScanQc(chartId, ti3) {
+    if (!chartId || !ti3) return;
+    const key = `${chartId}/${ti3}`;
+    setQcScan({ key, loading: true, report: null, error: null });
+    api.getScanMeasureQC(chartId, ti3)
+      .then((r) => setQcScan((cur) => (cur.key === key ? { key, loading: false, report: r.report, error: null } : cur)))
+      .catch((e) => setQcScan((cur) => (cur.key === key ? { key, loading: false, report: null, error: e } : cur)));
+  }
+
   // Poll the background job until done/error (never block the UI; NO kill on the UI side).
   function _pollScan(chartId) {
     if (scanPollRef.current) clearInterval(scanPollRef.current);
@@ -394,6 +412,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
           clearInterval(scanPollRef.current);
           setScanInfo({ ti3: job.ti3, n_patches: job.n_patches, bands: job.bands });
           setPhase('scanned');
+          _runScanQc(chartId, job.ti3);                 // advisory, after the scan is recorded
         } else if (job.state === 'error') {
           clearInterval(scanPollRef.current);
           // EXPECTED failure path = CALM message (not anxiety-inducing red). Retry COOLDOWN-GATED.
@@ -675,6 +694,17 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
             <div className="space-y-4">
               <ScannedView t={t} scanInfo={scanInfo}/>
 
+              {/* Intrinsic QC of THIS scan (advisory). Same presentation as Measurements. */}
+              {scanInfo?.ti3 && (
+                <div className="space-y-2">
+                  <MeasureQcSummary compact state={qcPanelState(qcScan)}/>
+                  <button type="button" onClick={() => setMeasuresOpen(true)}
+                          className="text-xs2 font-semibold px-3 py-1.5 rounded-md border border-border-soft text-text-strong hover:bg-sunken">
+                    {t('measure_qc.open_measures')}
+                  </button>
+                </div>
+              )}
+
               {/* Scans + KEEP/EXCLUDE toggle (software mutation; exclude a bad scan before averaging) */}
               {chartDetail && chartDetail.scans.length >= 2 && (
                 <div className="space-y-1">
@@ -927,6 +957,11 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
             <ScanDeltaCard delta={concordanceDelta} onSeeAll={() => setDeltaAllOpen(true)}/>
           </div>
         </div>, document.body)}
+
+      {/* Single-scan measurements + intrinsic QC (the SAME component as the Measurements tab) */}
+      {measuresOpen && scanInfo?.ti3 && selected?.chart_id && (
+        <MeasurementsModal open chartId={selected.chart_id} ti3={scanInfo.ti3} onClose={() => setMeasuresOpen(false)}/>
+      )}
 
       {/* Complete data of the inter-scan comparison (reuses the generalized AllPatchesModal) */}
       {deltaAllOpen && activeDelta && (

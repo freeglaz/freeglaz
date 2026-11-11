@@ -1321,6 +1321,13 @@ export async function getScanPatches(chartId, ti3) {
   return http(`/api/charts/${encodeURIComponent(chartId)}/scans/${encodeURIComponent(ti3)}/patches`,
               { method: 'GET' });
 }
+/** INTRINSIC measurement QC of ONE raw scan (advisory, read-only, cached server-side) →
+ *  {chart_id, ti3, ti3_sha256, cached, report}. 422 = ti3 not analysable (detail {code, message}),
+ *  404 = unknown scan. Never mutates anything (no exclusion, no profile, no Z9). */
+export async function getScanMeasureQC(chartId, ti3) {
+  return http(`/api/charts/${encodeURIComponent(chartId)}/scans/${encodeURIComponent(ti3)}/qc`,
+              { method: 'GET' });
+}
 /** PERMANENTLY deletes a measurement set (ti3 + cgats) — destructive, irreversible (vs
  *  "exclude" reversible). UI confirmation. Local, no Z9. */
 export async function deleteScan(chartId, ti3) {

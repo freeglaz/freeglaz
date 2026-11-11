@@ -15,9 +15,10 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """Inter-scan ΔE mini-report — safeguard BEFORE averaging ("we don't average
-blindly"). READ-ONLY: reads the ``kept`` ti3 of a session, compares the
-``LAB_*`` columns patch by patch (ΔE2000), and distinguishes the two causes of an inter-scan
-gap:
+blindly"). READ-ONLY: reads the ``kept`` ti3 of a session, compares the Lab of each
+patch (ΔE2000; Lab recomputed from XYZ with the Argyll D50 white when XYZ exist — the
+stored ``LAB_*`` columns are only checked, see ``lib.z9_client.colorimetry``), and
+distinguishes the two causes of an inter-scan gap:
   - **legitimate drying**: a FAMILY of warm/saturated patches moderately shifted (~1.3);
   - **contamination / error**: an ISOLATED PEAK on 1-2 patches (dust, insect, registration).
 
@@ -31,76 +32,48 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+from lib.z9_client import colorimetry
 from lib.z9_client.multipass import parse_ti3
 
 
 def ciede2000(lab1, lab2) -> float:
-    """ΔE2000 (Sharma, Wu, Dalal formulation). ``lab`` = (L*, a*, b*)."""
-    L1, a1, b1 = lab1
-    L2, a2, b2 = lab2
-    C1 = math.hypot(a1, b1)
-    C2 = math.hypot(a2, b2)
-    avg_C = (C1 + C2) / 2.0
-    G = 0.5 * (1 - math.sqrt(avg_C ** 7 / (avg_C ** 7 + 25 ** 7))) if avg_C > 0 else 0.0
-    a1p, a2p = a1 * (1 + G), a2 * (1 + G)
-    C1p, C2p = math.hypot(a1p, b1), math.hypot(a2p, b2)
-    h1p = math.degrees(math.atan2(b1, a1p)) % 360
-    h2p = math.degrees(math.atan2(b2, a2p)) % 360
-
-    dLp = L2 - L1
-    dCp = C2p - C1p
-    if C1p * C2p == 0:
-        dhp = 0.0
-    elif abs(h2p - h1p) <= 180:
-        dhp = h2p - h1p
-    elif h2p - h1p > 180:
-        dhp = h2p - h1p - 360
-    else:
-        dhp = h2p - h1p + 360
-    dHp = 2 * math.sqrt(C1p * C2p) * math.sin(math.radians(dhp) / 2.0)
-
-    avg_Lp = (L1 + L2) / 2.0
-    avg_Cp = (C1p + C2p) / 2.0
-    if C1p * C2p == 0:
-        avg_hp = h1p + h2p
-    elif abs(h1p - h2p) <= 180:
-        avg_hp = (h1p + h2p) / 2.0
-    elif h1p + h2p < 360:
-        avg_hp = (h1p + h2p + 360) / 2.0
-    else:
-        avg_hp = (h1p + h2p - 360) / 2.0
-
-    T = (1 - 0.17 * math.cos(math.radians(avg_hp - 30))
-         + 0.24 * math.cos(math.radians(2 * avg_hp))
-         + 0.32 * math.cos(math.radians(3 * avg_hp + 6))
-         - 0.20 * math.cos(math.radians(4 * avg_hp - 63)))
-    d_ro = 30 * math.exp(-(((avg_hp - 275) / 25) ** 2))
-    Rc = 2 * math.sqrt(avg_Cp ** 7 / (avg_Cp ** 7 + 25 ** 7)) if avg_Cp > 0 else 0.0
-    Sl = 1 + (0.015 * (avg_Lp - 50) ** 2) / math.sqrt(20 + (avg_Lp - 50) ** 2)
-    Sc = 1 + 0.045 * avg_Cp
-    Sh = 1 + 0.015 * avg_Cp * T
-    Rt = -math.sin(math.radians(2 * d_ro)) * Rc
-    return math.sqrt((dLp / Sl) ** 2 + (dCp / Sc) ** 2 + (dHp / Sh) ** 2
-                     + Rt * (dCp / Sc) * (dHp / Sh))
+    """ΔE2000 (Sharma, Wu, Dalal formulation). ``lab`` = (L*, a*, b*).
+    Delegates to the single colorimetric reference ``lib.z9_client.colorimetry``."""
+    return colorimetry.ciede2000(lab1, lab2)
 
 
-def _read_lab_rgb(ti3_path: Path) -> dict:
-    """{sample_id: {'rgb': [R,G,B]|None, 'lab': (L,a,b)}} from a ti3 (native columns)."""
-    cols, fmt, rows = parse_ti3(ti3_path.read_text(encoding="ascii", errors="replace"))
+def read_scan(ti3_path: Path) -> tuple[dict, dict]:
+    """({sample_id: {'rgb': [R,G,B], 'lab': (L,a,b)}}, lab_integrity) from a ti3.
+
+    Lab is recomputed from XYZ (Argyll D50, what colprof reads) when the XYZ
+    columns exist; the stored LAB_* columns are only CHECKED (``lab_integrity``
+    reports the max discrepancy). Files without XYZ fall back to LAB_*
+    (``lab_source = "lab_columns"``). Read-only — the ti3 is never modified."""
+    try:
+        header, fmt, rows = parse_ti3(ti3_path.read_text(encoding="ascii", errors="replace"))
+    except IndexError:
+        raise ValueError(f"truncated ti3 (no END_DATA_FORMAT/END_DATA): {ti3_path.name}") from None
     idx = {name: i for i, name in enumerate(fmt)}
-    for n in ("SAMPLE_ID", "LAB_L", "LAB_A", "LAB_B"):
-        if n not in idx:
-            raise ValueError(f"colonne {n} absente du ti3 {ti3_path.name}")
+    if "SAMPLE_ID" not in idx:
+        raise ValueError(f"colonne SAMPLE_ID absente du ti3 {ti3_path.name}")
+    try:
+        labs, info = colorimetry.resolve_ti3_lab(header, fmt, rows)
+    except ValueError as e:
+        raise ValueError(f"{ti3_path.name}: {e}") from None
     has_rgb = all(c in idx for c in ("RGB_R", "RGB_G", "RGB_B"))
     out = {}
-    for r in rows:
+    for r, lab in zip(rows, labs):
         sid = r[idx["SAMPLE_ID"]]
-        lab = (float(r[idx["LAB_L"]]), float(r[idx["LAB_A"]]), float(r[idx["LAB_B"]]))
         # device RGB of the ti3 = 0-100 → 0-255 for the swatch/display (compat AllPatchesModal)
         rgb = ([round(float(r[idx[c]]) / 100.0 * 255) for c in ("RGB_R", "RGB_G", "RGB_B")]
                if has_rgb else [0, 0, 0])
-        out[sid] = {"rgb": rgb, "lab": lab}
-    return out
+        out[sid] = {"rgb": rgb, "lab": tuple(float(x) for x in lab)}
+    return out, info
+
+
+def _read_lab_rgb(ti3_path: Path) -> dict:
+    """{sample_id: {'rgb': [R,G,B]|None, 'lab': (L,a,b)}} from a ti3 (see ``read_scan``)."""
+    return read_scan(ti3_path)[0]
 
 
 def _percentile(sorted_vals: list[float], p: float) -> float:
@@ -168,7 +141,9 @@ def compute_scan_qc(ti3_paths: list[Path], rejected: dict[str, set[str]] | None 
         raise ValueError("au moins 2 scans inclus requis pour la vue QC")
     rejected = rejected or {}
     names = [p.name for p in ti3_paths]
-    scans = [_read_lab_rgb(p) for p in ti3_paths]
+    read = [read_scan(p) for p in ti3_paths]
+    scans = [r[0] for r in read]
+    lab_integrity = {n: r[1] for n, r in zip(names, read)}
     common = [sid for sid in scans[0] if all(sid in s for s in scans[1:])]
     if not common:
         raise ValueError("aucun patch commun entre les scans (SAMPLE_ID disjoints)")
@@ -223,6 +198,7 @@ def compute_scan_qc(ti3_paths: list[Path], rejected: dict[str, set[str]] | None 
             "worst_patch_id": worst,
         },
         "patches": patches,
+        "lab_integrity": lab_integrity,
     }
 
 
@@ -232,7 +208,9 @@ def compute_scan_delta(ti3_paths: list[Path]) -> dict:
     READ-ONLY (touches no file)."""
     if len(ti3_paths) < 2:
         raise ValueError("au moins 2 scans requis pour comparer")
-    scans = [_read_lab_rgb(p) for p in ti3_paths]
+    read = [read_scan(p) for p in ti3_paths]
+    scans = [r[0] for r in read]
+    lab_integrity = {p.name: r[1] for p, r in zip(ti3_paths, read)}
     common = [sid for sid in scans[0] if all(sid in s for s in scans[1:])]
     if not common:
         raise ValueError("aucun patch commun entre les scans (SAMPLE_ID disjoints)")
@@ -274,4 +252,5 @@ def compute_scan_delta(ti3_paths: list[Path]) -> dict:
             "isolated_outlier": isolated,
         },
         "patches": patches,
+        "lab_integrity": lab_integrity,
     }

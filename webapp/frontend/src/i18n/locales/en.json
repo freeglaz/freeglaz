@@ -1810,8 +1810,6 @@
       "error": "Technical error."
     },
     "identical_files": "The two ICC files are identical.",
-    "focus_localized": "Reading {{label}} (excluded in {{side}}) mainly changes its region: ΔE00 {{at}} at the patch, up to {{nearMax}} over {{nearN}} neighbouring points; elsewhere p95 {{farP95}}, max {{farMax}}.",
-    "focus_diffuse": "Reading {{label}} (excluded in {{side}}): ΔE00 {{at}} at the patch; its {{nearN}} neighbours change up to {{nearMax}}, the rest up to {{farMax}} (p95 {{farP95}}): not a concentrated effect.",
     "col": {
       "intent": "Intent",
       "set": "Points",
@@ -1839,6 +1837,8 @@
     },
     "limits": "Differences between two ICC transforms, computed offline (ArgyllCMS xicclu) on the measured patches ({{measured}}) and a {{grid}}³ control grid. This is not a new measurement: the comparison does not say which profile prints better. No profile is installed or rebuilt.",
     "perceptual_same_both": "In both profiles, the perceptual table (A2B0) is byte-identical to the colorimetric table (A2B1): the perceptual rows therefore repeat the relative ones.",
-    "perceptual_same_one": "In profile {{side}}, the perceptual table (A2B0) is byte-identical to the colorimetric table (A2B1); the other profile has its own perceptual table."
+    "perceptual_same_one": "In profile {{side}}, the perceptual table (A2B0) is byte-identical to the colorimetric table (A2B1); the other profile has its own perceptual table.",
+    "focus_concentrated": "Reading {{label}} (excluded in {{side}}): ΔE00 {{at}} at the patch, up to {{nearMax}} over {{nearN}} neighbouring points (within {{radius}}/255 in RGB); elsewhere at most {{farMax}} (p95 {{farP95}}). The difference is concentrated around this patch.",
+    "focus_descriptive": "Reading {{label}} (excluded in {{side}}): ΔE00 {{at}} at the patch, up to {{nearMax}} over {{nearN}} neighbouring points (within {{radius}}/255 in RGB); elsewhere at most {{farMax}} (p95 {{farP95}})."
   }
 }

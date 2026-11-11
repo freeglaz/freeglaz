@@ -1810,8 +1810,6 @@
       "error": "Erreur technique."
     },
     "identical_files": "Les deux fichiers ICC sont identiques.",
-    "focus_localized": "La lecture {{label}} (exclue dans {{side}}) modifie principalement sa région : ΔE00 {{at}} au patch, jusqu'à {{nearMax}} sur {{nearN}} points voisins ; ailleurs p95 {{farP95}}, max {{farMax}}.",
-    "focus_diffuse": "La lecture {{label}} (exclue dans {{side}}) : ΔE00 {{at}} au patch ; ses {{nearN}} voisins changent jusqu'à {{nearMax}}, le reste jusqu'à {{farMax}} (p95 {{farP95}}) : effet non concentré.",
     "col": {
       "intent": "Intention",
       "set": "Points",
@@ -1839,6 +1837,8 @@
     },
     "limits": "Écarts entre deux transformations ICC, calculés hors ligne (ArgyllCMS xicclu) sur les patchs mesurés ({{measured}}) et une grille de contrôle {{grid}}³. Ce n'est pas une nouvelle mesure : la comparaison ne dit pas quel profil imprime le mieux. Aucun profil n'est installé ni reconstruit.",
     "perceptual_same_both": "Dans les deux profils, la table perceptuelle (A2B0) est identique octet pour octet à la table colorimétrique (A2B1) : les lignes perceptuelles répètent donc les lignes relatives.",
-    "perceptual_same_one": "Dans le profil {{side}}, la table perceptuelle (A2B0) est identique octet pour octet à la table colorimétrique (A2B1) ; l'autre profil a une table perceptuelle propre."
+    "perceptual_same_one": "Dans le profil {{side}}, la table perceptuelle (A2B0) est identique octet pour octet à la table colorimétrique (A2B1) ; l'autre profil a une table perceptuelle propre.",
+    "focus_concentrated": "Lecture {{label}} (exclue dans {{side}}) : ΔE00 {{at}} au patch, jusqu'à {{nearMax}} sur {{nearN}} points voisins (à moins de {{radius}}/255 en RGB) ; ailleurs au plus {{farMax}} (p95 {{farP95}}). L'écart est concentré autour de ce patch.",
+    "focus_descriptive": "Lecture {{label}} (exclue dans {{side}}) : ΔE00 {{at}} au patch, jusqu'à {{nearMax}} sur {{nearN}} points voisins (à moins de {{radius}}/255 en RGB) ; ailleurs au plus {{farMax}} (p95 {{farP95}})."
   }
 }

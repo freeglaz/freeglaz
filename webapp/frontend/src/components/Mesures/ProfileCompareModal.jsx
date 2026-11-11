@@ -38,8 +38,8 @@ export default function ProfileCompareModal({ chartId, a, b, onClose }) {
             <>
               {d.identical_files && <div className="text-text-strong">{t('profile_compare.identical_files')}</div>}
               {(d.focus || []).map((f, i) => {
-                const ff = focusFinding(f);
-                return <div key={i} className={`rounded-md border px-3 py-2 ${ff.localized ? 'border-accent/30 bg-accent/5' : 'border-border-soft bg-sunken/50'}`} data-focus-localized={ff.localized}>{t(ff.key, ff.params)}</div>;
+                const ff = focusFinding(f, d.method?.focus_radius);
+                return <div key={i} className={`rounded-md border px-3 py-2 ${ff.concentrated ? 'border-accent/30 bg-accent/5' : 'border-border-soft bg-sunken/50'}`} data-focus-concentrated={ff.concentrated}>{t(ff.key, ff.params)}</div>;
               })}
               <table className="table w-full" data-compare-stats>
                 <thead><tr className="text-text-muted">

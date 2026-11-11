@@ -28,17 +28,26 @@ export function topColours(result, n = 8) {
   return [...best.values()].sort((a, b) => b.de00 - a.de00).slice(0, n);
 }
 
-/** Focus point (reading excluded in one version only) → {key, params}: "localized" when its
- *  neighbourhood moves clearly more than the rest (max near ≥ 3 × p95 elsewhere and ≥ 0.5 ΔE00). */
-export function focusFinding(f) {
+/** Focus point (reading excluded in one version only) → {key, params}. Always DESCRIPTIVE (ΔE00 at
+ *  the patch, max among the neighbours within the radius, max and p95 elsewhere). It adds "the
+ *  difference is concentrated around this patch" only when the largest change elsewhere is at most
+ *  a third of the largest change near the patch — literally true then. Phase 4E bench (464- and
+ *  2000-patch charts, interior/face/edge/corner, strong and moderate errors, sane readings
+ *  excluded; 40 comparisons): 40/40 meet it at radii 0.10–0.20, smallest ratio 5.4. No case was
+ *  genuinely spread, so no "not concentrated" conclusion is ever drawn (the 4D rule called 4 of
+ *  the 8 sane-reading cases "not concentrated" only because they were small). */
+export const CONCENTRATION_RATIO = 3;
+export function focusFinding(f, radius) {
   const near = f?.near || {};
   const far = f?.elsewhere || {};
-  const localized = near.max != null && far.p95 != null && near.max >= 0.5 && near.max >= 3 * Math.max(far.p95, 0.01);
+  const concentrated = (near.n ?? 0) > 0 && near.max != null && far.max != null && near.max > 0
+    && near.max >= CONCENTRATION_RATIO * far.max;
   return {
-    key: localized ? 'profile_compare.focus_localized' : 'profile_compare.focus_diffuse',
+    key: concentrated ? 'profile_compare.focus_concentrated' : 'profile_compare.focus_descriptive',
     params: { label: f?.label, side: f?.excluded_in === 'a' ? 'A' : 'B', at: _f(f?.de00_at_point), nearN: near.n ?? 0,
-              nearMax: _f(near.max), farP95: _f(far.p95), farMax: _f(far.max) },
-    localized,
+              nearMax: _f(near.max), farP95: _f(far.p95), farMax: _f(far.max),
+              radius: typeof radius === 'number' ? Math.round(radius * 255) : '—' },
+    concentrated,
   };
 }
 

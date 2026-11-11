@@ -186,7 +186,8 @@ export default function QCTableModal({ open, chartId, title, onClose, onChanged 
         {dialog && (
           <ExclusionDialog key={`${dialog.ti3}/${dialog.sid}`} chartId={chartId} ti3={dialog.ti3} sid={dialog.sid} rgb={dialog.rgb}
                            onClose={() => setDialog(null)}
-                           onDone={() => { setDialog(null); setErr(null); load(); onChanged?.(); }}/>
+                           onSettled={() => onChanged?.()}
+                           onDone={() => { setDialog(null); setErr(null); load(); }}/>
         )}
       </div>
     </div>,

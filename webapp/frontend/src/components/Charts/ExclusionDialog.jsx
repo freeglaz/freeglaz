@@ -16,7 +16,7 @@ const LEVEL_STYLE = {
   refused: 'border-danger/40 bg-danger/10',
 };
 
-export default function ExclusionDialog({ chartId, ti3, sid, rgb, extraChartIds = [], onClose, onDone }) {
+export default function ExclusionDialog({ chartId, ti3, sid, rgb, extraChartIds = [], onClose, onDone, onSettled }) {
   const { t } = useTranslation();
   const [phase, setPhase] = useState('loading');      // loading | ready | refused | submitting | error
   const [view, setView] = useState(null);
@@ -24,6 +24,7 @@ export default function ExclusionDialog({ chartId, ti3, sid, rgb, extraChartIds 
   const [kind, setKind] = useState('');
   const [text, setText] = useState('');
   const alive = useRef(true);
+  const submitting = useRef(false);                   // synchronous guard: two clicks in one task send ONE write
 
   useEffect(() => {
     alive.current = true;
@@ -38,12 +39,17 @@ export default function ExclusionDialog({ chartId, ti3, sid, rgb, extraChartIds 
     return () => { alive.current = false; };
   }, [chartId, ti3, sid]);   // eslint-disable-line react-hooks/exhaustive-deps
 
+  // onSettled (parent-level refresh) runs once the SERVER has answered, even if this dialog — or
+  // the window that opened it — was closed meanwhile: the exclusion exists, so whatever shows the
+  // build inputs must learn it (phase 4E: closing during the request left the preview stale).
   const confirm = () => {
-    if (phase !== 'ready') return;                    // double click / stale state: ignored
+    if (phase !== 'ready' || submitting.current) return;   // double click / stale state: ignored
+    submitting.current = true;
     setPhase('submitting');
     api.setReadingExclusion(chartId, ti3, sid, { reason: reasonPayload(kind, text), extra_chart_ids: extraChartIds })
-      .then((r) => { if (alive.current) onDone?.(r); })
+      .then((r) => { onSettled?.(r); if (alive.current) onDone?.(r); })
       .catch((e) => {
+        submitting.current = false;
         if (!alive.current) return;
         const c = classifyExclusionError(e);
         if (c.kind === 'refused') { setView(impactView(c.impact)); setPhase('refused'); }   // data changed meanwhile

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ScanLine, FileSearch, Search, X, ChevronRight, ChevronDown, Archive, Trash2, CheckCircle2 } from 'lucide-react';
 import * as api from '../../api/client.js';
@@ -79,6 +79,7 @@ export default function MesuresPage({ offline }) {
   const [previewNonce, setPreviewNonce] = useState(0);
   const [confirmKey, setConfirmKey] = useState(null);
   const [comparePair, setComparePair] = useState(null);   // {a, b} build ids being compared
+  const buildInFlight = useRef(false);
   // Build request of the current selection + its preview (recomputed on any change of settings,
   // sources, scan roles or exclusions — the stamp — so a confirmation never outlives its inputs).
   const nKeptBuild = (detail?.scans || []).filter((s) => s.kept).length;
@@ -195,7 +196,10 @@ export default function MesuresPage({ offline }) {
   // fingerprint. No silent fallback to legacy; inputs changed meanwhile → new preview, new
   // confirmation (never an automatic retry).
   const buildProfile = (onConflict = null, confirmed = false) => {
-    if (!selected || busy || !detail) return;
+    // buildInFlight: synchronous guard — two clicks handled in the same task both see busy=false
+    // (state not re-rendered yet) and sent two builds, the second refused 409 "already in
+    // progress" and shown as an error after the success (phase 4E).
+    if (!selected || busy || buildInFlight.current || !detail) return;
     if (preview.status !== 'ready' || preview.data?.would_be_refused) return;
     const summary = summarizePreview(preview.data);
     if (typeof onConflict !== 'string' && !confirmed && summary.needsConfirmation) {
@@ -207,6 +211,7 @@ export default function MesuresPage({ offline }) {
     // (string 'replace'/'keep_both'). Without this, the build button wired onClick={onBuild}
     // passes the click's SyntheticEvent (circular refs) → JSON.stringify(body) broke.
     if (typeof onConflict === 'string') body.on_conflict = onConflict;  // replay after pop-up choice
+    buildInFlight.current = true;
     setBusy(true); setError(null); setBuildResult(null);
     setConflict(null); setNameNotice(null); setBuildPhase('preparing');
     buildWithPreview(selected, body, preview.data, setBuildPhase)
@@ -220,7 +225,7 @@ export default function MesuresPage({ offline }) {
         else if (c.kind === 'name_invalid') setNameNotice(e.message);
         else setError(e?.message || t('mesures.rebuild_failed'));
       })
-      .finally(() => { setBusy(false); setBuildPhase(null); });
+      .finally(() => { buildInFlight.current = false; setBusy(false); setBuildPhase(null); });
   };
 
   // Re-attach: a build launched then reload → we recover the RUNNING job (no stuck button).

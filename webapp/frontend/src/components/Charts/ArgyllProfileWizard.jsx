@@ -152,7 +152,8 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
   const [clcWarn, setClcWarn] = useState(null);               // clc status to warn about (never|stale|pending) | null
   const scanPollRef = useRef(null);
   const cooldownRef = useRef(null);
-  const formatDefaultedRef = useRef(false);   // format default applied once per open (see effect)
+  const formatDefaultedRef = useRef(false);
+  const profileInFlight = useRef(false);   // format default applied once per open (see effect)
   const [scanDelta, setScanDelta] = useState(null);   // mini inter-scan ΔE report (scanned screen)
   const [chartDetail, setChartDetail] = useState(null);  // scans+kept (keep/exclude toggle)
   const [concordanceDelta, setConcordanceDelta] = useState(null);  // report opened from the chart view
@@ -488,12 +489,14 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
   // ─── Profile (local, colprof) ───
   // onConflict: null (collision → pop-up) | 'replace' | 'keep_both' (replay from the pop-up).
   async function doProfile(onConflict = null, confirmed = false) {
+    if (profileInFlight.current) return;                // synchronous double-click guard (phase 4E)
     if (preview.status !== 'ready' || preview.data?.would_be_refused) return;
     if (typeof onConflict !== 'string' && !confirmed && summarizePreview(preview.data).needsConfirmation) {
       setConfirmKey(preview.key); return;               // confirmation bound to THIS preview
     }
     setConfirmKey(null);
     const previewed = preview.data;
+    profileInFlight.current = true;
     setBusy(true); setError(null); setPhase('profiling');
     try {
       const body = { ...buildBody };
@@ -515,7 +518,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
       else setError(e.message);
       setPhase('scanned');
     }
-    finally { setBusy(false); }
+    finally { profileInFlight.current = false; setBusy(false); }
   }
 
   // ─── Validate (profcheck b) — local, forward A2B terminal ───

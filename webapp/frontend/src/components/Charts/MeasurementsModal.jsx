@@ -168,13 +168,15 @@ export default function MeasurementsModal({ open, chartId, ti3, onClose, onChang
     return () => { alive = false; };
   }, [key, chartId, ti3]);
 
-  const afterChange = () => { setVersion((v) => v + 1); onChanged?.(); };
+  // Local refresh only while open; the parent (build inputs, preview) is told on every server
+  // answer, open or not (phase 4E).
+  const afterChange = () => { if (openRef.current) setVersion((v) => v + 1); onChanged?.(); };
   const reinclude = (sid) => {
     if (pending.has(sid)) return;                      // double click: ignored
     setOpError(null);
     setPending((s) => new Set(s).add(sid));
     api.setReadingExclusion(chartId, ti3, sid, { excluded: false })
-      .then(() => { if (openRef.current) afterChange(); })
+      .then(() => afterChange())
       .catch((e) => { if (openRef.current) { setOpError(classifyExclusionError(e)); setVersion((v) => v + 1); } })
       .finally(() => { if (openRef.current) setPending((s) => { const n = new Set(s); n.delete(sid); return n; }); });
   };
@@ -342,7 +344,8 @@ export default function MeasurementsModal({ open, chartId, ti3, onClose, onChang
         {dialog && (
           <ExclusionDialog key={`${ti3}/${dialog.sid}`} chartId={chartId} ti3={ti3} sid={dialog.sid} rgb={dialog.rgb}
                            onClose={() => setDialog(null)}
-                           onDone={() => { setDialog(null); setOpError(null); afterChange(); }}/>
+                           onSettled={() => onChanged?.()}
+                           onDone={() => { setDialog(null); setOpError(null); setVersion((v) => v + 1); }}/>
         )}
         <div className="px-6 py-3 border-t border-border-soft flex justify-end">
           <button type="button" onClick={onClose}

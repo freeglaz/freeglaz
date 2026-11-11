@@ -311,3 +311,29 @@ def test_preview_explains_rule_change_and_strong_suspects(client, monkeypatch):
     assert p["current_inputs_fingerprint"] is None
     legacy = client.post(f"/api/charts/{cid}/profile/preview", json={}).json()
     assert legacy["newly_applied_vs_legacy"] == []
+
+
+def test_builds_history_route(client, monkeypatch):
+    cid, d = _chart(client, {"a.ti3": ti3_text(G5)})
+    (d / f"{cid}.icc").write_bytes(b"OLD PROFILE")
+    import os, time
+    old = time.time() - 86400
+    os.utime(d / f"{cid}.icc", (old, old))
+    _fake_colprof(monkeypatch)
+    fp = client.post(f"/api/charts/{cid}/profile/preview", json={"policy": "apply_all"}).json()["inputs_fingerprint"]
+    b1 = client.post(f"/api/charts/{cid}/profile", json={"policy": "apply_all", "expected_fingerprint": fp, "name": "h1"}).json()["build_id"]
+    excl(client, cid, "a.ti3", sid_of(G5, (50, 50, 50)))
+    fp = client.post(f"/api/charts/{cid}/profile/preview", json={"policy": "apply_all"}).json()["inputs_fingerprint"]
+    b2 = client.post(f"/api/charts/{cid}/profile", json={"policy": "apply_all", "expected_fingerprint": fp, "name": "h2"}).json()["build_id"]
+    h = client.get(f"/api/charts/{cid}/builds").json()
+    assert [b["build_id"] for b in h["builds"]][:2] == [b2, b1] and h["current_build_id"] == b2
+    assert h["publication"]["state"] == "ok"
+    new, prev, legacy = h["builds"]
+    assert new["current"] and not prev["current"] and new["n_excluded"] == 1 and new["n_holes"] == 1 and prev["n_excluded"] == 0
+    assert new["label"] == "h2" and new["base_effective"] == "last" and new["policy"] == "apply_all" and new["n_scans"] == 1
+    assert new["references"] and new["references"][0]["kind"] == "repo_z9"
+    assert legacy["kind"] == "preserved" and legacy["provenance"] == "unknown" and legacy["n_excluded"] is None   # nothing invented
+    m = client.get(f"/api/charts/{cid}/builds/{b2}/manifest").json()
+    assert m["build_id"] == b2 and m["plan"]["policy"] == "apply_all"
+    assert client.get(f"/api/charts/{cid}/builds/../../x/manifest").status_code == 404
+    assert client.get(f"/api/charts/{cid}/builds/20990101T000000Z-zzzzzz/manifest").status_code == 404

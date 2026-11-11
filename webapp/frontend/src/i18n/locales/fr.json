@@ -1756,6 +1756,43 @@
     "confirm_note": "Le profil actuel et toutes les versions précédentes sont conservés. Les exclusions restent réversibles.",
     "confirm": "Construire le profil",
     "inputs_changed": "Les mesures ou les choix ont changé depuis l'aperçu : l'aperçu a été recalculé, vérifiez-le puis confirmez à nouveau.",
-    "coverage_refused": "La construction a été refusée : un point structurant n'a plus de mesure. L'aperçu a été recalculé."
+    "coverage_refused": "La construction a été refusée : un point structurant n'a plus de mesure. L'aperçu a été recalculé.",
+    "selection_differs": "Vos choix actuels diffèrent aussi de ceux de la construction courante."
+  },
+  "profile_history": {
+    "title_one": "Historique du profil ({{count}} version)",
+    "title_other": "Historique du profil ({{count}} versions)",
+    "loading": "Chargement de l'historique…",
+    "error": "Historique indisponible.",
+    "publication": "État de publication : {{state}} (réparé à la prochaine construction).",
+    "empty": "Aucune version enregistrée.",
+    "select": "Sélectionner la version {{id}} pour la comparaison",
+    "preserved": "Profil antérieur",
+    "current": "courant",
+    "corrupt": "version altérée",
+    "provenance_unknown": "Profil antérieur — provenance inconnue (construit avant le suivi des versions).",
+    "provenance_partial": "Profil antérieur — provenance partielle (description d'origine conservée).",
+    "summary": "Base : {{base}} · {{scans}} scan(s) · {{extra}} charte(s) ajoutée(s) · {{profiles}} profil(s) source · {{excluded}} lecture(s) exclue(s) · {{holes}} patch(s) sans mesure",
+    "no_manifest": "manifeste indisponible",
+    "compare": "Comparer les deux versions sélectionnées",
+    "kept_note": "Toutes les versions sont conservées ; aucune suppression automatique.",
+    "state": {
+      "up_to_date": "Profil conforme à ses entrées",
+      "stale": "Entrées modifiées depuis la construction",
+      "missing_input": "Source utilisée indisponible",
+      "unknown": "Situation indéterminée",
+      "no_profile": "Aucun profil",
+      "up_to_date_title": "La même demande, refaite maintenant, utiliserait exactement les mêmes entrées.",
+      "stale_title": "Les mesures, exclusions ou sources ont changé depuis la construction : le profil n'est pas défectueux, mais une reconstruction donnerait un profil différent.",
+      "missing_input_title": "Un scan, une charte ou un profil source utilisé n'existe plus.",
+      "unknown_title": "Impossible de le déterminer avec certitude (profil sans manifeste fiable).",
+      "no_profile_title": "Aucun profil construit."
+    },
+    "toolchain": {
+      "changed": "Outil de profilage différent",
+      "unknown": "Version de l'outil incertaine",
+      "changed_title": "La version de colprof diffère de celle utilisée pour construire le profil.",
+      "unknown_title": "La version de colprof n'est pas connue d'un côté ou de l'autre."
+    }
   }
 }

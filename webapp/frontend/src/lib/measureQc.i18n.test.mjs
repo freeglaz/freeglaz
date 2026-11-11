@@ -36,10 +36,11 @@ console.log('Test 1 — i18n keys present in fr AND en');
   const files = ['components/Charts/MeasurementsModal.jsx', 'components/Charts/MeasureQcSummary.jsx',
                  'components/Charts/ExclusionDialog.jsx', 'components/Charts/QCTableModal.jsx', 'lib/exclusion.js',
                  'components/Charts/BuildPreviewSummary.jsx', 'components/Charts/BuildConfirmModal.jsx', 'lib/buildPreview.js',
+                 'components/Mesures/ProfileHistory.jsx', 'lib/profileHistory.js',
                  'components/Charts/ScanKeepList.jsx', 'components/Charts/ArgyllProfileWizard.jsx', 'lib/measureQc.js'];
   const literal = new Set();
   for (const f of files) {
-    for (const m of read(join(src, f)).matchAll(/['"`]((?:measure_qc|scan\.measures|exclusion|build_preview)\.[A-Za-z0-9_.]+)['"`]/g)) literal.add(m[1]);
+    for (const m of read(join(src, f)).matchAll(/['"`]((?:measure_qc|scan\.measures|exclusion|build_preview|profile_history)\.[A-Za-z0-9_.]+)['"`]/g)) literal.add(m[1]);
   }
   const dyn = [
     ...STATUSES.map((s) => `measure_qc.status.${s}`), ...STATUSES.map((s) => `measure_qc.status_title.${s}`),
@@ -61,6 +62,9 @@ console.log('Test 1 — i18n keys present in fr AND en');
     ...['not_used_by_base_last', 'scan_excluded', 'scan_not_found', 'legacy_last_ignores_rejections'].map((r) => `build_preview.inactive_reason.${r}`),
     'build_preview.base.last', 'build_preview.base.average', 'build_preview.inputs_changed', 'build_preview.coverage_refused',
     ...['excluded', 'inactive', 'holes', 'newly_applied', 'strong_included'].map((k) => `build_preview.${k}`),
+    ...['up_to_date', 'stale', 'missing_input', 'unknown', 'no_profile'].flatMap((k) => [`profile_history.state.${k}`, `profile_history.state.${k}_title`]),
+    ...['changed', 'unknown'].flatMap((k) => [`profile_history.toolchain.${k}`, `profile_history.toolchain.${k}_title`]),
+    'profile_history.title',
   ];
   // a literal that names a NAMESPACE is a prefix used to compose keys (each composed key is in `dyn`)
   for (const k of [...literal]) if (get(locales.fr, k) && typeof get(locales.fr, k) === 'object') literal.delete(k);

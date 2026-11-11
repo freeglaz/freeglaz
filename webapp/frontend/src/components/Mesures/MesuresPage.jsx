@@ -10,6 +10,7 @@ import ScanKeepList from '../Charts/ScanKeepList.jsx';
 import QCTableModal from '../Charts/QCTableModal.jsx';
 import ProfileBuildPanel from '../Charts/ProfileBuildPanel.jsx';
 import BuildConfirmModal from '../Charts/BuildConfirmModal.jsx';
+import ProfileHistory from './ProfileHistory.jsx';
 import { useBuildPreview, buildWithPreview } from '../../hooks/useBuildPreview.js';
 import { buildRequestBody, chartStateStamp, classifyBuildError, summarizePreview } from '../../lib/buildPreview.js';
 import MeasurementsModal from '../Charts/MeasurementsModal.jsx';
@@ -497,6 +498,11 @@ export default function MesuresPage({ offline }) {
                       </button>
                     )}
                   </div>
+                )}
+                {/* Status (v2) of the current profile + immutable version history (phase 4D) */}
+                {(prof?.built || prof?.status) && (
+                  <ProfileHistory chartId={selected} status={prof?.status}
+                    refreshKey={`${previewNonce}-${prof?.status?.build_id || ''}`}/>
                 )}
               </section>
 

@@ -1368,6 +1368,14 @@ export async function previewProfile(chartId, body) {
   return http(`/api/charts/${encodeURIComponent(chartId)}/profile/preview`,
               { method: 'POST', body: JSON.stringify(body || {}) });
 }
+/** History of the immutable profile versions of a chart (newest first) + publication state. */
+export async function listBuilds(chartId) {
+  return http(`/api/charts/${encodeURIComponent(chartId)}/builds`, { method: 'GET' });
+}
+/** The stored manifest of one version (read-only). */
+export async function getBuildManifest(chartId, buildId) {
+  return http(`/api/charts/${encodeURIComponent(chartId)}/builds/${encodeURIComponent(buildId)}/manifest`, { method: 'GET' });
+}
 /** State of the CURRENT/last profile build for this chart → {state, phase, result|error}. */
 export async function getProfileStatus(chartId) {
   return http(`/api/charts/${encodeURIComponent(chartId)}/profile/status`, { method: 'GET' });

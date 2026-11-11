@@ -1318,6 +1318,73 @@ def hashlib_sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _build_summary(chart_dir: Path, v: dict, current_id: Optional[str]) -> dict:
+    """One version of the history, from what is STORED (manifest + references): nothing is
+    recomputed or invented; a preserved profile keeps its unknown provenance."""
+    import json
+    from lib.z9_client import profile_versions
+    out = {"build_id": v["build_id"], "kind": v["kind"], "created_at": v.get("created_at"),
+           "current": v["build_id"] == current_id, "intact": v["intact"], "problem": v["problem"],
+           "icc_sha256": v["icc_sha256"], "manifest_available": v["manifest_sha256"] is not None,
+           "provenance": None, "label": None, "base_requested": None, "base_effective": None, "policy": None,
+           "n_scans": None, "n_extra_charts": None, "n_source_profiles": None, "n_excluded": None,
+           "n_holes": None, "colprof_flags": None, "references": []}
+    try:
+        m = profile_versions.read_version_manifest(chart_dir, v["build_id"])
+    except (OSError, ValueError):
+        return out
+    plan = m.get("plan") or {}
+    if m.get("kind") == "preserved":
+        out["provenance"] = m.get("provenance") or "unknown"
+    else:
+        out["provenance"] = "complete"
+    out["label"] = (m.get("result") or {}).get("label") or (m.get("request") or {}).get("name")
+    if plan:
+        scans = plan.get("current_scans", []) + plan.get("extra_scans", [])
+        out.update({"base_requested": plan.get("base_requested"), "base_effective": plan.get("base_effective"),
+                    "policy": plan.get("policy"), "n_scans": len(scans),
+                    "n_extra_charts": len({x["chart_id"] for x in plan.get("extra_scans", [])}),
+                    "n_source_profiles": len(plan.get("source_profiles", [])),
+                    "n_excluded": sum(len(x.get("rejections_applied", [])) for x in scans),
+                    "colprof_flags": plan.get("colprof_flags")})
+    cov = m.get("coverage") or {}
+    if "holes" in cov:
+        out["n_holes"] = len(cov["holes"])
+    try:
+        refs = json.loads((profile_versions.builds_dir(chart_dir) / v["build_id"] / profile_versions.REFERENCES_NAME)
+                          .read_text(encoding="utf-8")).get("references", [])
+        out["references"] = [{"kind": r.get("kind"), "filename": r.get("filename")} for r in refs]
+    except (OSError, ValueError):
+        pass
+    return out
+
+
+@router.get("/{chart_id}/builds")
+def list_builds(chart_id: str) -> dict:
+    """History of the profiles built for this chart (immutable versions, newest first) and the
+    publication state. READ-ONLY: exposes what is stored, never rebuilds, never deletes."""
+    from lib.z9_client import profile_versions
+    d = _chart_dir(chart_id)
+    rep = profile_versions.inspect(d, chart_id)
+    cur = rep["current_build_id"]
+    builds = [_build_summary(d, v, cur) for v in reversed(rep["versions"])]
+    return {"chart_id": chart_id, "current_build_id": cur, "pointer_build_id": rep["pointer_build_id"],
+            "publication": {"state": rep["state"], "problems": rep["problems"]}, "builds": builds}
+
+
+@router.get("/{chart_id}/builds/{build_id}/manifest")
+def get_build_manifest(chart_id: str, build_id: str) -> dict:
+    """The stored manifest of one version (read-only)."""
+    from lib.z9_client import profile_versions
+    d = _chart_dir(chart_id)
+    if build_id not in {v["build_id"] for v in profile_versions.list_versions(d)}:
+        raise HTTPException(404, detail={"error": "unknown_build", "message": f"unknown build: {build_id}"})
+    try:
+        return profile_versions.read_version_manifest(d, build_id)
+    except (OSError, ValueError) as e:
+        raise HTTPException(422, detail={"error": "unreadable_manifest", "message": str(e)})
+
+
 @router.get("/{chart_id}/profile/status")
 def profile_status(chart_id: str) -> dict:
     """State of the CURRENT/last build for THIS chart (background job) → re-attaches the front

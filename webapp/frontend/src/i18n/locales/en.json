@@ -1756,6 +1756,43 @@
     "confirm_note": "The current profile and every previous version are kept. Exclusions remain reversible.",
     "confirm": "Build the profile",
     "inputs_changed": "The measurements or the choices changed since the preview: the preview was recomputed, check it and confirm again.",
-    "coverage_refused": "The build was refused: a structural point has no measurement left. The preview was recomputed."
+    "coverage_refused": "The build was refused: a structural point has no measurement left. The preview was recomputed.",
+    "selection_differs": "Your current choices also differ from those of the current build."
+  },
+  "profile_history": {
+    "title_one": "Profile history ({{count}} version)",
+    "title_other": "Profile history ({{count}} versions)",
+    "loading": "Loading the history…",
+    "error": "History unavailable.",
+    "publication": "Publication state: {{state}} (repaired at the next build).",
+    "empty": "No version recorded.",
+    "select": "Select version {{id}} for the comparison",
+    "preserved": "Earlier profile",
+    "current": "current",
+    "corrupt": "altered version",
+    "provenance_unknown": "Earlier profile — unknown provenance (built before version tracking).",
+    "provenance_partial": "Earlier profile — partial provenance (original description kept).",
+    "summary": "Base: {{base}} · {{scans}} scan(s) · {{extra}} added chart(s) · {{profiles}} source profile(s) · {{excluded}} excluded reading(s) · {{holes}} patch(es) without measurement",
+    "no_manifest": "manifest unavailable",
+    "compare": "Compare the two selected versions",
+    "kept_note": "Every version is kept; nothing is deleted automatically.",
+    "state": {
+      "up_to_date": "Profile matches its inputs",
+      "stale": "Inputs changed since the build",
+      "missing_input": "A source used is unavailable",
+      "unknown": "Situation undetermined",
+      "no_profile": "No profile",
+      "up_to_date_title": "The same request, made now, would use exactly the same inputs.",
+      "stale_title": "The measurements, exclusions or sources changed since the build: the profile is not defective, but a rebuild would give a different profile.",
+      "missing_input_title": "A scan, chart or source profile used no longer exists.",
+      "unknown_title": "Cannot be determined with certainty (profile without a reliable manifest).",
+      "no_profile_title": "No profile built."
+    },
+    "toolchain": {
+      "changed": "Different profiling tool",
+      "unknown": "Tool version uncertain",
+      "changed_title": "The colprof version differs from the one used to build the profile.",
+      "unknown_title": "The colprof version is unknown on one side or the other."
+    }
   }
 }

@@ -67,7 +67,8 @@ export default function BuildPreviewSummary({ preview }) {
           <span>{s.refusals.map((r) => t(`build_preview.refusal.${r}`, { defaultValue: r })).join(' ')}</span></div>
       )}
       {p.current_build_id && (
-        <div className="text-tiny text-text-faint">{s.inputsChangedSinceCurrent ? t('build_preview.differs_current') : t('build_preview.same_as_current')}</div>
+        <div className="text-tiny text-text-faint">{s.inputsChangedSinceCurrent ? t('build_preview.differs_current') : t('build_preview.same_as_current')}
+          {s.differsFromCurrent && <span> {t('build_preview.selection_differs')}</span>}</div>
       )}
       {(s.nExcluded > 0 || s.nInactive > 0 || s.nUnmatched > 0) && (
         <button type="button" onClick={() => setOpen(!open)} className="text-tiny text-accent hover:underline inline-flex items-center gap-0.5"

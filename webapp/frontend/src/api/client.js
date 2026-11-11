@@ -1341,6 +1341,14 @@ export async function setReadingRejected(chartId, ti3, sampleId, rejected) {
               + `/readings/${encodeURIComponent(sampleId)}/reject`,
               { method: 'POST', body: JSON.stringify({ rejected }) });
 }
+/** EXPLICIT exclusion of ONE reading (phase 4C API; also with a single scan). body:
+ *  {excluded=true, reason?, dry_run=false, extra_chart_ids=[]}. dry_run → impact only, nothing
+ *  written. 409 exclusion_refused (last white/black) carries the impact. No Z9, ti3 untouched. */
+export async function setReadingExclusion(chartId, ti3, sampleId, body) {
+  return http(`/api/charts/${encodeURIComponent(chartId)}/scans/${encodeURIComponent(ti3)}`
+              + `/readings/${encodeURIComponent(sampleId)}/exclusion`,
+              { method: 'POST', body: JSON.stringify(body || {}) });
+}
 /** Sets the ROLE of a scan (software MUTATION, no Z9): 'included' (feeds the profile) |
  *  'excluded' (out of the profile, but ti3 KEPT/displayed). Role = durable flag, ti3 never deleted. */
 export async function setScanRole(chartId, ti3, role) {

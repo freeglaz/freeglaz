@@ -281,3 +281,20 @@ def test_scan_state_keys_survive_role_changes(client, monkeypatch):
     client.post(f"/api/charts/{cid}/scans/b.ti3/role", json={"role": "excluded"})
     st = state(d)
     assert st["last_build_id"] == bid and st["rejection_meta"]["a.ti3"]["5"]["reason"] == "r"
+
+
+def test_patches_expose_use_state_and_exclusion_risk(client):
+    rows = G5 + [("W2", 100.0, 100.0, 100.0)]
+    cid, d = _chart(client, {"a.ti3": ti3_text(rows)})
+    edge = sid_of(G5, (100, 50, 0))
+    excl(client, cid, "a.ti3", edge, reason="visible_defect")
+    p = client.get(f"/api/charts/{cid}/scans/a.ti3/patches").json()
+    by = {x["id"]: x for x in p["patches"]}
+    assert p["scan_role"] == "included" and p["n_excluded"] == 1
+    assert by[edge]["excluded"] is True and by[edge]["exclusion_reason"] == "visible_defect"
+    assert by[sid_of(G5, (50, 50, 50))]["exclusion_risk"]["level"] == "info"
+    assert by[sid_of(G5, (100, 0, 0))]["exclusion_risk"] == {"position": "corner", "corner": "red",
+                                                              "other_compatible_readings": 0, "level": "strong_warning"}
+    assert by[sid_of(G5, (100, 100, 100))]["exclusion_risk"]["level"] == "ok"        # W2 duplicates it
+    assert by[sid_of(G5, (0, 0, 0))]["exclusion_risk"]["level"] == "refused"         # unique black
+    assert by[edge]["exclusion_risk"]["level"] == "warning"                           # risk if it stays excluded

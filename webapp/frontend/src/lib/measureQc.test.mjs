@@ -222,5 +222,14 @@ console.log('Test 16 — measurements read errors are localized (raw backend tex
   assert(!Object.values(u).some((v) => String(v).includes('truncated')), 'the descriptor carries no raw backend text');
 }
 
+console.log('Test 17 — "excluded" filter = use state, independent of the QC status');
+{
+  const rows = [{ id: '1', excluded: true, qc: { status: 'coherent' } }, { id: '2', excluded: false, qc: { status: 'strong' } },
+                { id: '3', excluded: true, qc: null }];
+  assert(filterRows(rows, 'excluded').map((r) => r.id).join() === '1,3', 'excluded rows, whatever their QC status');
+  assert(filterRows(rows, 'flagged').map((r) => r.id).join() === '2', 'a strong suspect is flagged, not excluded');
+  assert(filterCounts(rows).excluded === 2 && filterCounts(rows).flagged === 1, 'counts');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

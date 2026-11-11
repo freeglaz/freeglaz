@@ -7,6 +7,7 @@
  *
  * Run: node webapp/frontend/src/lib/measureQc.i18n.test.mjs
  */
+import { EXCLUSION_LEVELS, REASON_CHOICES } from './exclusion.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -33,10 +34,11 @@ const has = (loc, key) => typeof get(loc, key) === 'string'
 console.log('Test 1 — i18n keys present in fr AND en');
 {
   const files = ['components/Charts/MeasurementsModal.jsx', 'components/Charts/MeasureQcSummary.jsx',
+                 'components/Charts/ExclusionDialog.jsx', 'components/Charts/QCTableModal.jsx', 'lib/exclusion.js',
                  'components/Charts/ScanKeepList.jsx', 'components/Charts/ArgyllProfileWizard.jsx', 'lib/measureQc.js'];
   const literal = new Set();
   for (const f of files) {
-    for (const m of read(join(src, f)).matchAll(/['"`]((?:measure_qc|scan\.measures)\.[A-Za-z0-9_.]+)['"`]/g)) literal.add(m[1]);
+    for (const m of read(join(src, f)).matchAll(/['"`]((?:measure_qc|scan\.measures|exclusion)\.[A-Za-z0-9_.]+)['"`]/g)) literal.add(m[1]);
   }
   const dyn = [
     ...STATUSES.map((s) => `measure_qc.status.${s}`), ...STATUSES.map((s) => `measure_qc.status_title.${s}`),
@@ -44,6 +46,12 @@ console.log('Test 1 — i18n keys present in fr AND en');
     ...REASON_CODES.map((c) => `measure_qc.reason.${c}`), ...FINDING_CODES.map((c) => `measure_qc.finding.${c}`),
     ...WARNING_CODES.map((c) => `measure_qc.warning.${c}`), ...ERROR_CODES.map((c) => `measure_qc.error.${c}`),
     ...FILTERS.map((f) => `measure_qc.filter.${f}`), ...FILTERS.map((f) => `measure_qc.filter.${f}_title`),
+    ...EXCLUSION_LEVELS.flatMap((l) => [`exclusion.risk.${l}`, `exclusion.risk_title.${l}`, `exclusion.base_level.${l}`,
+                                        `exclusion.level_explain.${l}`]),
+    ...REASON_CHOICES.map((r) => `exclusion.reason.${r}`), 'exclusion.reason.none',
+    ...['refused', 'scan_excluded', 'not_found', 'unreadable', 'network', 'error'].map((k) => `exclusion.error.${k}`),
+    ...[...POSITIONS, 'duplicate', 'refused_white', 'refused_black'].map((k) => `exclusion.impact.${k}`),
+    ...['last', 'average'].map((b) => `exclusion.base.${b}`),
   ];
   const keys = [...new Set([...literal, ...dyn])];
   for (const [name, loc] of Object.entries(locales)) {
@@ -95,11 +103,20 @@ console.log('Test 3 — read-only views and shared components');
   const summary = read(join(src, 'components/Charts/MeasureQcSummary.jsx'));
   const lib = read(join(src, 'lib/measureQc.js'));
   const apiCalls = [...modal.matchAll(/api\.([A-Za-z]+)\(/g)].map((m) => m[1]);
-  assert(apiCalls.length > 0 && apiCalls.every((f) => ['getScanPatches', 'getScanMeasureQC'].includes(f)),
-         `MeasurementsModal calls only read functions (${[...new Set(apiCalls)].join(', ')})`);
+  assert(apiCalls.length > 0 && apiCalls.every((f) => ['getScanPatches', 'getScanMeasureQC', 'setReadingExclusion'].includes(f)),
+         `MeasurementsModal calls only reads + the explicit exclusion API (${[...new Set(apiCalls)].join(', ')})`);
   assert(!/api\./.test(summary) && !/from '\.\.\/api|client\.js/.test(lib), 'summary component and lib never call the API');
   const mutating = /setReadingRejected|setScanRole|deleteScan|profileChart|buildProfileAndWait|scanChart|lightenChart/;
-  assert(!mutating.test(modal) && !mutating.test(summary) && !mutating.test(lib), 'no mutating API function referenced by the QC views');
+  assert(!mutating.test(modal) && !mutating.test(summary) && !mutating.test(lib), 'no other mutating API function referenced by the QC views');
+  // Phase 4D: one exclusion logic. The dialog always simulates first; no component uses the legacy route.
+  const dialogSrc = read(join(src, 'components/Charts/ExclusionDialog.jsx'));
+  const qctable = read(join(src, 'components/Charts/QCTableModal.jsx'));
+  assert(/setReadingExclusion\(chartId, ti3, sid, \{ dry_run: true/.test(dialogSrc), 'ExclusionDialog runs a dry run before any write');
+  assert(/import ExclusionDialog from '\.\/ExclusionDialog\.jsx'/.test(modal) && /import ExclusionDialog from '\.\/ExclusionDialog\.jsx'/.test(qctable)
+         && !/api\.setReadingRejected\(/.test(qctable) && /api\.setReadingExclusion\(/.test(qctable),
+         'MeasurementsModal and QCTableModal share ExclusionDialog and the /exclusion API (legacy /reject unused)');
+  assert(!/auto.?exclu|exclude\(.*report|status === 'strong'.*setReadingExclusion/i.test(modal + qctable),
+         'no automatic exclusion from a QC verdict');
   const client = read(join(src, 'api/client.js'));
   const fn = client.match(/export async function getScanMeasureQC[\s\S]*?\n}/)[0];
   assert(/method: 'GET'/.test(fn) && !/POST|PUT|DELETE|PATCH/.test(fn), 'getScanMeasureQC is a GET');

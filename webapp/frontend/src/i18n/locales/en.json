@@ -1582,7 +1582,9 @@
       "all_title": "All measurements",
       "flagged_title": "Strongly suspect, to check AND not assessable",
       "not_assessable_title": "Measurements the check cannot judge",
-      "empty": "No measurement in this filter."
+      "empty": "No measurement in this filter.",
+      "excluded": "Excluded ({{n}})",
+      "excluded_title": "Readings excluded from the next profile by your decision"
     },
     "detail": {
       "lab_measured": "Measured Lab",
@@ -1607,6 +1609,92 @@
       "finding": "overall inconsistency",
       "limited_check": "limited check",
       "title": "Measurement consistency check of this scan (advisory). Click for details."
+    }
+  },
+  "exclusion": {
+    "dialog": {
+      "title": "Exclude reading {{sid}}",
+      "subject": "Patch {{sid}} · scan {{scan}} · RGB {{rgb}}",
+      "checking": "Evaluating the consequences…"
+    },
+    "impact": {
+      "duplicate": "Another compatible reading of this colour remains ({{n}}): simple exclusion.",
+      "interior": "Last reading of this interior patch: it will be interpolated from its neighbours.",
+      "face": "Last reading of this face patch: it will be interpolated from its neighbours.",
+      "edge": "Last reading of this edge patch: the profile will be less constrained along this edge.",
+      "corner": "Last reading of a cube corner: the profile will be much less constrained in this region.",
+      "refused_white": "This is the last reading of white: excluding it would make the profile impossible to build.",
+      "refused_black": "This is the last reading of black: excluding it would distort the profile's black point."
+    },
+    "level_explain": {
+      "ok": "No patch is left without a measurement.",
+      "info": "Information: the profile will estimate this colour from the neighbouring measurements.",
+      "warning": "Warning: accuracy may drop locally.",
+      "strong_warning": "Strong warning: a new measurement is preferable if the patch is doubtful.",
+      "refused": "Exclusion refused."
+    },
+    "base": {
+      "last": "\"Last scan\" build",
+      "average": "\"Average\" build"
+    },
+    "base_not_used": "scan not used in this mode",
+    "base_level": {
+      "ok": "no consequence",
+      "info": "interpolation (information)",
+      "warning": "warning",
+      "strong_warning": "strong warning",
+      "refused": "build refused in this mode"
+    },
+    "bases_differ": "The consequences differ depending on the build mode chosen.",
+    "recommend_remeasure": "new measurement recommended",
+    "refused_advice": "Measure the chart again, or add a scan containing a valid reading of this patch.",
+    "reason_label": "Reason (optional, for the record)",
+    "reason": {
+      "none": "— none —",
+      "doubtful": "Doubtful measurement",
+      "visible_defect": "Visible defect on the print",
+      "other": "Other"
+    },
+    "reason_other_placeholder": "Specify…",
+    "reason_informative": "The reason is kept for information; it does not influence the profile build.",
+    "confirm": "Exclude this reading",
+    "exclude": "Exclude",
+    "exclude_title": "Exclude this reading from the next profile (reversible)",
+    "reinclude": "Re-include",
+    "reinclude_title": "Re-include this reading in the next profile",
+    "use": {
+      "included": "Included",
+      "excluded": "Excluded",
+      "excluded_title": "Excluded from the next profile by your decision (reversible)"
+    },
+    "table": {
+      "use": "Use",
+      "use_title": "Included in or excluded from the next profile — independent of the QC check",
+      "risk": "If excluded",
+      "risk_title": "Consequence announced if this reading were excluded (confirmed at the time of the action)"
+    },
+    "risk": {
+      "ok": "duplicate",
+      "info": "interpolated",
+      "warning": "edge",
+      "strong_warning": "corner",
+      "refused": "refused"
+    },
+    "risk_title": {
+      "ok": "Another compatible reading remains",
+      "info": "Interior or face patch: interpolated",
+      "warning": "Edge patch: warning",
+      "strong_warning": "Cube corner: strong warning",
+      "refused": "Last white or black: exclusion refused"
+    },
+    "scan_excluded_hint": "This scan is excluded: readings can only be excluded in an included scan.",
+    "error": {
+      "refused": "Exclusion refused by the structural-point check.",
+      "scan_excluded": "This scan is excluded: include it again to manage its readings.",
+      "not_found": "Reading or scan not found: the data may have changed. The view was refreshed.",
+      "unreadable": "Unreadable measurements: this exclusion cannot be evaluated.",
+      "network": "The local server does not answer: nothing was saved.",
+      "error": "Technical error: nothing was saved."
     }
   }
 }

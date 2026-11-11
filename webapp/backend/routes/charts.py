@@ -957,11 +957,58 @@ def scan_patches(chart_id: str, ti3: str) -> dict:
         # Raw cause kept in the logs (freeglaz.log); the UI localizes from the stable code.
         logger.warning("measurements unreadable — chart %s scan %s: %s", chart_id, ti3, e)
         raise HTTPException(422, detail={"code": "UNREADABLE", "message": f"unreadable ti3: {e}"})
-    patches = [{"id": sid, "rgb": v["rgb"], "lab": [round(x, 2) for x in v["lab"]]}
+    # Use state (phase 4D, read-only): excluded or not, informative reason, and the foreseeable
+    # risk if this reading were excluded (same chart-level rule as the exclusion API).
+    st = _read_scan_state(d)
+    rej = set(st["rejected_readings"].get(ti3, []))
+    meta = ((st.get("rejection_meta") or {}).get(ti3) or {}) if isinstance(st.get("rejection_meta"), dict) else {}
+    risks = _exclusion_risks(d, st, ti3)
+    patches = [{"id": sid, "rgb": v["rgb"], "lab": [round(x, 2) for x in v["lab"]],
+                "excluded": sid in rej, "exclusion_reason": (meta.get(sid) or {}).get("reason"),
+                "exclusion_risk": risks.get(sid)}
                for sid, v in data.items()]
     # lab_integrity: Lab recomputed from XYZ (Argyll D50) when present; stored LAB_* only checked.
     return {"chart_id": chart_id, "ti3": ti3, "n_patches": len(patches), "patches": patches,
-            "lab_integrity": lab_integrity}
+            "lab_integrity": lab_integrity, "scan_role": _scan_role(st, ti3),
+            "n_excluded": sum(1 for x in patches if x["excluded"])}
+
+
+def _exclusion_risks(d: Path, state: dict, ti3: str) -> dict:
+    """{sid: {position, corner, other_compatible_readings, level}} for every reading of ``ti3``:
+    the level the exclusion API would announce at chart level — "ok" when another compatible
+    reading (same device value, any SAMPLE_ID) remains in the chart's included scans, else by
+    cube position (info / warning / strong_warning), "refused" for the last white or black.
+    The per-base consequences are computed by the API at the moment of the action."""
+    from collections import Counter
+    from lib.z9_client import build_inputs as bi
+    try:
+        rows = bi.read_device_rows(d / "measurements" / ti3)
+    except (OSError, ValueError):
+        return {}
+    pool: Counter = Counter()
+    for p in _raw_ti3_paths(d):
+        if _scan_role(state, p.name) != "included":
+            continue
+        rej = set(state["rejected_readings"].get(p.name, []))
+        try:
+            pool.update(bi.device_key(rgb) for sid, rgb in bi.read_device_rows(p) if sid not in rej)
+        except (OSError, ValueError):
+            continue
+    own_rej = set(state["rejected_readings"].get(ti3, []))
+    included = _scan_role(state, ti3) == "included"
+    out = {}
+    for sid, rgb in rows:
+        key = bi.device_key(rgb)
+        pos, corner = bi.device_position(rgb)
+        others = pool[key] - (1 if (included and sid not in own_rej) else 0)
+        if others > 0:
+            level = "ok"
+        elif corner in ("white", "black"):
+            level = "refused"
+        else:
+            level = bi._LEVEL_BY_POSITION[pos]
+        out[sid] = {"position": pos, "corner": corner, "other_compatible_readings": others, "level": level}
+    return out
 
 
 @router.get("/{chart_id}/scans/{ti3}/qc")

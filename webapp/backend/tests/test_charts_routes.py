@@ -744,7 +744,9 @@ def test_scan_patches_single_scan(client):
     body = r.json()
     assert body["n_patches"] == 20 and body["ti3"] == "a.ti3"
     p0 = body["patches"][0]
-    assert set(p0) == {"id", "rgb", "lab"} and len(p0["rgb"]) == 3 and len(p0["lab"]) == 3
+    # phase 4D adds the use state (excluded / reason) and the risk if excluded, additively
+    assert set(p0) == {"id", "rgb", "lab", "excluded", "exclusion_reason", "exclusion_risk"}
+    assert len(p0["rgb"]) == 3 and len(p0["lab"]) == 3 and p0["excluded"] is False
     assert client.get(f"/api/charts/{cid}/scans/nope.ti3/patches").status_code == 404
 
 

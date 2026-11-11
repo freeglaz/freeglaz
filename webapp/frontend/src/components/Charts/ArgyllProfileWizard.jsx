@@ -960,7 +960,8 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
 
       {/* Single-scan measurements + intrinsic QC (the SAME component as the Measurements tab) */}
       {measuresOpen && scanInfo?.ti3 && selected?.chart_id && (
-        <MeasurementsModal open chartId={selected.chart_id} ti3={scanInfo.ti3} onClose={() => setMeasuresOpen(false)}/>
+        <MeasurementsModal open chartId={selected.chart_id} ti3={scanInfo.ti3} onChanged={_loadScanned}
+          onClose={() => setMeasuresOpen(false)}/>
       )}
 
       {/* Complete data of the inter-scan comparison (reuses the generalized AllPatchesModal) */}

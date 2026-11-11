@@ -1582,7 +1582,9 @@
       "all_title": "Toutes les mesures",
       "flagged_title": "Fortement suspectes, à vérifier ET non évaluables",
       "not_assessable_title": "Mesures que le contrôle ne peut pas juger",
-      "empty": "Aucune mesure dans ce filtre."
+      "empty": "Aucune mesure dans ce filtre.",
+      "excluded": "Exclues ({{n}})",
+      "excluded_title": "Lectures exclues du prochain profil par votre décision"
     },
     "detail": {
       "lab_measured": "Lab mesuré",
@@ -1607,6 +1609,92 @@
       "finding": "incohérence d'ensemble",
       "limited_check": "contrôle limité",
       "title": "Contrôle de cohérence des mesures de ce scan (consultatif). Cliquer pour voir le détail."
+    }
+  },
+  "exclusion": {
+    "dialog": {
+      "title": "Exclure la lecture {{sid}}",
+      "subject": "Patch {{sid}} · scan {{scan}} · RGB {{rgb}}",
+      "checking": "Évaluation des conséquences…"
+    },
+    "impact": {
+      "duplicate": "Une autre lecture compatible de cette couleur reste disponible ({{n}}) : exclusion simple.",
+      "interior": "Dernière lecture de ce patch intérieur : il sera interpolé à partir de ses voisins.",
+      "face": "Dernière lecture de ce patch de face : il sera interpolé à partir de ses voisins.",
+      "edge": "Dernière lecture de ce patch d'arête : le profil sera moins contraint sur cette arête.",
+      "corner": "Dernière lecture d'un coin du cube : le profil sera nettement moins contraint dans cette région.",
+      "refused_white": "C'est la dernière lecture du blanc : l'exclure empêcherait de construire le profil.",
+      "refused_black": "C'est la dernière lecture du noir : l'exclure fausserait le point noir du profil."
+    },
+    "level_explain": {
+      "ok": "Aucun patch ne se retrouve sans mesure.",
+      "info": "Information : la couleur sera estimée par le profil à partir des mesures voisines.",
+      "warning": "Avertissement : la précision peut baisser localement.",
+      "strong_warning": "Avertissement renforcé : une nouvelle mesure est préférable si le patch est douteux.",
+      "refused": "Exclusion refusée."
+    },
+    "base": {
+      "last": "Construction « dernier scan »",
+      "average": "Construction « moyenne »"
+    },
+    "base_not_used": "scan non utilisé dans ce mode",
+    "base_level": {
+      "ok": "sans conséquence",
+      "info": "interpolation (information)",
+      "warning": "avertissement",
+      "strong_warning": "avertissement renforcé",
+      "refused": "construction refusée dans ce mode"
+    },
+    "bases_differ": "Les conséquences diffèrent selon le mode de construction choisi.",
+    "recommend_remeasure": "nouvelle mesure recommandée",
+    "refused_advice": "Mesurez à nouveau la charte, ou ajoutez un scan contenant une lecture valide de ce patch.",
+    "reason_label": "Motif (facultatif, pour mémoire)",
+    "reason": {
+      "none": "— aucun —",
+      "doubtful": "Mesure douteuse",
+      "visible_defect": "Défaut visible sur le tirage",
+      "other": "Autre"
+    },
+    "reason_other_placeholder": "Préciser…",
+    "reason_informative": "Le motif est conservé pour information ; il n'influence pas la construction du profil.",
+    "confirm": "Exclure cette lecture",
+    "exclude": "Exclure",
+    "exclude_title": "Exclure cette lecture du prochain profil (réversible)",
+    "reinclude": "Réintégrer",
+    "reinclude_title": "Réintégrer cette lecture dans le prochain profil",
+    "use": {
+      "included": "Incluse",
+      "excluded": "Exclue",
+      "excluded_title": "Exclue du prochain profil par votre décision (réversible)"
+    },
+    "table": {
+      "use": "Utilisation",
+      "use_title": "Incluse ou exclue du prochain profil — indépendant du contrôle QC",
+      "risk": "Si exclue",
+      "risk_title": "Conséquence annoncée si cette lecture était exclue (confirmée au moment de l'action)"
+    },
+    "risk": {
+      "ok": "doublon",
+      "info": "interpolée",
+      "warning": "arête",
+      "strong_warning": "coin",
+      "refused": "refus"
+    },
+    "risk_title": {
+      "ok": "Une autre lecture compatible reste disponible",
+      "info": "Patch intérieur ou de face : interpolé",
+      "warning": "Patch d'arête : avertissement",
+      "strong_warning": "Coin du cube : avertissement renforcé",
+      "refused": "Dernier blanc ou noir : exclusion refusée"
+    },
+    "scan_excluded_hint": "Ce scan est exclu : les lectures ne peuvent être exclues que dans un scan inclus.",
+    "error": {
+      "refused": "Exclusion refusée par le contrôle des points structurants.",
+      "scan_excluded": "Ce scan est exclu : réincluez-le pour gérer ses lectures.",
+      "not_found": "Lecture ou scan introuvable : les données ont peut-être changé. L'affichage a été actualisé.",
+      "unreadable": "Mesures illisibles : impossible d'évaluer cette exclusion.",
+      "network": "Le serveur local ne répond pas : aucune modification n'a été enregistrée.",
+      "error": "Erreur technique : aucune modification n'a été enregistrée."
     }
   }
 }

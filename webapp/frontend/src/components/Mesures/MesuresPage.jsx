@@ -516,6 +516,7 @@ export default function MesuresPage({ offline }) {
       )}
       {viewTi3 && detail && (
         <MeasurementsModal open chartId={id.chart_id} ti3={viewTi3}
+          onChanged={() => loadDetail(selected)}
           onClose={() => { setViewTi3(null); loadDetail(selected); }}/>
       )}
       {confirm && (

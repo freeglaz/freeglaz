@@ -25,7 +25,7 @@ export const ERROR_CODES = [
   'INVALID_VALUE', 'RGB_OUT_OF_RANGE', 'INVALID_COLORIMETRY',
   'SCAN_NOT_FOUND', 'NOT_A_RAW_SCAN', 'UNREADABLE',                      // service-level
 ];
-export const FILTERS = ['all', 'flagged', 'not_assessable'];
+export const FILTERS = ['all', 'flagged', 'not_assessable', 'excluded'];
 export const SORT_KEYS = ['suspicion', 'id', 'rgb', 'labL', 'de00'];
 
 const RANK = Object.fromEntries(STATUSES.map((s, i) => [s, i]));
@@ -149,6 +149,7 @@ export function sortRows(rows, key = 'suspicion', dir = 'asc') {
 export function filterRows(rows, filter = 'all') {
   if (filter === 'flagged') return rows.filter((r) => FLAGGED.has(r.qc?.status));
   if (filter === 'not_assessable') return rows.filter((r) => r.qc?.status === 'not_assessable');
+  if (filter === 'excluded') return rows.filter((r) => r.excluded);   // use state, not a QC verdict
   return rows;
 }
 
@@ -157,6 +158,7 @@ export function filterCounts(rows) {
     all: rows.length,
     flagged: rows.filter((r) => FLAGGED.has(r.qc?.status)).length,
     not_assessable: rows.filter((r) => r.qc?.status === 'not_assessable').length,
+    excluded: rows.filter((r) => r.excluded).length,
   };
 }
 

@@ -63,11 +63,22 @@ jobs:
       - name: Install (uv sync, with the dev group)
         run: uv sync --python 3.13
 
-      - name: Backend tests (loopback-only network namespace)
+      - name: Backend tests (loopback-only network namespace, mandatory)
         env:
           FREEGLAZ_DATA_DIR: ${{ runner.temp }}/fg-data
           FREEGLAZ_STORE_ROOT: ${{ runner.temp }}/fg-store
-        run: scripts/run_tests_offline.sh -q -rs -p no:cacheprovider
+          FREEGLAZ_REQUIRE_NETNS: "1"     # no namespace → fail, never run with the Python guard alone
+        run: >
+          scripts/run_tests_offline.sh -q -rfs -p no:cacheprovider
+          --junitxml=${{ runner.temp }}/pytest-junit.xml
+
+      - name: Keep the test report when something failed (names, logs, durations)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-junit
+          path: ${{ runner.temp }}/pytest-junit.xml
+          if-no-files-found: ignore
 
       - name: Frontend pure-JS tests (plain node, no node_modules)
         working-directory: webapp/frontend

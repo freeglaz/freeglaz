@@ -1696,5 +1696,66 @@
       "network": "Le serveur local ne répond pas : aucune modification n'a été enregistrée.",
       "error": "Erreur technique : aucune modification n'a été enregistrée."
     }
+  },
+  "build_preview": {
+    "loading": "Calcul de l'aperçu de la construction…",
+    "error": "Aperçu indisponible : {{message}}. La construction est désactivée.",
+    "title": "Aperçu de la construction",
+    "base_fallback": "Base demandée : {{requested}} — base réellement utilisée : {{effective}}.",
+    "base_used": "Base utilisée : {{base}}.",
+    "base": {
+      "last": "dernier scan",
+      "average": "moyenne des scans"
+    },
+    "excluded_one": "{{count}} lecture exclue sera appliquée",
+    "excluded_other": "{{count}} lectures exclues seront appliquées",
+    "inactive_one": "{{count}} exclusion inactive dans ce mode",
+    "inactive_other": "{{count}} exclusions inactives dans ce mode",
+    "holes_one": "{{count}} patch sans aucune mesure",
+    "holes_other": "{{count}} patchs sans aucune mesure",
+    "newly_applied_one": "{{count}} exclusion enregistrée auparavant, ignorée par les constructions « dernier scan » précédentes, sera désormais appliquée (nouvelle règle, ce n'est pas un nouveau constat du contrôle).",
+    "newly_applied_other": "{{count}} exclusions enregistrées auparavant, ignorées par les constructions « dernier scan » précédentes, seront désormais appliquées (nouvelle règle, ce n'est pas un nouveau constat du contrôle).",
+    "strong_included_one": "{{count}} mesure fortement suspecte reste incluse : vous pouvez l'examiner avant de construire.",
+    "strong_included_other": "{{count}} mesures fortement suspectes restent incluses : vous pouvez les examiner avant de construire.",
+    "guard": {
+      "HOLE_INTERIOR": "patch intérieur interpolé",
+      "HOLE_FACE": "patch de face interpolé",
+      "HOLE_EDGE": "patch d'arête sans mesure",
+      "HOLE_CORNER": "coin du cube sans mesure",
+      "QC_ZONE_INCOHERENT": "zone signalée incohérente par le contrôle",
+      "QC_SET_INCOHERENT_ISOLATED_EXCLUSIONS": "jeu globalement incohérent : exclusions isolées déconseillées"
+    },
+    "recommend": "Une nouvelle mesure de la charte est recommandée.",
+    "reason": {
+      "STRUCTURAL_POINT_LOST": "point structurant perdu",
+      "CORNERS_MISSING": "plusieurs coins sans mesure",
+      "EDGE_COVERAGE": "arête mal couverte",
+      "HOLE_CLUSTER": "trous voisins",
+      "WIDE_GAP": "trou large",
+      "TOO_MANY_HOLES": "trop de patchs sans mesure",
+      "QC_ZONE_INCOHERENT": "zone incohérente",
+      "QC_SET_INCOHERENT_ISOLATED_EXCLUSIONS": "jeu incohérent"
+    },
+    "refusal": {
+      "WHITE_LAST_READING": "Construction impossible : le blanc n'a plus aucune lecture dans les scans utilisés. Réintégrez-la, changez de base ou mesurez à nouveau.",
+      "BLACK_LAST_READING": "Construction impossible : le noir n'a plus aucune lecture dans les scans utilisés. Réintégrez-la, changez de base ou mesurez à nouveau."
+    },
+    "differs_current": "Les entrées diffèrent de celles du profil courant : la construction produira un profil différent.",
+    "same_as_current": "Entrées identiques à celles du profil courant.",
+    "show_list": "Voir la liste des exclusions",
+    "list_applied": "Appliquées :",
+    "list_inactive": "Inactives dans ce mode :",
+    "list_unmatched": "Introuvables dans le scan :",
+    "inactive_reason": {
+      "not_used_by_base_last": "scan non utilisé par « dernier scan »",
+      "scan_excluded": "scan exclu",
+      "scan_not_found": "scan introuvable",
+      "legacy_last_ignores_rejections": "ignorée par l'ancien mode"
+    },
+    "confirm_title": "Construire le profil avec ces choix ?",
+    "confirm_note": "Le profil actuel et toutes les versions précédentes sont conservés. Les exclusions restent réversibles.",
+    "confirm": "Construire le profil",
+    "inputs_changed": "Les mesures ou les choix ont changé depuis l'aperçu : l'aperçu a été recalculé, vérifiez-le puis confirmez à nouveau.",
+    "coverage_refused": "La construction a été refusée : un point structurant n'a plus de mesure. L'aperçu a été recalculé."
   }
 }

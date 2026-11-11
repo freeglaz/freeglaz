@@ -35,10 +35,11 @@ console.log('Test 1 — i18n keys present in fr AND en');
 {
   const files = ['components/Charts/MeasurementsModal.jsx', 'components/Charts/MeasureQcSummary.jsx',
                  'components/Charts/ExclusionDialog.jsx', 'components/Charts/QCTableModal.jsx', 'lib/exclusion.js',
+                 'components/Charts/BuildPreviewSummary.jsx', 'components/Charts/BuildConfirmModal.jsx', 'lib/buildPreview.js',
                  'components/Charts/ScanKeepList.jsx', 'components/Charts/ArgyllProfileWizard.jsx', 'lib/measureQc.js'];
   const literal = new Set();
   for (const f of files) {
-    for (const m of read(join(src, f)).matchAll(/['"`]((?:measure_qc|scan\.measures|exclusion)\.[A-Za-z0-9_.]+)['"`]/g)) literal.add(m[1]);
+    for (const m of read(join(src, f)).matchAll(/['"`]((?:measure_qc|scan\.measures|exclusion|build_preview)\.[A-Za-z0-9_.]+)['"`]/g)) literal.add(m[1]);
   }
   const dyn = [
     ...STATUSES.map((s) => `measure_qc.status.${s}`), ...STATUSES.map((s) => `measure_qc.status_title.${s}`),
@@ -52,7 +53,17 @@ console.log('Test 1 — i18n keys present in fr AND en');
     ...['refused', 'scan_excluded', 'not_found', 'unreadable', 'network', 'error'].map((k) => `exclusion.error.${k}`),
     ...[...POSITIONS, 'duplicate', 'refused_white', 'refused_black'].map((k) => `exclusion.impact.${k}`),
     ...['last', 'average'].map((b) => `exclusion.base.${b}`),
+    ...['HOLE_INTERIOR', 'HOLE_FACE', 'HOLE_EDGE', 'HOLE_CORNER', 'QC_ZONE_INCOHERENT', 'QC_SET_INCOHERENT_ISOLATED_EXCLUSIONS']
+      .map((c) => `build_preview.guard.${c}`),
+    ...['STRUCTURAL_POINT_LOST', 'CORNERS_MISSING', 'EDGE_COVERAGE', 'HOLE_CLUSTER', 'WIDE_GAP', 'TOO_MANY_HOLES',
+        'QC_ZONE_INCOHERENT', 'QC_SET_INCOHERENT_ISOLATED_EXCLUSIONS'].map((c) => `build_preview.reason.${c}`),
+    'build_preview.refusal.WHITE_LAST_READING', 'build_preview.refusal.BLACK_LAST_READING',
+    ...['not_used_by_base_last', 'scan_excluded', 'scan_not_found', 'legacy_last_ignores_rejections'].map((r) => `build_preview.inactive_reason.${r}`),
+    'build_preview.base.last', 'build_preview.base.average', 'build_preview.inputs_changed', 'build_preview.coverage_refused',
+    ...['excluded', 'inactive', 'holes', 'newly_applied', 'strong_included'].map((k) => `build_preview.${k}`),
   ];
+  // a literal that names a NAMESPACE is a prefix used to compose keys (each composed key is in `dyn`)
+  for (const k of [...literal]) if (get(locales.fr, k) && typeof get(locales.fr, k) === 'object') literal.delete(k);
   const keys = [...new Set([...literal, ...dyn])];
   for (const [name, loc] of Object.entries(locales)) {
     const missing = keys.filter((k) => !has(loc, k));
@@ -117,6 +128,17 @@ console.log('Test 3 — read-only views and shared components');
          'MeasurementsModal and QCTableModal share ExclusionDialog and the /exclusion API (legacy /reject unused)');
   assert(!/auto.?exclu|exclude\(.*report|status === 'strong'.*setReadingExclusion/i.test(modal + qctable),
          'no automatic exclusion from a QC verdict');
+  // Phase 4D: every build of the interface = preview + apply_all + previewed fingerprint.
+  const hook = read(join(src, 'hooks/useBuildPreview.js'));
+  const mesuresSrc = read(join(src, 'components/Mesures/MesuresPage.jsx'));
+  const wizardSrc = read(join(src, 'components/Charts/ArgyllProfileWizard.jsx'));
+  assert(/policy: 'apply_all', expected_fingerprint: preview\.inputs_fingerprint/.test(hook),
+         'buildWithPreview always sends apply_all + the preview fingerprint');
+  assert([mesuresSrc, wizardSrc].every((x) => !/api\.(buildProfileAndWait|profileChart)\(/.test(x) && /buildWithPreview\(/.test(x)),
+         'Measurements and the wizard build only through buildWithPreview');
+  assert(![hook, mesuresSrc, wizardSrc].some((x) => /policy:\s*'legacy'/.test(x)), 'no fallback to the legacy policy in the interface');
+  assert(/disabled=\{busy \|\| preview\?\.status !== 'ready' \|\| !!preview\?\.data\?\.would_be_refused\}/.test(read(join(src, 'components/Charts/ProfileBuildPanel.jsx'))),
+         'the build button needs a ready, non-refused preview');
   const client = read(join(src, 'api/client.js'));
   const fn = client.match(/export async function getScanMeasureQC[\s\S]*?\n}/)[0];
   assert(/method: 'GET'/.test(fn) && !/POST|PUT|DELETE|PATCH/.test(fn), 'getScanMeasureQC is a GET');

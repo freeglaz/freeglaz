@@ -1696,5 +1696,66 @@
       "network": "The local server does not answer: nothing was saved.",
       "error": "Technical error: nothing was saved."
     }
+  },
+  "build_preview": {
+    "loading": "Computing the build preview…",
+    "error": "Preview unavailable: {{message}}. Building is disabled.",
+    "title": "Build preview",
+    "base_fallback": "Requested base: {{requested}} — base actually used: {{effective}}.",
+    "base_used": "Base used: {{base}}.",
+    "base": {
+      "last": "last scan",
+      "average": "average of the scans"
+    },
+    "excluded_one": "{{count}} excluded reading will be applied",
+    "excluded_other": "{{count}} excluded readings will be applied",
+    "inactive_one": "{{count}} exclusion inactive in this mode",
+    "inactive_other": "{{count}} exclusions inactive in this mode",
+    "holes_one": "{{count}} patch without any measurement",
+    "holes_other": "{{count}} patches without any measurement",
+    "newly_applied_one": "{{count}} exclusion recorded earlier, ignored by the previous \"last scan\" builds, will now be applied (new rule, not a new finding of the check).",
+    "newly_applied_other": "{{count}} exclusions recorded earlier, ignored by the previous \"last scan\" builds, will now be applied (new rule, not a new finding of the check).",
+    "strong_included_one": "{{count}} strongly suspect measurement stays included: you may review it before building.",
+    "strong_included_other": "{{count}} strongly suspect measurements stay included: you may review them before building.",
+    "guard": {
+      "HOLE_INTERIOR": "interior patch interpolated",
+      "HOLE_FACE": "face patch interpolated",
+      "HOLE_EDGE": "edge patch without measurement",
+      "HOLE_CORNER": "cube corner without measurement",
+      "QC_ZONE_INCOHERENT": "zone flagged inconsistent by the check",
+      "QC_SET_INCOHERENT_ISOLATED_EXCLUSIONS": "globally inconsistent set: isolated exclusions discouraged"
+    },
+    "recommend": "Measuring the chart again is recommended.",
+    "reason": {
+      "STRUCTURAL_POINT_LOST": "structural point lost",
+      "CORNERS_MISSING": "several corners without measurement",
+      "EDGE_COVERAGE": "poorly covered edge",
+      "HOLE_CLUSTER": "neighbouring holes",
+      "WIDE_GAP": "wide gap",
+      "TOO_MANY_HOLES": "too many patches without measurement",
+      "QC_ZONE_INCOHERENT": "inconsistent zone",
+      "QC_SET_INCOHERENT_ISOLATED_EXCLUSIONS": "inconsistent set"
+    },
+    "refusal": {
+      "WHITE_LAST_READING": "Build impossible: white has no reading left in the scans used. Re-include it, change the base or measure again.",
+      "BLACK_LAST_READING": "Build impossible: black has no reading left in the scans used. Re-include it, change the base or measure again."
+    },
+    "differs_current": "The inputs differ from those of the current profile: the build will produce a different profile.",
+    "same_as_current": "Same inputs as the current profile.",
+    "show_list": "Show the list of exclusions",
+    "list_applied": "Applied:",
+    "list_inactive": "Inactive in this mode:",
+    "list_unmatched": "Not found in the scan:",
+    "inactive_reason": {
+      "not_used_by_base_last": "scan not used by \"last scan\"",
+      "scan_excluded": "scan excluded",
+      "scan_not_found": "scan not found",
+      "legacy_last_ignores_rejections": "ignored by the former mode"
+    },
+    "confirm_title": "Build the profile with these choices?",
+    "confirm_note": "The current profile and every previous version are kept. Exclusions remain reversible.",
+    "confirm": "Build the profile",
+    "inputs_changed": "The measurements or the choices changed since the preview: the preview was recomputed, check it and confirm again.",
+    "coverage_refused": "The build was refused: a structural point has no measurement left. The preview was recomputed."
   }
 }

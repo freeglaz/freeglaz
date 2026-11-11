@@ -150,6 +150,18 @@ def cached_summary(ti3_path: Path, params: Optional[mq.QCParams] = None) -> Opti
     return mq.summarize(rep) if rep is not None else None
 
 
+def cached_report(ti3_path: Path, params: Optional[mq.QCParams] = None) -> Optional[dict]:
+    """The full QC report ONLY if a valid cache exists (never computes)."""
+    params = params or mq.QCParams()
+    ti3_path = Path(ti3_path)
+    try:
+        _check_raw_ti3(ti3_path)
+        sha = hashlib.sha256(ti3_path.read_bytes()).hexdigest()
+    except (ScanQCError, OSError):
+        return None
+    return _load_valid(_cache_file(ti3_path, sha, params), sha, params)
+
+
 def purge(ti3_path: Path) -> int:
     """Delete every cached report of this scan (e.g. when the scan is deleted)."""
     ti3_path = Path(ti3_path)

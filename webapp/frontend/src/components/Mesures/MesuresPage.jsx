@@ -9,6 +9,9 @@ import ScanDeltaCard from '../Charts/ScanDeltaCard.jsx';
 import ScanKeepList from '../Charts/ScanKeepList.jsx';
 import QCTableModal from '../Charts/QCTableModal.jsx';
 import ProfileBuildPanel from '../Charts/ProfileBuildPanel.jsx';
+import BuildConfirmModal from '../Charts/BuildConfirmModal.jsx';
+import { useBuildPreview, buildWithPreview } from '../../hooks/useBuildPreview.js';
+import { buildRequestBody, chartStateStamp, classifyBuildError, summarizePreview } from '../../lib/buildPreview.js';
 import MeasurementsModal from '../Charts/MeasurementsModal.jsx';
 import ProfileInspectorModal from '../ProfileInspector/ProfileInspectorModal.jsx';
 import ArgyllProfileWizard from '../Charts/ArgyllProfileWizard.jsx';
@@ -71,6 +74,15 @@ export default function MesuresPage({ offline }) {
   // Multi-source sources selected in the panel (current chart implicit).
   const [extraSources, setExtraSources] = useState({ extra_chart_ids: [], source_profiles: [] });
   const [colprofFlags, setColprofFlags] = useState('');
+  const [previewNonce, setPreviewNonce] = useState(0);
+  const [confirmKey, setConfirmKey] = useState(null);
+  // Build request of the current selection + its preview (recomputed on any change of settings,
+  // sources, scan roles or exclusions — the stamp — so a confirmation never outlives its inputs).
+  const nKeptBuild = (detail?.scans || []).filter((s) => s.kept).length;
+  const buildBody = useMemo(() => buildRequestBody({ nKept: nKeptBuild, profileBase, colprofFlags, extraSources }),
+                            [nKeptBuild, profileBase, colprofFlags, extraSources]);
+  const stateStamp = useMemo(() => chartStateStamp(detail), [detail]);
+  const preview = useBuildPreview(selected, buildBody, { enabled: !!selected && nKeptBuild >= 1, stateStamp, nonce: previewNonce });
   const [colprofPresets, setColprofPresets] = useState([]);
   const [colprofHelp, setColprofHelp] = useState(null);
   const [showColprofHelp, setShowColprofHelp] = useState(false);
@@ -175,30 +187,35 @@ export default function MesuresPage({ offline }) {
   // 100% SOFTWARE (colprof ~2.5 min) as a BACKGROUND JOB — NO Z9, NO wizard. Builds if it
   // doesn't exist, rebuilds to include changes. Base + flags = panel (visible).
   // onConflict: null (default, collision → pop-up) | 'replace' | 'keep_both' (replay from the pop-up).
-  const buildProfile = (onConflict = null) => {
+  // Phase 4D — ONE contract for every build of the interface: preview (apply_all, no write) →
+  // explicit confirmation when the preview shows consequences → build with the preview's
+  // fingerprint. No silent fallback to legacy; inputs changed meanwhile → new preview, new
+  // confirmation (never an automatic retry).
+  const buildProfile = (onConflict = null, confirmed = false) => {
     if (!selected || busy || !detail) return;
-    const nKept = (detail.scans || []).filter((s) => s.kept).length;
-    const body = { profile_base: nKept >= 2 ? profileBase : 'last' };
-    if (colprofFlags.trim()) body.colprof_flags = colprofFlags.trim();
-    if (extraSources.extra_chart_ids.length) body.extra_chart_ids = extraSources.extra_chart_ids;
-    if (extraSources.source_profiles.length) body.source_profiles = extraSources.source_profiles;
-    if (extraSources.name) body.name = extraSources.name;     // custom name (null if auto default)
+    if (preview.status !== 'ready' || preview.data?.would_be_refused) return;
+    const summary = summarizePreview(preview.data);
+    if (typeof onConflict !== 'string' && !confirmed && summary.needsConfirmation) {
+      setConfirmKey(preview.key); return;                 // confirmation bound to THIS preview
+    }
+    setConfirmKey(null);
+    const body = { ...buildBody };
     // TYPE guard: on_conflict is only valid as a collision choice
     // (string 'replace'/'keep_both'). Without this, the build button wired onClick={onBuild}
     // passes the click's SyntheticEvent (circular refs) → JSON.stringify(body) broke.
     if (typeof onConflict === 'string') body.on_conflict = onConflict;  // replay after pop-up choice
     setBusy(true); setError(null); setBuildResult(null);
     setConflict(null); setNameNotice(null); setBuildPhase('preparing');
-    api.buildProfileAndWait(selected, body, setBuildPhase)
-      .then((result) => { setBuildResult(result || null); loadDetail(selected); reload(); })
+    buildWithPreview(selected, body, preview.data, setBuildPhase)
+      .then((result) => { setBuildResult(result || null); loadDetail(selected); reload(); setPreviewNonce((n) => n + 1); })
       .catch((e) => {
-        if (e?.status === 409 && e.detail?.error === 'name_conflict') {  // collision → 3-choice pop-up
-          setConflict(e.detail);
-        } else if (e?.status === 422) {                        // length (Pydantic) → UNDER the field
-          setNameNotice(t('mesures.profile_name_maxlen'));
-        } else if (e?.status === 400) {                        // invalid name (chars) → backend detail UNDER the field
-          setNameNotice(e.message);
-        } else { setError(e?.message || t('mesures.rebuild_failed')); }
+        const c = classifyBuildError(e);
+        if (c.kind === 'name_conflict') setConflict(e.detail);             // collision → 3-choice pop-up
+        else if (c.kind === 'inputs_changed' || c.kind === 'coverage_refused') {
+          setError(t(`build_preview.${c.kind}`)); setPreviewNonce((n) => n + 1);   // re-preview, re-confirm
+        } else if (c.kind === 'name_length') setNameNotice(t('mesures.profile_name_maxlen'));
+        else if (c.kind === 'name_invalid') setNameNotice(e.message);
+        else setError(e?.message || t('mesures.rebuild_failed'));
       })
       .finally(() => { setBusy(false); setBuildPhase(null); });
   };
@@ -448,7 +465,7 @@ export default function MesuresPage({ offline }) {
                       onBuild={buildProfile} busy={busy} buildPhase={buildPhase}
                       buildLabel={prof.built ? t('mesures.rebuild') : t('mesures.build')}
                       chartId={selected} onSelectionChange={setExtraSources}
-                      nameNotice={nameNotice}/>
+                      nameNotice={nameNotice} preview={preview}/>
                   </div>
                 )}
                 {/* Completion message (success) — name + personal repo location + installable. FAILURE
@@ -513,6 +530,10 @@ export default function MesuresPage({ offline }) {
         <QCTableModal open chartId={id.chart_id} title={id.chart_id}
           onChanged={() => loadDetail(selected)}
           onClose={() => { setAllOpen(false); loadDetail(selected); }}/>
+      )}
+      {confirmKey && confirmKey === preview.key && preview.status === 'ready' && (
+        <BuildConfirmModal summary={summarizePreview(preview.data)}
+          onCancel={() => setConfirmKey(null)} onConfirm={() => buildProfile(null, true)}/>
       )}
       {viewTi3 && detail && (
         <MeasurementsModal open chartId={id.chart_id} ti3={viewTi3}

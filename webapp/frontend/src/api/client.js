@@ -1361,6 +1361,13 @@ export async function profileChart(chartId, body) {
   return http(`/api/charts/${encodeURIComponent(chartId)}/profile`,
               { method: 'POST', body: JSON.stringify(body || {}) });
 }
+/** What a build WOULD use, without building (no ti3 written, no colprof): sources, applied and
+ *  not-applied exclusions, holes, guards, refusals and the inputs fingerprint to send back as
+ *  expected_fingerprint. Local, no Z9. */
+export async function previewProfile(chartId, body) {
+  return http(`/api/charts/${encodeURIComponent(chartId)}/profile/preview`,
+              { method: 'POST', body: JSON.stringify(body || {}) });
+}
 /** State of the CURRENT/last profile build for this chart → {state, phase, result|error}. */
 export async function getProfileStatus(chartId) {
   return http(`/api/charts/${encodeURIComponent(chartId)}/profile/status`, { method: 'GET' });

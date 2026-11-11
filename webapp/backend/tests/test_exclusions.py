@@ -298,3 +298,16 @@ def test_patches_expose_use_state_and_exclusion_risk(client):
     assert by[sid_of(G5, (100, 100, 100))]["exclusion_risk"]["level"] == "ok"        # W2 duplicates it
     assert by[sid_of(G5, (0, 0, 0))]["exclusion_risk"]["level"] == "refused"         # unique black
     assert by[edge]["exclusion_risk"]["level"] == "warning"                           # risk if it stays excluded
+
+
+def test_preview_explains_rule_change_and_strong_suspects(client, monkeypatch):
+    cid, d = _chart(client, {"a.ti3": ti3_text(G5)}, {"rejected_readings": {"a.ti3": ["7"]}})   # recorded earlier
+    from webapp.backend.services import measure_qc as qc_service
+    monkeypatch.setattr(qc_service, "cached_report", lambda p: {"patches": [
+        {"sample_id": "7", "status": "strong"}, {"sample_id": "9", "status": "strong"}, {"sample_id": "3", "status": "coherent"}]})
+    p = client.post(f"/api/charts/{cid}/profile/preview", json={"policy": "apply_all"}).json()
+    assert p["newly_applied_vs_legacy"] == [{"chart_id": cid, "scan": "a.ti3", "sids": ["7"]}]   # ignored by legacy last
+    assert p["qc_strong_included"] == [{"chart_id": cid, "scan": "a.ti3", "sids": ["9"]}]       # 7 is excluded
+    assert p["current_inputs_fingerprint"] is None
+    legacy = client.post(f"/api/charts/{cid}/profile/preview", json={}).json()
+    assert legacy["newly_applied_vs_legacy"] == []

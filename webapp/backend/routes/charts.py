@@ -1230,6 +1230,30 @@ def profile_preview(chart_id: str, body: ProfileChartBody) -> dict:
     ptr = profile_versions.read_pointer(d) or {}
     cur_req = ptr.get("request")
     plan = ctx.plan.to_dict()
+    # Rejections that the legacy policy (previous builds) ignored and that apply_all applies:
+    # explained to the user as a change of rule, not as a detector finding.
+    newly = []
+    if ctx.plan.policy == "apply_all":
+        try:
+            legacy = _prepare_build(chart_id, body.model_copy(update={"policy": "legacy"})).plan
+            leg = {(s.chart_id, s.scan): set(s.rejections_applied) for s in legacy.scans}
+            for s in ctx.plan.scans:
+                extra = sorted(set(s.rejections_applied) - leg.get((s.chart_id, s.scan), set()))
+                if extra:
+                    newly.append({"chart_id": s.chart_id, "scan": s.scan, "sids": extra})
+        except (ValueError, HTTPException):
+            newly = []
+    # Strongly suspect readings still INCLUDED (cached QC reports only; never computed here):
+    # a warning, never an obligation to exclude.
+    from webapp.backend.services import measure_qc as qc_service
+    strong = []
+    for s in ctx.plan.scans:
+        rep = qc_service.cached_report(s.path)
+        if rep:
+            sids = [p["sample_id"] for p in rep.get("patches", []) if p.get("status") == "strong"
+                    and p["sample_id"] not in set(s.rejections_applied)]
+            if sids:
+                strong.append({"chart_id": s.chart_id, "scan": s.scan, "sids": sids})
     return {"chart_id": chart_id, "policy": ctx.plan.policy, "base_requested": ctx.plan.base_requested,
             "base_effective": ctx.plan.base_effective, "inputs_fingerprint": ctx.plan.fingerprint,
             "sources": {"current_scans": plan["current_scans"], "extra_scans": plan["extra_scans"],
@@ -1243,7 +1267,9 @@ def profile_preview(chart_id: str, body: ProfileChartBody) -> dict:
             "recommend_remeasure": cov.get("recommend_remeasure", False), "reasons": cov.get("reasons", []),
             "coverage": cov, "colprof_flags": list(ctx.flags),
             "current_build_id": (ptr.get("pointer") or {}).get("build_id"),
-            "differs_from_current_build": (None if not cur_req else _selection_key(cur_req) != _selection_key(req))}
+            "current_inputs_fingerprint": (ptr.get("plan") or {}).get("inputs_fingerprint"),
+            "differs_from_current_build": (None if not cur_req else _selection_key(cur_req) != _selection_key(req)),
+            "newly_applied_vs_legacy": newly, "qc_strong_included": strong}
 
 
 def _profile_status(chart_id: str, d: Path) -> dict:

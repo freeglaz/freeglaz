@@ -100,3 +100,26 @@ def test_backend_start_failure_is_logged_and_shown(monkeypatch, caplog):
     assert shown.get("started") is True
     assert "freeglaz could not start" in shown["html"]
     assert "freeglaz.log" in shown["html"]
+
+
+def test_linux_webkit_defaults_are_set_before_gtk_and_stay_overridable():
+    """The DMA-BUF renderer is disabled by default on Linux (white window otherwise with the
+    proprietary NVIDIA driver, phase 4E), like GDK_BACKEND and compositing — by setdefault, so an
+    exported value wins. Checked in a fresh interpreter: the module sets them at import."""
+    import os
+    import subprocess
+    import sys
+    code = ("import os, json; import webapp.desktop; print(json.dumps({k: os.environ.get(k) for k in "
+            "('GDK_BACKEND', 'WEBKIT_DISABLE_COMPOSITING_MODE', 'WEBKIT_DISABLE_DMABUF_RENDERER')}))")
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("GDK_BACKEND", "WEBKIT_DISABLE_COMPOSITING_MODE", "WEBKIT_DISABLE_DMABUF_RENDERER")}
+
+    def run(**extra):
+        import json
+        out = subprocess.run([sys.executable, "-c", code], env={**env, **extra}, capture_output=True, text=True, timeout=60)
+        assert out.returncode == 0, out.stderr[-500:]
+        return json.loads(out.stdout.strip().splitlines()[-1])
+    if not sys.platform.startswith("linux"):
+        return
+    assert run() == {"GDK_BACKEND": "x11", "WEBKIT_DISABLE_COMPOSITING_MODE": "1", "WEBKIT_DISABLE_DMABUF_RENDERER": "1"}
+    assert run(WEBKIT_DISABLE_DMABUF_RENDERER="0", GDK_BACKEND="wayland")["WEBKIT_DISABLE_DMABUF_RENDERER"] == "0"

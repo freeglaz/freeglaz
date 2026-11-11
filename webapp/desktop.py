@@ -44,12 +44,21 @@ from pathlib import Path
 #   - without WEBKIT_DISABLE_COMPOSITING_MODE=1: the startup animation GLITCHES
 #     (tearing/flicker — accelerated WebKit compositing via Zink/NVK misses its
 #     sync). Disabling it = clean rendering.
+# Observed on the same machine with the PROPRIETARY NVIDIA driver (615.71.09, WebKitGTK
+# 2.54.1), November 2026: with only the two settings above the window stays WHITE.
+# WebKit still uses its DMA-BUF renderer, whose GBM buffer allocation fails ("Failed
+# to create GBM buffer … Invalid argument"); the page is rendered (a WebKit snapshot
+# shows it, the DOM works) but never reaches the screen. Same result in MiniBrowser,
+# with or without a network namespace; WEBKIT_DISABLE_DMABUF_RENDERER=1 makes the real
+# window display normally (shared-memory buffers). The Flatpak launcher already sets
+# it for every user (with Wayland), so it is the default here too.
 # setdefault (NOT an override) → an advanced user can force Wayland or re-enable
-# compositing by exporting the variable (e.g. proprietary NVIDIA driver).
+# compositing / the DMA-BUF renderer by exporting the variable.
 # Meaningless on macOS (WKWebView/Cocoa, not GTK) → Linux ONLY.
 if sys.platform.startswith("linux"):
     os.environ.setdefault("GDK_BACKEND", "x11")
     os.environ.setdefault("WEBKIT_DISABLE_COMPOSITING_MODE", "1")
+    os.environ.setdefault("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
 
 logger = logging.getLogger("freeglaz.desktop")
 

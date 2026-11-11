@@ -1385,6 +1385,68 @@ def get_build_manifest(chart_id: str, build_id: str) -> dict:
         raise HTTPException(422, detail={"error": "unreadable_manifest", "message": str(e)})
 
 
+class CompareBuildsBody(BaseModel):
+    a: str                                    # reference version (build id)
+    b: str                                    # new version (build id)
+    grid_n: int = Field(default=9, ge=3, le=17)
+    top_n: int = Field(default=10, ge=1, le=50)
+
+
+def _excluded_points(chart_id: str, manifest: dict) -> dict:
+    """{(chart, scan, sid): rgb 0-100} of the readings a build EXCLUDED (from its manifest)."""
+    from lib.z9_client import build_inputs as bi
+    out = {}
+    plan = manifest.get("plan") or {}
+    for x in plan.get("current_scans", []) + plan.get("extra_scans", []):
+        if not x.get("rejections_applied"):
+            continue
+        cd = _cache.locate_chart_dir(x["chart_id"])
+        try:
+            rows = dict(bi.read_device_rows(cd / "measurements" / x["scan"])) if cd else {}
+        except (OSError, ValueError):
+            rows = {}
+        for sid in x["rejections_applied"]:
+            if sid in rows:
+                out[(x["chart_id"], x["scan"], sid)] = list(rows[sid])
+    return out
+
+
+@router.post("/{chart_id}/builds/compare")
+def compare_builds(chart_id: str, body: CompareBuildsBody) -> dict:
+    """ΔE00 between the A2B transforms of two STORED versions of this chart's profile (never
+    rebuilt, never installed): measured device values + control grid, relative and perceptual
+    intents, most displaced colours, neighbourhood of the readings excluded in one version only,
+    white and black points. Offline (Argyll xicclu). A transform difference, not a measurement."""
+    from lib.z9_client import profile_diff, profile_versions
+    from lib.z9_client.argyll import ArgyllNotFound
+    d = _chart_dir(chart_id)
+    versions = {v["build_id"]: v for v in profile_versions.list_versions(d)}
+    for bid in (body.a, body.b):
+        if bid not in versions:
+            raise HTTPException(404, detail={"error": "unknown_build", "message": f"unknown build: {bid}"})
+        if not versions[bid]["intact"]:
+            raise HTTPException(409, detail={"error": "altered_build", "message": f"version {bid} is altered"})
+    ma, mb = (profile_versions.read_version_manifest(d, x) for x in (body.a, body.b))
+    ea, eb = _excluded_points(chart_id, ma), _excluded_points(chart_id, mb)
+    focus = ([{"rgb": rgb, "label": f"{k[0]}/{k[1]}/{k[2]}", "excluded_in": "b"} for k, rgb in eb.items() if k not in ea]
+             + [{"rgb": rgb, "label": f"{k[0]}/{k[1]}/{k[2]}", "excluded_in": "a"} for k, rgb in ea.items() if k not in eb])
+    ia, ib = (profile_versions.builds_dir(d) / x / profile_versions.VERSION_ICC for x in (body.a, body.b))
+    try:
+        res = profile_diff.compare_profiles(ia, ib, focus=focus, grid_n=body.grid_n, top_n=body.top_n)
+    except ArgyllNotFound as e:
+        raise HTTPException(503, detail={"error": "argyll_missing", "message": str(e)})
+    except RuntimeError as e:
+        raise HTTPException(422, detail={"error": "lookup_failed", "message": str(e)})
+    for f, src in zip(res["focus"], focus):
+        f["excluded_in"] = src["excluded_in"]
+    return {"chart_id": chart_id, "a": {"build_id": body.a, "label": (ma.get("result") or {}).get("label"),
+                                         "kind": ma.get("kind"), **profile_diff.file_identity(ia)},
+            "b": {"build_id": body.b, "label": (mb.get("result") or {}).get("label"), "kind": mb.get("kind"),
+                  **profile_diff.file_identity(ib)},
+            "identical_files": profile_diff.file_identity(ia)["sha256"] == profile_diff.file_identity(ib)["sha256"],
+            **res}
+
+
 @router.get("/{chart_id}/profile/status")
 def profile_status(chart_id: str) -> dict:
     """State of the CURRENT/last build for THIS chart (background job) → re-attaches the front

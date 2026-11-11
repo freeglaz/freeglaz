@@ -11,6 +11,7 @@ import QCTableModal from '../Charts/QCTableModal.jsx';
 import ProfileBuildPanel from '../Charts/ProfileBuildPanel.jsx';
 import BuildConfirmModal from '../Charts/BuildConfirmModal.jsx';
 import ProfileHistory from './ProfileHistory.jsx';
+import ProfileCompareModal from './ProfileCompareModal.jsx';
 import { useBuildPreview, buildWithPreview } from '../../hooks/useBuildPreview.js';
 import { buildRequestBody, chartStateStamp, classifyBuildError, summarizePreview } from '../../lib/buildPreview.js';
 import MeasurementsModal from '../Charts/MeasurementsModal.jsx';
@@ -77,6 +78,7 @@ export default function MesuresPage({ offline }) {
   const [colprofFlags, setColprofFlags] = useState('');
   const [previewNonce, setPreviewNonce] = useState(0);
   const [confirmKey, setConfirmKey] = useState(null);
+  const [comparePair, setComparePair] = useState(null);   // {a, b} build ids being compared
   // Build request of the current selection + its preview (recomputed on any change of settings,
   // sources, scan roles or exclusions — the stamp — so a confirmation never outlives its inputs).
   const nKeptBuild = (detail?.scans || []).filter((s) => s.kept).length;
@@ -502,7 +504,7 @@ export default function MesuresPage({ offline }) {
                 {/* Status (v2) of the current profile + immutable version history (phase 4D) */}
                 {(prof?.built || prof?.status) && (
                   <ProfileHistory chartId={selected} status={prof?.status}
-                    refreshKey={`${previewNonce}-${prof?.status?.build_id || ''}`}/>
+                    refreshKey={`${previewNonce}-${prof?.status?.build_id || ''}`} onCompare={setComparePair}/>
                 )}
               </section>
 
@@ -536,6 +538,10 @@ export default function MesuresPage({ offline }) {
         <QCTableModal open chartId={id.chart_id} title={id.chart_id}
           onChanged={() => loadDetail(selected)}
           onClose={() => { setAllOpen(false); loadDetail(selected); }}/>
+      )}
+      {comparePair && selected && (
+        <ProfileCompareModal key={`${comparePair.a}/${comparePair.b}`} chartId={selected} a={comparePair.a} b={comparePair.b}
+          onClose={() => setComparePair(null)}/>
       )}
       {confirmKey && confirmKey === preview.key && preview.status === 'ready' && (
         <BuildConfirmModal summary={summarizePreview(preview.data)}

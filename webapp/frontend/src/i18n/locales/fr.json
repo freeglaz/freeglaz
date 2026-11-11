@@ -1794,5 +1794,46 @@
       "changed_title": "La version de colprof diffère de celle utilisée pour construire le profil.",
       "unknown_title": "La version de colprof n'est pas connue d'un côté ou de l'autre."
     }
+  },
+  "profile_compare": {
+    "title": "Comparer deux versions du profil",
+    "loading": "Calcul des écarts entre les deux transformations…",
+    "error": {
+      "argyll_missing": "ArgyllCMS (xicclu) est introuvable : la comparaison ne peut pas être calculée.",
+      "altered_build": "Une des versions est altérée : comparaison impossible.",
+      "unknown_build": "Version introuvable.",
+      "lookup_failed": "Le calcul a échoué.",
+      "network": "Le serveur local ne répond pas.",
+      "error": "Erreur technique."
+    },
+    "identical_files": "Les deux fichiers ICC sont identiques.",
+    "focus_localized": "La lecture {{label}} (exclue dans {{side}}) modifie principalement sa région : ΔE00 {{at}} au patch, jusqu'à {{nearMax}} sur {{nearN}} points voisins ; ailleurs p95 {{farP95}}, max {{farMax}}.",
+    "focus_diffuse": "La lecture {{label}} (exclue dans {{side}}) : ΔE00 {{at}} au patch ; ses {{nearN}} voisins changent jusqu'à {{nearMax}}, le reste jusqu'à {{farMax}} (p95 {{farP95}}) : effet non concentré.",
+    "col": {
+      "intent": "Intention",
+      "set": "Points",
+      "n": "Nb",
+      "mean": "ΔE00 moyen",
+      "p95": "p95",
+      "max": "max"
+    },
+    "intent": {
+      "relative": "Colorimétrique relative",
+      "perceptual": "Perceptuelle"
+    },
+    "set": {
+      "measured": "patchs mesurés",
+      "grid": "grille de contrôle"
+    },
+    "no_perceptual": "Intention perceptuelle non comparée : absente d'un des deux profils.",
+    "top_title": "Couleurs les plus déplacées (colorimétrique relative)",
+    "swatch_note": "Aperçu approximatif des valeurs RGB envoyées",
+    "wb": {
+      "white_point_tag": "Point blanc (tag)",
+      "black_point_tag": "Point noir (tag)",
+      "device_white": "Blanc du support (RGB 255)",
+      "device_black": "Noir (RGB 0)"
+    },
+    "limits": "Écarts entre deux transformations ICC, calculés hors ligne (ArgyllCMS xicclu) sur les patchs mesurés ({{measured}}) et une grille de contrôle {{grid}}³. Ce n'est pas une nouvelle mesure : la comparaison ne dit pas quel profil imprime le mieux. Aucun profil n'est installé ni reconstruit."
   }
 }

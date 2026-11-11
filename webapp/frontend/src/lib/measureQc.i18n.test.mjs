@@ -37,10 +37,11 @@ console.log('Test 1 — i18n keys present in fr AND en');
                  'components/Charts/ExclusionDialog.jsx', 'components/Charts/QCTableModal.jsx', 'lib/exclusion.js',
                  'components/Charts/BuildPreviewSummary.jsx', 'components/Charts/BuildConfirmModal.jsx', 'lib/buildPreview.js',
                  'components/Mesures/ProfileHistory.jsx', 'lib/profileHistory.js',
+                 'components/Mesures/ProfileCompareModal.jsx', 'lib/profileCompare.js',
                  'components/Charts/ScanKeepList.jsx', 'components/Charts/ArgyllProfileWizard.jsx', 'lib/measureQc.js'];
   const literal = new Set();
   for (const f of files) {
-    for (const m of read(join(src, f)).matchAll(/['"`]((?:measure_qc|scan\.measures|exclusion|build_preview|profile_history)\.[A-Za-z0-9_.]+)['"`]/g)) literal.add(m[1]);
+    for (const m of read(join(src, f)).matchAll(/['"`]((?:measure_qc|scan\.measures|exclusion|build_preview|profile_history|profile_compare)\.[A-Za-z0-9_.]+)['"`]/g)) literal.add(m[1]);
   }
   const dyn = [
     ...STATUSES.map((s) => `measure_qc.status.${s}`), ...STATUSES.map((s) => `measure_qc.status_title.${s}`),
@@ -65,6 +66,9 @@ console.log('Test 1 — i18n keys present in fr AND en');
     ...['up_to_date', 'stale', 'missing_input', 'unknown', 'no_profile'].flatMap((k) => [`profile_history.state.${k}`, `profile_history.state.${k}_title`]),
     ...['changed', 'unknown'].flatMap((k) => [`profile_history.toolchain.${k}`, `profile_history.toolchain.${k}_title`]),
     'profile_history.title',
+    ...['argyll_missing', 'altered_build', 'unknown_build', 'lookup_failed', 'network', 'error'].map((k) => `profile_compare.error.${k}`),
+    ...['relative', 'perceptual'].map((k) => `profile_compare.intent.${k}`), ...['measured', 'grid'].map((k) => `profile_compare.set.${k}`),
+    ...['white_point_tag', 'black_point_tag', 'device_white', 'device_black'].map((k) => `profile_compare.wb.${k}`),
   ];
   // a literal that names a NAMESPACE is a prefix used to compose keys (each composed key is in `dyn`)
   for (const k of [...literal]) if (get(locales.fr, k) && typeof get(locales.fr, k) === 'object') literal.delete(k);

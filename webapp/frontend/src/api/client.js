@@ -1376,6 +1376,11 @@ export async function listBuilds(chartId) {
 export async function getBuildManifest(chartId, buildId) {
   return http(`/api/charts/${encodeURIComponent(chartId)}/builds/${encodeURIComponent(buildId)}/manifest`, { method: 'GET' });
 }
+/** ΔE00 between the A2B transforms of two STORED versions (offline, never rebuilt nor installed). */
+export async function compareBuilds(chartId, a, b, opts = {}) {
+  return http(`/api/charts/${encodeURIComponent(chartId)}/builds/compare`,
+              { method: 'POST', body: JSON.stringify({ a, b, ...opts }) });
+}
 /** State of the CURRENT/last profile build for this chart → {state, phase, result|error}. */
 export async function getProfileStatus(chartId) {
   return http(`/api/charts/${encodeURIComponent(chartId)}/profile/status`, { method: 'GET' });

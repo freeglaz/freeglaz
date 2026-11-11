@@ -1794,5 +1794,46 @@
       "changed_title": "The colprof version differs from the one used to build the profile.",
       "unknown_title": "The colprof version is unknown on one side or the other."
     }
+  },
+  "profile_compare": {
+    "title": "Compare two versions of the profile",
+    "loading": "Computing the differences between the two transforms…",
+    "error": {
+      "argyll_missing": "ArgyllCMS (xicclu) not found: the comparison cannot be computed.",
+      "altered_build": "One of the versions is altered: comparison impossible.",
+      "unknown_build": "Version not found.",
+      "lookup_failed": "The computation failed.",
+      "network": "The local server does not answer.",
+      "error": "Technical error."
+    },
+    "identical_files": "The two ICC files are identical.",
+    "focus_localized": "Reading {{label}} (excluded in {{side}}) mainly changes its region: ΔE00 {{at}} at the patch, up to {{nearMax}} over {{nearN}} neighbouring points; elsewhere p95 {{farP95}}, max {{farMax}}.",
+    "focus_diffuse": "Reading {{label}} (excluded in {{side}}): ΔE00 {{at}} at the patch; its {{nearN}} neighbours change up to {{nearMax}}, the rest up to {{farMax}} (p95 {{farP95}}): not a concentrated effect.",
+    "col": {
+      "intent": "Intent",
+      "set": "Points",
+      "n": "Count",
+      "mean": "mean ΔE00",
+      "p95": "p95",
+      "max": "max"
+    },
+    "intent": {
+      "relative": "Relative colorimetric",
+      "perceptual": "Perceptual"
+    },
+    "set": {
+      "measured": "measured patches",
+      "grid": "control grid"
+    },
+    "no_perceptual": "Perceptual intent not compared: missing from one of the profiles.",
+    "top_title": "Most displaced colours (relative colorimetric)",
+    "swatch_note": "Approximate preview of the RGB values sent",
+    "wb": {
+      "white_point_tag": "White point (tag)",
+      "black_point_tag": "Black point (tag)",
+      "device_white": "Paper white (RGB 255)",
+      "device_black": "Black (RGB 0)"
+    },
+    "limits": "Differences between two ICC transforms, computed offline (ArgyllCMS xicclu) on the measured patches ({{measured}}) and a {{grid}}³ control grid. This is not a new measurement: the comparison does not say which profile prints better. No profile is installed or rebuilt."
   }
 }

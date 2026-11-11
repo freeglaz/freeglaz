@@ -109,3 +109,23 @@ def test_compare_route_uses_stored_versions_and_derives_focus(client, monkeypatc
     from lib.z9_client.argyll import ArgyllNotFound
     monkeypatch.setattr(pdf, "compare_profiles", lambda *a, **k: (_ for _ in ()).throw(ArgyllNotFound("xicclu")))
     assert client.post(f"/api/charts/{cid}/builds/compare", json={"a": a, "b": b}).json()["detail"]["error"] == "argyll_missing"
+
+
+ARGYLL_REF = __import__("pathlib").Path("/usr/share/color/argyll/ref")
+
+
+@pytest.mark.skipif(not (ARGYLL_REF / "sRGB.icm").is_file() or not (ARGYLL_REF / "ClayRGB1998.icm").is_file()
+                    or __import__("shutil").which("xicclu") is None, reason="ArgyllCMS (xicclu + ref profiles) not installed")
+def test_real_xicclu_lookups_on_argyll_reference_profiles():
+    """The real lookup path (xicclu, float Lab) on two matrix profiles shipped with Argyll: a profile
+    against itself gives exactly 0; sRGB against ClayRGB (Adobe RGB 1998 primaries) differs in the
+    saturated greens, same D50-adapted white. No targ tag → no measured set, no A2B0 → relative only."""
+    srgb, clay = ARGYLL_REF / "sRGB.icm", ARGYLL_REF / "ClayRGB1998.icm"
+    same = pdf.compare_profiles(srgb, srgb, grid_n=5)
+    assert same["intents"]["relative"]["grid"]["max"] == 0 and same["intents"]["relative"]["measured"] is None
+    assert not same["method"]["perceptual_compared"]
+    diff = pdf.compare_profiles(srgb, clay, grid_n=5, focus=[{"rgb": [0, 100, 50], "label": "green"}])
+    g = diff["intents"]["relative"]["grid"]
+    assert g["n"] == 125 and g["max"] > 5 and g["top"][0]["rgb255"][1] == 255
+    assert diff["white_black"]["device_white"]["de00"] < 0.01
+    assert diff["focus"][0]["de00_at_point"] > 5

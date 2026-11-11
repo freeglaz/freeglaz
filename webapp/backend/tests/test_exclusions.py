@@ -229,6 +229,7 @@ def test_reversibility_a_b_c(client, monkeypatch):
 def test_profile_status_new_semantics(client, monkeypatch):
     cid, d = _chart(client, {"a.ti3": ti3_text(G5), "b.ti3": ti3_text(G5)})
     _fake_colprof(monkeypatch)
+    monkeypatch.setattr(bi, "software_versions", lambda: {"colprof": "3.4.1"})   # recorded at build time
     status = lambda: client.get(f"/api/charts/{cid}").json()["profile"]["status"]  # noqa: E731
     (d / f"{cid}.icc").write_bytes(b"OLD PROFILE")
     assert status()["state"] == "unknown"                                   # no reliable manifest
@@ -241,8 +242,11 @@ def test_profile_status_new_semantics(client, monkeypatch):
     assert status()["state"] == "stale"
     excl(client, cid, "b.ti3", "2", excluded=False)
     assert status()["state"] == "up_to_date"
+    assert status()["toolchain_changed"] is False
     monkeypatch.setattr(bi, "software_versions", lambda: {"colprof": "9.9.9"})
     assert status()["toolchain_changed"] is True
+    monkeypatch.setattr(bi, "software_versions", lambda: {"colprof": None})      # Argyll absent now
+    assert status()["toolchain_changed"] is None                                  # unknown, not "unchanged"
     (d / "measurements" / "b.ti3").unlink()
     s = status()
     assert s["state"] == "missing_input" and s["missing_input"][0]["scan"] == "b.ti3"

@@ -1223,7 +1223,8 @@ def _profile_status(chart_id: str, d: Path) -> dict:
     missing += [{"kind": "profile", "path": p} for p in req.get("source_profiles") or [] if not Path(p).is_file()]
     cur_colprof = build_inputs.software_versions().get("colprof")
     built_colprof = (ptr.get("software") or {}).get("colprof")
-    toolchain = bool(cur_colprof and built_colprof and cur_colprof != built_colprof)
+    # None = unknown (a version missing on either side): never asserted either way
+    toolchain = (cur_colprof != built_colprof) if (cur_colprof and built_colprof) else None
     if missing:
         return {**base, "state": "missing_input", "stale": True, "missing_input": missing, "toolchain_changed": toolchain}
     replay = ProfileChartBody(colprof_flags=req.get("colprof_flags"), profile_base=req.get("base"),

@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { saveFile } from '../../lib/fileIO.js';
+import { compareNatural } from '../../lib/naturalSort.js';
 import { X, Ban, RotateCcw, AlertTriangle, ArrowUp, ArrowDown } from 'lucide-react';
 import * as api from '../../api/client.js';
 
@@ -40,8 +41,10 @@ export default function QCTableModal({ open, chartId, title, onClose, onChanged 
 
   const sorted = useMemo(() => {
     if (!qc?.patches) return [];
-    const fn = sortKey === 'id' ? ((p) => p.id) : ((p) => p.disagreement);
-    const arr = [...qc.patches].sort((a, b) => (fn(a) > fn(b) ? 1 : fn(a) < fn(b) ? -1 : 0));
+    // ids are SAMPLE_ID strings → natural order ("2" before "10"), not lexicographic.
+    const cmp = sortKey === 'id' ? ((a, b) => compareNatural(a.id, b.id))
+              : ((a, b) => a.disagreement - b.disagreement);
+    const arr = [...qc.patches].sort(cmp);
     return sortDir === 'desc' ? arr.reverse() : arr;
   }, [qc, sortKey, sortDir]);
 
@@ -57,7 +60,7 @@ export default function QCTableModal({ open, chartId, title, onClose, onChanged 
     setBusy(true); setErr(null);
     api.setReadingRejected(chartId, ti3, sampleId, rejected)
       .then(() => { load(); onChanged?.(); })
-      .catch((e) => setErr((e?.message || '').includes('409')
+      .catch((e) => setErr(e?.status === 409
         ? t('scan.qc.last_valid') : (e?.message || t('scan.qc.reject_failed'))))
       .finally(() => setBusy(false));
   };

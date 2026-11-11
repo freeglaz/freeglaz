@@ -550,7 +550,7 @@ export default function MesuresPage({ offline }) {
       {scanWizard && (
         <ArgyllProfileWizard open mode="scan" paper={scanWizard.paper} ge={scanWizard.ge}
           initialChart={scanWizard.chart}
-          onClose={() => { setScanWizard(null); reload(); }}/>
+          onClose={() => { setScanWizard(null); reload(); loadDetail(selected); }}/>
       )}
     </div>
   );

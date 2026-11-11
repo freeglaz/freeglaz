@@ -426,11 +426,11 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
         // Inter-chart lock → offer a DIRECT "finish the blocking session" action
         // (modal below) instead of a dead-end text refusal.
         setSessionBlockedBy(e.detail.chart_id);
-      } else if (msg.includes('429')) {             // SOL cooldown (server hard guard)
+      } else if (e?.status === 429) {               // SOL cooldown (server hard guard)
         const st = await api.getScanStatus(selected.chart_id).catch(() => null);
         _startCooldown(st?.cooldown_remaining_s || 30);
         setError(t('scan.roll.cooldown_sol'));
-      } else if (e?.status === 409 || msg.includes('409')) {  // scan already in progress
+      } else if (e?.status === 409) {               // scan already in progress
         setError(t('scan.roll.already_running'));
       } else {
         setError(msg || t('scan.roll.scan_failed'));
@@ -447,7 +447,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
       const r = await api.getScanDelta(chart.chart_id);
       setConcordanceDelta({ ...r, _chartId: chart.chart_id });
     } catch (e) {
-      setError((e?.message || '').includes('409')
+      setError(e?.status === 409
         ? t('scan.roll.less_than_two_scans')
         : (e?.message || t('scan.roll.concordance_unavailable')));
     }

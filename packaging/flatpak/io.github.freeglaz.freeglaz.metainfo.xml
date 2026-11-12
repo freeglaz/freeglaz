@@ -69,6 +69,24 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.1.15" date="2026-11-12">
+      <description>
+        <p>
+          Measurements are now checked before profiling. Each reading of a
+          scan is compared with the other colours of the same chart, and
+          suspicious readings are flagged in the Measurements window and after
+          a scan. The check only advises: nothing is ever excluded
+          automatically.
+        </p>
+        <p>
+          Any reading can be excluded and re-included at any time. Before each
+          profile build, a preview shows which readings are used and what
+          their exclusion changes. Every build is kept as a version: a chart
+          shows the history of its profiles, two versions can be compared, and
+          replacing a profile in the library keeps the previous one.
+        </p>
+      </description>
+    </release>
     <release version="0.1.14" date="2026-10-11">
       <description>
         <p>

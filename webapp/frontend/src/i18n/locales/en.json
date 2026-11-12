@@ -1218,7 +1218,13 @@
       "title_other": "Measurements — {{count}} patches",
       "view": "View measurements",
       "delete": "Delete this measurement set",
-      "unavailable": "measurements unavailable"
+      "title_plain": "Measurements",
+      "loading": "Loading measurements…",
+      "error": {
+        "not_found": "Scan not found: this measurement file no longer exists in the chart.",
+        "unreadable": "Unreadable measurements: this scan's ti3 file is damaged or incomplete. The technical details are recorded in the freeglaz log (freeglaz.log).",
+        "unavailable": "Measurements unavailable: technical error while reading. Try again."
+      }
     },
     "qc": {
       "title_one": "Quality control — {{count}} patch",
@@ -1349,7 +1355,7 @@
     "profile_name_ascii_only": "ASCII characters only (no accents).",
     "profile_name_maxlen": "Maximum 63 characters (ICC desc limit).",
     "profile_conflict_title": "Profile already exists",
-    "profile_conflict_body": "A profile « {{name}} » already exists for this paper. « Replace » fully overwrites the existing profile (measurements, tags and notes). To keep them, choose « Keep both ».",
+    "profile_conflict_body": "A profile “{{name}}” already exists in this paper's library. “Replace” puts the new profile in its place; the old file is kept, with its tags and notes, in the paper's backups (.replaced folder, not listed). Tags and notes are not carried over to the new profile. “Keep both” adds the new profile under another name and leaves the old one untouched.",
     "profile_conflict_keep_both": "Keep both",
     "profile_conflict_replace": "Replace",
     "build_done": "Profile built",
@@ -1358,7 +1364,8 @@
     "build_done_installable": "Ready to install on the printer.",
     "build_done_not_ranged": "Profile built, but not filed (unknown printer) — not installable.",
     "loading": "Loading…",
-    "no_charts": "No chart."
+    "no_charts": "No chart.",
+    "profile_conflict_body_build": "A profile “{{name}}” already exists in this paper's library. “Replace” puts the new profile in its place; the old file is kept, with its tags and notes, in the paper's backups (.replaced folder, not listed). Tags and notes are not carried over to the new profile. “Keep both” adds the new profile under another name and leaves the old one untouched. Every version built from this chart stays in its history."
   },
   "chart_create": {
     "kicker": "FREE CHART",
@@ -1453,5 +1460,385 @@
     "profile_done_local": "Profile built (in the chart folder). Filing by paper unavailable (printer not identified at creation).",
     "colprof_line": "colprof options (profile generation)",
     "colprof_help": "colprof help"
+  },
+  "measure_qc": {
+    "open": "See details",
+    "open_measures": "See the measurements and the check",
+    "export_title": "Exports all measurements (not only the filter), with the check columns when available.",
+    "summary": {
+      "loading": "Checking measurement consistency…",
+      "attention_one": "{{count}} measurement deserves your attention.",
+      "attention_other": "{{count}} measurements deserve your attention.",
+      "limited_one": "No inconsistency detected by this check, with one limit: {{count}} measurement not assessable.",
+      "limited_other": "No inconsistency detected by this check, with limits: {{count}} measurements not assessable.",
+      "limited_no_na": "No inconsistency detected by this check, with limits (see below).",
+      "limited_check": "Limited consistency check.",
+      "attention_findings": "Overall inconsistency detected: see below.",
+      "clean": "No inconsistency detected by this check.",
+      "counts": "{{n}} patches examined · {{strong}} strongly suspect · {{to_check}} to check · {{na}} not assessable",
+      "disclaimer": "Advisory check: each measurement is compared with the other colours of the same chart. It removes nothing, does not validate the measurements and does not guarantee the profile. A smooth drift of a whole region can escape it."
+    },
+    "state": {
+      "invalid": "Check impossible: measurements not analysable ({{reason}}). This is not a \"no anomaly\" result.",
+      "unavailable": "Quality check unavailable for this scan.",
+      "error": "Technical error in the quality check. This is not a \"no anomaly\" result.",
+      "measurements_shown": "The readable measurements are still shown below, without the consistency check."
+    },
+    "error": {
+      "unknown": "unknown reason",
+      "TRUNCATED": "truncated ti3 file",
+      "NO_DATA": "no measurement data",
+      "MERGED_FILE": "file merging several scans",
+      "MISSING_COLUMNS": "required columns missing",
+      "SHORT_ROW": "incomplete measurement row",
+      "DUPLICATE_SAMPLE_ID": "duplicate patch identifiers",
+      "INVALID_VALUE": "non-numeric value",
+      "RGB_OUT_OF_RANGE": "RGB values outside 0–100",
+      "INVALID_COLORIMETRY": "missing or invalid colorimetry (XYZ/Lab)",
+      "SCAN_NOT_FOUND": "scan not found",
+      "NOT_A_RAW_SCAN": "not a raw scan file",
+      "UNREADABLE": "unreadable file"
+    },
+    "status": {
+      "strong": "Strongly suspect",
+      "to_check": "To check",
+      "not_assessable": "Not assessable",
+      "coherent": "Consistent"
+    },
+    "status_title": {
+      "strong": "Large and reliable deviation from the other colours of the chart, or a failed physical check. Worth examining: it does not prove the measurement is wrong.",
+      "to_check": "Moderate deviation from the other colours of the chart: worth a look, no conclusion.",
+      "not_assessable": "The check cannot judge this measurement (insufficient or inconsistent neighbourhood). This is a limit of the check: neither a validation nor an error.",
+      "coherent": "Consistent with the other colours of the chart according to this check (not a validation)."
+    },
+    "position": {
+      "interior": "interior",
+      "face": "face",
+      "edge": "edge",
+      "corner": "corner"
+    },
+    "model": {
+      "linear": "linear",
+      "quadratic": "quadratic"
+    },
+    "reliability": {
+      "ok": "reliable ({{model}})",
+      "short_ok": "reliable",
+      "weak": "unreliable",
+      "assessable": "reliable prediction",
+      "not_assessable": "unreliable prediction"
+    },
+    "reason": {
+      "PHYS_LIGHTER_THAN_PAPER": "Lighter than the paper (L* {{l}} > white {{white_l}})",
+      "PHYS_WHITE_SUSPECT": "Paper white reading suspect: {{n_lighter}} patches lighter than it",
+      "PHYS_CHROMA": "Physically implausible chroma ({{chroma}})",
+      "PHYS_NEGATIVE_XYZ": "Negative XYZ values",
+      "DUP_DISCORDANT": "Discordant repeated readings: {{dist_to_median}} ΔE00 from the median of the {{n}} readings of this patch",
+      "DUP_PAIR_DIVERGENT": "The 2 readings of this patch differ by {{disagreement}} ΔE00",
+      "DUP_TWIN_DIVERGES": "Its duplicate deviates from the neighbours; this reading is consistent",
+      "DUP_CONFIRMED": "Confirmed by {{n}} agreeing readings of this patch",
+      "MODEL_RESIDUAL": "Inconsistent with the neighbouring patches: deviation {{residual}} ΔE00 (score {{score}})",
+      "MODEL_EXTRAPOLATION": "Unreliable prediction: extrapolation (edge or corner of the cube)",
+      "MODEL_INCOHERENT_NEIGHBORHOOD": "Unreliable prediction: neighbours inconsistent with each other or a very curved response",
+      "MODEL_SPARSE": "Unreliable prediction: neighbourhood too sparse",
+      "HIGH_DEVIATION_UNRELIABLE_PREDICTION": "Large deviation ({{residual}} ΔE00) but unreliable prediction: re-measure rather than conclude",
+      "MONOTONIC_INVERSION": "Lightness inversion: darker than patches carrying more ink ({{n_inversions}})"
+    },
+    "finding": {
+      "SET_INCOHERENT": "Globally inconsistent set: {{pct}} % of the patches have an inconsistent neighbourhood. Check the chart (offset, wrong file) before examining patches one by one.",
+      "ZONE_INCOHERENT": "Inconsistent zone: {{n}} patches around RGB ({{rgb}}). Re-measuring the zone is safer than judging each patch.",
+      "SET_INCOHERENT_LOW_DENSITY": "Neighbourhoods often inconsistent ({{pct}} % of the patches) on a sparse chart: this may come from the low density rather than from a mis-attributed chart. The check is not very conclusive on this chart.",
+      "LOW_DENSITY": "Sparse chart ({{n}} patches): the sensitivity of the check is reduced."
+    },
+    "warning": {
+      "LAB_COLUMNS_INCONSISTENT_WITH_XYZ": "The file's Lab columns do not match its XYZ: the check uses the XYZ (what colprof reads).",
+      "NO_XYZ_LAB_COLUMNS_USED": "No XYZ in the file: the check uses the Lab columns.",
+      "XYZ_SCALE_0_1_RESCALED": "XYZ given on the 0–1 scale: rescaled to 0–100 for the check.",
+      "NUMBER_OF_SETS_MISMATCH": "The patch count declared in the file does not match the rows present.",
+      "MERGED_FILE_ANALYSED": "A file merging several sources was analysed: duplicates come from other scans.",
+      "IDENTICAL_DUPLICATE_ROWS": "Strictly identical measurement rows: not counted as independent readings."
+    },
+    "table": {
+      "status": "Check",
+      "swatch": "Preview ≈",
+      "swatch_title": "Approximate on-screen preview (sRGB): measured | predicted. Not faithful outside the sRGB gamut; the numbers are the reference.",
+      "swatch_cell": "≈ sRGB — measured Lab {{measured}} | predicted Lab {{predicted}}",
+      "out_of_srgb": "colour outside sRGB: approximate preview",
+      "device_swatch_title": "RGB value sent to the printer (not the measured colour)",
+      "de00": "ΔE pred.",
+      "de00_title": "ΔE00 between the measurement and the prediction made from the other patches",
+      "position": "Position",
+      "reason": "Reason",
+      "reliability": "Prediction",
+      "reliability_title": "Reliability of the prediction (not of the measurement)"
+    },
+    "sort": {
+      "suspicion": "By suspicion",
+      "natural": "Patch order"
+    },
+    "filter": {
+      "all": "All ({{n}})",
+      "flagged": "Flagged ({{n}})",
+      "not_assessable": "Not assessable ({{n}})",
+      "all_title": "All measurements",
+      "flagged_title": "Strongly suspect, to check AND not assessable",
+      "not_assessable_title": "Measurements the check cannot judge",
+      "empty": "No measurement in this filter.",
+      "excluded": "Excluded ({{n}})",
+      "excluded_title": "Readings excluded from the next profile by your decision"
+    },
+    "detail": {
+      "lab_measured": "Measured Lab",
+      "lab_predicted": "Predicted Lab",
+      "de00": "ΔE00 measured–predicted",
+      "score": "Score",
+      "position": "Position in the RGB cube",
+      "neighbors": "Neighbourhood",
+      "neighbors_value": "{{n}} neighbours · {{model}} model · effective neighbours {{neff}}",
+      "reliability": "Reliability",
+      "duplicates": "Repeated readings",
+      "duplicates_value": "{{n}} readings ({{ids}}) · max disagreement {{dis}} ΔE00",
+      "identical_values": "strictly identical values",
+      "reasons": "Reasons",
+      "no_reason": "none"
+    },
+    "badge": {
+      "attention_one": "{{count}} to examine",
+      "attention_other": "{{count}} to examine",
+      "limits_one": "{{count}} not assessable",
+      "limits_other": "{{count}} not assessable",
+      "finding": "overall inconsistency",
+      "limited_check": "limited check",
+      "title": "Measurement consistency check of this scan (advisory). Click for details."
+    }
+  },
+  "exclusion": {
+    "dialog": {
+      "title": "Exclude reading {{sid}}",
+      "subject": "Patch {{sid}} · scan {{scan}} · RGB {{rgb}}",
+      "checking": "Evaluating the consequences…"
+    },
+    "impact": {
+      "duplicate": "Another compatible reading of this colour remains ({{n}}): simple exclusion.",
+      "interior": "Last reading of this interior patch: it will be interpolated from its neighbours.",
+      "face": "Last reading of this face patch: it will be interpolated from its neighbours.",
+      "edge": "Last reading of this edge patch: the profile will be less constrained along this edge.",
+      "corner": "Last reading of a cube corner: the profile will be much less constrained in this region.",
+      "refused_white": "This is the last reading of white: excluding it would make the profile impossible to build.",
+      "refused_black": "This is the last reading of black: excluding it would distort the profile's black point."
+    },
+    "level_explain": {
+      "ok": "No patch is left without a measurement.",
+      "info": "Information: the profile will estimate this colour from the neighbouring measurements.",
+      "warning": "Warning: accuracy may drop locally.",
+      "strong_warning": "Strong warning: a new measurement is preferable if the patch is doubtful.",
+      "refused": "Exclusion refused."
+    },
+    "base": {
+      "last": "\"Last scan\" build",
+      "average": "\"Average\" build"
+    },
+    "base_not_used": "scan not used in this mode",
+    "base_level": {
+      "ok": "no consequence",
+      "info": "interpolation (information)",
+      "warning": "warning",
+      "strong_warning": "strong warning",
+      "refused": "build refused in this mode"
+    },
+    "bases_differ": "The consequences differ depending on the build mode chosen.",
+    "recommend_remeasure": "new measurement recommended",
+    "refused_advice": "Measure the chart again, or add a scan containing a valid reading of this patch.",
+    "reason_label": "Reason (optional, for the record)",
+    "reason": {
+      "none": "— none —",
+      "doubtful": "Doubtful measurement",
+      "visible_defect": "Visible defect on the print",
+      "other": "Other"
+    },
+    "reason_other_placeholder": "Specify…",
+    "reason_informative": "The reason is kept for information; it does not influence the profile build.",
+    "confirm": "Exclude this reading",
+    "exclude": "Exclude",
+    "exclude_title": "Exclude this reading from the next profile (reversible)",
+    "reinclude": "Re-include",
+    "reinclude_title": "Re-include this reading in the next profile",
+    "use": {
+      "included": "Included",
+      "excluded": "Excluded",
+      "excluded_title": "Excluded from the next profile by your decision (reversible)"
+    },
+    "table": {
+      "use": "Use",
+      "use_title": "Included in or excluded from the next profile — independent of the QC check",
+      "risk": "If excluded",
+      "risk_title": "Consequence announced if this reading were excluded (confirmed at the time of the action)"
+    },
+    "risk": {
+      "ok": "duplicate",
+      "info": "interpolated",
+      "warning": "edge",
+      "strong_warning": "corner",
+      "refused": "refused"
+    },
+    "risk_title": {
+      "ok": "Another compatible reading remains",
+      "info": "Interior or face patch: interpolated",
+      "warning": "Edge patch: warning",
+      "strong_warning": "Cube corner: strong warning",
+      "refused": "Last white or black: exclusion refused"
+    },
+    "scan_excluded_hint": "This scan is excluded: readings can only be excluded in an included scan.",
+    "error": {
+      "refused": "Exclusion refused by the structural-point check.",
+      "scan_excluded": "This scan is excluded: include it again to manage its readings.",
+      "not_found": "Reading or scan not found: the data may have changed. The view was refreshed.",
+      "unreadable": "Unreadable measurements: this exclusion cannot be evaluated.",
+      "network": "The local server does not answer: nothing was saved.",
+      "error": "Technical error: nothing was saved."
+    }
+  },
+  "build_preview": {
+    "loading": "Computing the build preview…",
+    "error": "Preview unavailable: {{message}}. Building is disabled.",
+    "title": "Build preview",
+    "base_fallback": "Requested base: {{requested}} — base actually used: {{effective}}.",
+    "base_used": "Base used: {{base}}.",
+    "base": {
+      "last": "last scan",
+      "average": "average of the scans"
+    },
+    "excluded_one": "{{count}} excluded reading will be applied",
+    "excluded_other": "{{count}} excluded readings will be applied",
+    "inactive_one": "{{count}} exclusion inactive in this mode",
+    "inactive_other": "{{count}} exclusions inactive in this mode",
+    "holes_one": "{{count}} patch without any measurement",
+    "holes_other": "{{count}} patches without any measurement",
+    "newly_applied_one": "The current build uses the former rule (\"last scan\" base without exclusions): {{count}} recorded exclusion is not applied in it; this build will apply it. An effect of the rule, not a new finding of the check.",
+    "newly_applied_other": "The current build uses the former rule (\"last scan\" base without exclusions): {{count}} recorded exclusions are not applied in it; this build will apply them. An effect of the rule, not a new finding of the check.",
+    "strong_included_one": "{{count}} strongly suspect measurement stays included: you may review it before building.",
+    "strong_included_other": "{{count}} strongly suspect measurements stay included: you may review them before building.",
+    "guard": {
+      "HOLE_INTERIOR": "interior patch interpolated",
+      "HOLE_FACE": "face patch interpolated",
+      "HOLE_EDGE": "edge patch without measurement",
+      "HOLE_CORNER": "cube corner without measurement",
+      "QC_ZONE_INCOHERENT": "zone flagged inconsistent by the check",
+      "QC_SET_INCOHERENT_ISOLATED_EXCLUSIONS": "globally inconsistent set: isolated exclusions discouraged"
+    },
+    "recommend": "Measuring the chart again is recommended.",
+    "reason": {
+      "STRUCTURAL_POINT_LOST": "structural point lost",
+      "CORNERS_MISSING": "several corners without measurement",
+      "EDGE_COVERAGE": "poorly covered edge",
+      "HOLE_CLUSTER": "neighbouring holes",
+      "WIDE_GAP": "wide gap",
+      "TOO_MANY_HOLES": "too many patches without measurement",
+      "QC_ZONE_INCOHERENT": "inconsistent zone",
+      "QC_SET_INCOHERENT_ISOLATED_EXCLUSIONS": "inconsistent set"
+    },
+    "refusal": {
+      "WHITE_LAST_READING": "Build impossible: white has no reading left in the scans used. Re-include it, change the base or measure again.",
+      "BLACK_LAST_READING": "Build impossible: black has no reading left in the scans used. Re-include it, change the base or measure again."
+    },
+    "differs_current": "The inputs differ from those of the current profile: the build will produce a different profile.",
+    "same_as_current": "Same inputs as the current profile.",
+    "show_list": "Show the list of exclusions",
+    "list_applied": "Applied:",
+    "list_inactive": "Inactive in this mode:",
+    "list_unmatched": "Not found in the scan:",
+    "inactive_reason": {
+      "not_used_by_base_last": "scan not used by \"last scan\"",
+      "scan_excluded": "scan excluded",
+      "scan_not_found": "scan not found",
+      "legacy_last_ignores_rejections": "ignored by the former mode"
+    },
+    "confirm_title": "Build the profile with these choices?",
+    "confirm_note": "The current profile and every previous version are kept. Exclusions remain reversible.",
+    "confirm": "Build the profile",
+    "inputs_changed": "The measurements or the choices changed since the preview: the preview was recomputed, check it and confirm again.",
+    "coverage_refused": "The build was refused: a structural point has no measurement left. The preview was recomputed.",
+    "selection_differs": "Your current choices also differ from those of the current build.",
+    "newly_applied_neutral_one": "{{count}} recorded exclusion will be applied. The current profile has no reliable manifest: whether it took it into account cannot be known.",
+    "newly_applied_neutral_other": "{{count}} recorded exclusions will be applied. The current profile has no reliable manifest: whether it took them into account cannot be known."
+  },
+  "profile_history": {
+    "title_one": "Profile history ({{count}} version)",
+    "title_other": "Profile history ({{count}} versions)",
+    "loading": "Loading the history…",
+    "error": "History unavailable.",
+    "publication": "Publication state: {{state}} (repaired at the next build).",
+    "empty": "No version recorded.",
+    "select": "Select version {{id}} for the comparison",
+    "preserved": "Earlier profile",
+    "current": "current",
+    "corrupt": "altered version",
+    "provenance_unknown": "Earlier profile — unknown provenance (built before version tracking).",
+    "provenance_partial": "Earlier profile — partial provenance (original description kept).",
+    "summary": "Base: {{base}} · {{scans}} scan(s) · {{extra}} added chart(s) · {{profiles}} source profile(s) · {{excluded}} excluded reading(s) · {{holes}} patch(es) without measurement",
+    "no_manifest": "manifest unavailable",
+    "compare": "Compare the two selected versions",
+    "kept_note": "Every version is kept; nothing is deleted automatically.",
+    "state": {
+      "up_to_date": "Profile matches its inputs",
+      "stale": "Inputs changed since the build",
+      "missing_input": "A source used is unavailable",
+      "unknown": "Situation undetermined",
+      "no_profile": "No profile",
+      "up_to_date_title": "The same request, made now, would use exactly the same inputs.",
+      "stale_title": "The measurements, exclusions or sources changed since the build: the profile is not defective, but a rebuild would give a different profile.",
+      "missing_input_title": "A scan, chart or source profile used no longer exists.",
+      "unknown_title": "Cannot be determined with certainty (profile without a reliable manifest).",
+      "no_profile_title": "No profile built."
+    },
+    "toolchain": {
+      "changed": "Different profiling tool",
+      "unknown": "Tool version uncertain",
+      "changed_title": "The colprof version differs from the one used to build the profile.",
+      "unknown_title": "The colprof version is unknown on one side or the other."
+    }
+  },
+  "profile_compare": {
+    "title": "Compare two versions of the profile",
+    "loading": "Computing the differences between the two transforms…",
+    "error": {
+      "argyll_missing": "ArgyllCMS (xicclu) not found: the comparison cannot be computed.",
+      "altered_build": "One of the versions is altered: comparison impossible.",
+      "unknown_build": "Version not found.",
+      "lookup_failed": "The computation failed.",
+      "network": "The local server does not answer.",
+      "error": "Technical error."
+    },
+    "identical_files": "The two ICC files are identical.",
+    "col": {
+      "intent": "Intent",
+      "set": "Points",
+      "n": "Count",
+      "mean": "mean ΔE00",
+      "p95": "p95",
+      "max": "max"
+    },
+    "intent": {
+      "relative": "Relative colorimetric",
+      "perceptual": "Perceptual"
+    },
+    "set": {
+      "measured": "measured patches",
+      "grid": "control grid"
+    },
+    "no_perceptual": "Perceptual intent not compared: missing from one of the profiles.",
+    "top_title": "Most displaced colours (relative colorimetric)",
+    "swatch_note": "Approximate preview of the RGB values sent",
+    "wb": {
+      "white_point_tag": "White point (tag)",
+      "black_point_tag": "Black point (tag)",
+      "device_white": "Paper white (RGB 255)",
+      "device_black": "Black (RGB 0)"
+    },
+    "limits": "Differences between two ICC transforms, computed offline (ArgyllCMS xicclu) on the measured patches ({{measured}}) and a {{grid}}³ control grid. This is not a new measurement: the comparison does not say which profile prints better. No profile is installed or rebuilt.",
+    "perceptual_same_both": "In both profiles, the perceptual table (A2B0) is byte-identical to the colorimetric table (A2B1): the perceptual rows therefore repeat the relative ones.",
+    "perceptual_same_one": "In profile {{side}}, the perceptual table (A2B0) is byte-identical to the colorimetric table (A2B1); the other profile has its own perceptual table.",
+    "focus_concentrated": "Reading {{label}} (excluded in {{side}}): ΔE00 {{at}} at the patch, up to {{nearMax}} over {{nearN}} neighbouring points (within {{radius}}/255 in RGB); elsewhere at most {{farMax}} (p95 {{farP95}}). The difference is concentrated around this patch.",
+    "focus_descriptive": "Reading {{label}} (excluded in {{side}}): ΔE00 {{at}} at the patch, up to {{nearMax}} over {{nearN}} neighbouring points (within {{radius}}/255 in RGB); elsewhere at most {{farMax}} (p95 {{farP95}})."
   }
 }

@@ -41,3 +41,49 @@ jobs:
 
       - name: Preview portability smoke test
         run: uv run python scripts/ci_preview_smoke.py
+
+  # Backend + pure-JS test suites on a runner WITHOUT printer, ArgyllCMS or network
+  # access. Two barriers keep any test away from a real device: the in-process guard
+  # (webapp/backend/tests/netguard.py, a test that tries fails) and a loopback-only
+  # network namespace (scripts/run_tests_offline.sh). Tests that need Argyll skip
+  # cleanly (they run on dev machines); no private data or local profile is needed.
+  tests:
+    name: backend + pure-JS tests (ubuntu, offline, no Argyll)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install (uv sync, with the dev group)
+        run: uv sync --python 3.13
+
+      - name: Backend tests (loopback-only network namespace, mandatory)
+        env:
+          FREEGLAZ_DATA_DIR: ${{ runner.temp }}/fg-data
+          FREEGLAZ_STORE_ROOT: ${{ runner.temp }}/fg-store
+          FREEGLAZ_REQUIRE_NETNS: "1"     # no namespace → fail, never run with the Python guard alone
+        run: >
+          scripts/run_tests_offline.sh -q -rfs -p no:cacheprovider
+          --junitxml=${{ runner.temp }}/pytest-junit.xml
+
+      - name: Keep the test report when something failed (names, logs, durations)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-junit
+          path: ${{ runner.temp }}/pytest-junit.xml
+          if-no-files-found: ignore
+
+      - name: Frontend pure-JS tests (plain node, no node_modules)
+        working-directory: webapp/frontend
+        run: |
+          for f in src/lib/*.test.mjs; do
+            echo "== $f"
+            node "$f" || exit 1
+          done

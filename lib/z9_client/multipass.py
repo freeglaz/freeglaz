@@ -138,6 +138,34 @@ def parse_ti3(content: str) -> tuple[list[str], list[str], list[list[str]]]:
     return header_lines, data_format, data_rows
 
 
+def filter_ti3_text(text: str, rejected_sids: set[str]) -> str:
+    """Return the text of a ti3 WITHOUT the DATA lines whose SAMPLE_ID is rejected
+    (anchored on SAMPLE_ID, never the line index). Preserves everything else byte for byte
+    (columns, spectral bands, header); only realigns NUMBER_OF_SETS. Used to
+    build the profile base EXCLUDING rejected readings (the patch is averaged over its
+    remaining readings in the OTHER included scans)."""
+    if not rejected_sids:
+        return text
+    _, fmt, _ = parse_ti3(text)
+    sid_idx = fmt.index("SAMPLE_ID")
+    out, in_data, kept = [], False, 0
+    for line in text.splitlines():
+        s = line.strip()
+        if s == "BEGIN_DATA":
+            in_data = True; out.append(line); continue
+        if s == "END_DATA":
+            in_data = False; out.append(line); continue
+        if in_data and s and not s.startswith("#"):
+            toks = s.split()
+            if sid_idx < len(toks) and toks[sid_idx] in rejected_sids:
+                continue                       # rejected line → removed
+            kept += 1
+        out.append(line)
+    out = [f"NUMBER_OF_SETS {kept}" if l.strip().startswith("NUMBER_OF_SETS") else l
+           for l in out]
+    return "\n".join(out) + "\n"
+
+
 def extract_spectral_bands(data_format: list[str]) -> list[int]:
     """Extract the wavelengths from the SPEC_NNN columns (native Argyll)."""
     bands = []

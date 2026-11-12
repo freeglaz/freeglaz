@@ -744,7 +744,9 @@ def test_scan_patches_single_scan(client):
     body = r.json()
     assert body["n_patches"] == 20 and body["ti3"] == "a.ti3"
     p0 = body["patches"][0]
-    assert set(p0) == {"id", "rgb", "lab"} and len(p0["rgb"]) == 3 and len(p0["lab"]) == 3
+    # phase 4D adds the use state (excluded / reason) and the risk if excluded, additively
+    assert set(p0) == {"id", "rgb", "lab", "excluded", "exclusion_reason", "exclusion_risk"}
+    assert len(p0["rgb"]) == 3 and len(p0["lab"]) == 3 and p0["excluded"] is False
     assert client.get(f"/api/charts/{cid}/scans/nope.ti3/patches").status_code == 404
 
 
@@ -784,18 +786,24 @@ def test_profile_excludes_rejected_reading_from_average(client, monkeypatch):
     cid = _create_a3(client)
     meas = cache.charts_dir(SERIAL) / cid / "measurements"
     _write_ti3(meas, "a.ti3"); _write_ti3(meas, "b.ti3", shift=0.3)
-    _fake_icc_build(monkeypatch)
+    fed = {}
+    def _fb(self, ti3_base, *, descriptor, output_icc_path, colprof_flags):
+        text = Path(str(ti3_base) + ".ti3").read_text()           # the ti3 colprof receives
+        fed["n"] = int(next(ln.split()[1] for ln in text.splitlines() if ln.strip().startswith("NUMBER_OF_SETS")))
+        Path(output_icc_path).write_bytes(b"\0" * 1024)
+        return SimpleNamespace(output_icc_path=str(output_icc_path), output_icc_size_bytes=1024)
+    monkeypatch.setattr("lib.z9_client.profiling.ProfilingOps.build_profile", _fb)
     # control without rejection: 40 readings
     assert client.post(f"/api/charts/{cid}/profile", json={"profile_base": "average"}).status_code == 200
-    n_sets = lambda: int(next(ln.split()[1] for ln in (meas / f"{cid}_avg.ti3").read_text().splitlines()
-                              if ln.strip().startswith("NUMBER_OF_SETS")))
+    n_sets = lambda: fed["n"]  # noqa: E731
     assert n_sets() == 40
     # with 1 rejected reading: 39 (the rejected row removed from the concat). Rebuild same chart =
     # REPLACES the existing profile (same auto name).
     client.post(f"/api/charts/{cid}/scans/a.ti3/readings/5/reject", json={"rejected": True})
     client.post(f"/api/charts/{cid}/profile", json={"profile_base": "average", "on_conflict": "replace"})
     assert n_sets() == 39
-    assert not (meas / "a_qcfilt.ti3").exists()          # temporary filtered copy cleaned
+    assert not (meas / "a_qcfilt.ti3").exists()          # filtered copy never written in measurements/
+    assert not (meas / f"{cid}_avg.ti3").exists()
 
 
 def test_profile_stale_after_rejection_change(client, monkeypatch):
@@ -1006,8 +1014,10 @@ def test_profile_base_average_concats_kept_scans(client, monkeypatch):
     assert len(st["session"]["scans"]) == 2     # 2 "kept" scans
 
     captured = {}
+    from webapp.backend.routes.charts import _ti3_n_sets
     def _fake_build(self, ti3_base, *, descriptor, output_icc_path, colprof_flags):
         captured["ti3_base"] = str(ti3_base)
+        captured["n_sets"] = _ti3_n_sets(Path(str(ti3_base) + ".ti3"))   # the ti3 colprof receives
         Path(output_icc_path).write_bytes(b"\0" * 2048)
         return SimpleNamespace(output_icc_path=str(output_icc_path), output_icc_size_bytes=2048)
     monkeypatch.setattr("lib.z9_client.profiling.ProfilingOps.build_profile", _fake_build)
@@ -1016,12 +1026,14 @@ def test_profile_base_average_concats_kept_scans(client, monkeypatch):
     body = r.json()
     assert body["averaged"] is True and body["n_scans_averaged"] == 2
     assert captured["ti3_base"].endswith("_avg")    # the AVERAGED ti3 (not a raw scan)
-    avg = cache.charts_dir(SERIAL) / cid / "measurements" / f"{cid}_avg.ti3"
-    assert avg.is_file()
+    chart = cache.charts_dir(SERIAL) / cid
+    # the working ti3 lives in a private build directory, removed afterwards: nothing derived is
+    # left in measurements/ (it used to keep <id>_avg.ti3 there) nor in .build/
+    assert not (chart / "measurements" / f"{cid}_avg.ti3").exists()
+    assert not any((chart / ".build").iterdir())
     # FIX B: n_patches = NUMBER_OF_SETS of the FINAL ti3 fed to colprof (_avg, dedup keep = 2xN),
     # NOT the chart's patch_count (N). Single source of truth = the file feeding colprof.
-    from webapp.backend.routes.charts import _ti3_n_sets
-    n_avg = _ti3_n_sets(avg)
+    n_avg = captured["n_sets"]
     n_chart = len(desc["patches_in_layout_order"])
     assert n_avg == 2 * n_chart                                  # keep -> 2 concatenated scans
     ranged = [e for e in cache.list_repo_z9_profiles(SERIAL) if cid in (e.get("notes") or "")]

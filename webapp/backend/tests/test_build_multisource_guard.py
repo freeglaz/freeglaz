@@ -190,29 +190,45 @@ def _chart_with_scan(root: Path, chart_id: str, ti3_name: str, *, rejected=None)
             _j.dumps({"rejected_readings": {ti3_name: list(rejected)}}), encoding="utf-8")
 
 
-def test_apply_patch_rejections_drops_rejected_sid(tmp_path, monkeypatch):
-    # RE-PROVES : the rejected reading (SID 2) of the SOURCE does NOT enter the build.
+def _source_chart_plan(tmp_path, monkeypatch, chart_id, rejected=()):
+    """A current chart + the SOURCE chart under test, planned and materialized as a build does."""
     monkeypatch.setenv("FREEGLAZ_STORE_ROOT", str(tmp_path))
-    from webapp.backend.routes.charts import _apply_patch_rejections, _chart_dir, _included_ti3_paths
-    _chart_with_scan(tmp_path, "CHT-20260617-1200-AA", "20260617_120000.ti3", rejected=["2"])
-    cd = _chart_dir("CHT-20260617-1200-AA")
-    used, tmp = _apply_patch_rejections(cd, _included_ti3_paths(cd))
-    assert len(used) == 1 and len(tmp) == 1                  # 1 temporary filtered copy
-    body = used[0].read_text(encoding="ascii")
+    from lib.z9_client import build_inputs
+    from webapp.backend.routes.charts import _chart_dir, _chart_snapshot, _read_scan_state
+    _chart_with_scan(tmp_path, "CHT-20260617-1200-ZZ", "20260617_110000.ti3")      # current chart
+    _chart_with_scan(tmp_path, chart_id, "20260617_120000.ti3", rejected=rejected)
+    cur, src = _chart_dir("CHT-20260617-1200-ZZ"), _chart_dir(chart_id)
+    plan = build_inputs.plan_inputs(_chart_snapshot("CHT-20260617-1200-ZZ", cur, _read_scan_state(cur)),
+                                    [_chart_snapshot(chart_id, src, _read_scan_state(src))],
+                                    build_inputs.BuildRequest())
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    eff = build_inputs.materialize(plan, workdir)
+    return plan, eff, src
+
+
+def test_source_chart_rejection_drops_rejected_sid(tmp_path, monkeypatch):
+    # RE-PROVES : the rejected reading (SID 2) of the SOURCE does NOT enter the build.
+    plan, eff, src = _source_chart_plan(tmp_path, monkeypatch, "CHT-20260617-1200-AA", rejected=["2"])
+    (xs,) = plan.extras
+    assert xs.rejections_applied == ("2",) and xs.filtered
+    filt = eff.workdir / "charts" / "CHT-20260617-1200-AA" / "20260617_120000_qcfilt.ti3"
+    body = filt.read_text(encoding="ascii")
     assert "\n2 50 50 50" not in body                        # rejected patch ABSENT
     assert "\n1 0 0 0" in body and "\n3 100 100 100" in body  # kept
     assert "NUMBER_OF_SETS 2" in body                        # count re-adjusted
+    assert sorted(p.name for p in (src / "measurements").iterdir()) == ["20260617_120000.ti3"]  # source untouched
 
 
-def test_apply_patch_rejections_passthrough_when_none(tmp_path, monkeypatch):
-    # No rejection : reuse the ORIGINAL ti3 (zero copy, zero side effect).
-    monkeypatch.setenv("FREEGLAZ_STORE_ROOT", str(tmp_path))
-    from webapp.backend.routes.charts import _apply_patch_rejections, _chart_dir, _included_ti3_paths
-    _chart_with_scan(tmp_path, "CHT-20260617-1200-BB", "20260617_120000.ti3")
-    cd = _chart_dir("CHT-20260617-1200-BB")
-    incl = _included_ti3_paths(cd)
-    used, tmp = _apply_patch_rejections(cd, incl)
-    assert used == incl and tmp == []                        # strict passthrough
+def test_source_chart_without_rejection_is_a_byte_copy(tmp_path, monkeypatch):
+    # No rejection : the ORIGINAL bytes are reused (copied into the build directory, never
+    # written next to the source chart's measurements).
+    plan, eff, src = _source_chart_plan(tmp_path, monkeypatch, "CHT-20260617-1200-BB")
+    (xs,) = plan.extras
+    assert xs.rejections_applied == () and not xs.filtered
+    copy = eff.workdir / "charts" / "CHT-20260617-1200-BB" / "20260617_120000.ti3"
+    assert copy.read_bytes() == (src / "measurements" / "20260617_120000.ti3").read_bytes()
+    assert sorted(p.name for p in (src / "measurements").iterdir()) == ["20260617_120000.ti3"]
 
 
 def test_list_build_sources_reports_included_and_rejected(tmp_path, monkeypatch):

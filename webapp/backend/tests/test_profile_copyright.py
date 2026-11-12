@@ -3,7 +3,20 @@
 The computation comes from Argyll colprof → we do not appropriate the output.
 manufacturer=HP (real printer), model=DesignJet Z9, desc=freeglaz stay unchanged.
 """
+import pytest
+
 from lib.z9_client import config
+
+_FAKE_COLPROF = "/opt/argyll-test-double/bin/colprof"
+
+
+@pytest.fixture
+def fake_colprof(monkeypatch):
+    """build_colprof_command resolves the colprof binary (ArgyllNotFound without Argyll).
+    These tests check the command's METADATA, not the install: resolve to a fixed path."""
+    from lib.z9_client import argyll
+    monkeypatch.setattr(argyll, "resolve_argyll_binary", lambda name="colprof", *a, **k: _FAKE_COLPROF)
+    return _FAKE_COLPROF
 
 
 def test_default_copyright_is_use_freely():
@@ -25,9 +38,10 @@ def test_build_profile_defaults_honest():
         assert p["copyright_str"].default != "freeglaz Project"
 
 
-def test_colprof_command_emits_honest_metadata():
+def test_colprof_command_emits_honest_metadata(fake_colprof):
     cmd = config.build_colprof_command(
         "chart", "freeglaz measures from chart", config._DEFAULTS)
+    assert cmd[0] == fake_colprof           # the binary comes from the resolver (simulated here)
     # -C = free copyright
     ci = cmd.index("-C")
     assert cmd[ci + 1] == "No copyright, use freely"
@@ -39,7 +53,7 @@ def test_colprof_command_emits_honest_metadata():
     assert cmd[cmd.index("-D") + 1] == "freeglaz measures from chart"
 
 
-def test_no_imposed_source_gamut_default():
+def test_no_imposed_source_gamut_default(fake_colprof):
     # Portability safeguard: NO -S imposed by default (source gamut = user choice),
     # and no macOS ColorSync / AdobeRGB1998 path in a default. Prevents reintroduction
     # of a non-portable system path (porting blocker #1).

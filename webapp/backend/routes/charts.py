@@ -36,6 +36,7 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -412,7 +413,12 @@ def _read_scan_state(chart_dir: Path) -> dict:
     # anchored on SAMPLE_ID (never line index). Lists (serializable) ; sets on the logic side.
     rejected = {k: [str(s) for s in (v or [])]
                 for k, v in (st.get("rejected_readings") or {}).items() if v}
+    # Other keys (last_build_id, rejection_meta…) are KEPT: a route that rewrites the state
+    # (role, rejection) must never drop what it does not manage. Legacy `excluded` = migrated.
+    extra = {k: v for k, v in st.items() if k not in
+             ("roles", "excluded", "profile_built_from", "rejected_readings", "profile_built_rejections")}
     return {
+        **extra,
         "roles": roles,
         "profile_built_from": list(st.get("profile_built_from") or []),
         "rejected_readings": rejected,
@@ -429,6 +435,14 @@ def _rejected_map(state: dict) -> dict:
 def _write_scan_state(chart_dir: Path, state: dict) -> None:
     import json
     import os
+    # rejection_meta is INFORMATIVE only (why/when a reading was excluded): the registry is
+    # rejected_readings; meta of a reading no longer rejected is dropped.
+    meta = state.get("rejection_meta")
+    if isinstance(meta, dict):
+        rej = {k: set(v) for k, v in (state.get("rejected_readings") or {}).items()}
+        state["rejection_meta"] = {scan: {sid: m for sid, m in sids.items() if sid in rej.get(scan, ())}
+                                   for scan, sids in meta.items() if isinstance(sids, dict)}
+        state["rejection_meta"] = {k: v for k, v in state["rejection_meta"].items() if v}
     p = chart_dir / "scan_state.json"
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -446,28 +460,24 @@ def _included_ti3_paths(chart_dir: Path) -> list[Path]:
     return [p for p in _raw_ti3_paths(chart_dir) if _scan_role(st, p.name) == "included"]
 
 
-def _apply_patch_rejections(chart_dir: Path, paths: list[Path]) -> tuple[list[Path], list[Path]]:
-    """Applies a chart's patch rejections (scan_state.rejected_readings) to ITS ti3 :
-    for each scan with rejected readings, writes a filtered `_qcfilt` COPY (rejected
-    rows removed, SAMPLE_ID anchoring — SAME `scan_delta.filter_ti3_text` mechanism as the
-    "average" base of the current chart). Returns (paths TO CONCATENATE, temporary copies
-    TO CLEAN UP). → a source contributes "included scans × kept patches", symmetric to the
-    current chart (the patch averages over its remaining readings ; keeps ≥1-reading/patch upstream)."""
-    from webapp.backend.services import scan_delta
-    rej = _rejected_map(_read_scan_state(chart_dir))
-    used: list[Path] = []
-    tmp: list[Path] = []
-    for p in paths:
-        rj = rej.get(p.name)
-        if rj:
-            filt = chart_dir / "measurements" / f"{p.stem}_qcfilt.ti3"
-            filt.write_text(scan_delta.filter_ti3_text(
-                p.read_text(encoding="ascii", errors="replace"), rj), encoding="ascii")
-            used.append(filt)
-            tmp.append(filt)
-        else:
-            used.append(p)
-    return used, tmp
+def _build_request_record(body, flags: list, policy: str) -> dict:
+    """The build REQUEST as recorded in the manifest (what a rebuild would replay)."""
+    return {"base": body.profile_base, "extra_chart_ids": list(body.extra_chart_ids),
+            "source_profiles": [sp.path for sp in body.source_profiles],
+            "colprof_flags": body.colprof_flags, "colprof_flags_resolved": list(flags),
+            "name": body.name, "on_conflict": body.on_conflict, "policy": policy,
+            "expected_fingerprint": getattr(body, "expected_fingerprint", None)}
+
+
+def _chart_snapshot(chart_id: str, chart_dir: Path, state: dict):
+    """Frozen view of a chart for a profile build (lib.z9_client.build_inputs.ChartSnapshot):
+    raw scans of measurements/ + roles + rejection registry, from ONE read of scan_state."""
+    from lib.z9_client.build_inputs import ChartSnapshot
+    return ChartSnapshot(
+        chart_id=chart_id, chart_dir=chart_dir,
+        raw_scans=tuple(p.name for p in _raw_ti3_paths(chart_dir)),
+        roles=dict(state.get("roles") or {}),
+        rejected={k: tuple(v) for k, v in (state.get("rejected_readings") or {}).items() if v})
 
 
 def _ti3_scanned_at(ti3_name: str):
@@ -806,6 +816,115 @@ def set_reading_rejected(chart_id: str, ti3: str, sample_id: str, body: RejectRe
             "rejected": body.rejected, "n_rejected": n_rejected}
 
 
+class ExclusionBody(BaseModel):
+    """Explicit exclusion API (phase 4C) — distinct from the legacy /reject route, whose rule
+    ("never the last valid reading of a patch") stays unchanged for the current interface."""
+    excluded: bool = True                     # False = re-include (always allowed)
+    reason: Optional[str] = Field(default=None, max_length=200)
+    dry_run: bool = False                     # True = impact only, nothing written
+    extra_chart_ids: list[str] = []           # context: additional charts of the next build
+
+
+_SEVERITY = ("ok", "info", "warning", "strong_warning", "refused")
+
+
+def _exclusion_impact(chart_id: str, d: Path, state: dict, ti3: str, sid: str,
+                      extra_chart_ids: list) -> dict:
+    """Foreseeable consequences of excluding (ti3, sid), per base, with the SAME planning and
+    coverage engine as the build. Chart-level refusal only for white/black left without any
+    compatible reading in the chart's included scans (the build plan decides the rest)."""
+    from lib.z9_client import build_inputs as bi
+    rows = dict(bi.read_device_rows(d / "measurements" / ti3, f"{chart_id}/{ti3}"))
+    rgb = rows[sid]
+    key, (pos, corner) = bi.device_key(rgb), bi.device_position(rgb)
+    after = {k: list(v) for k, v in state["rejected_readings"].items()}
+    after[ti3] = sorted(set(after.get(ti3, [])) | {sid})
+    included = [p.name for p in _raw_ti3_paths(d) if _scan_role(state, p.name) == "included"]
+    others = 0
+    for scan in included:
+        rej = set(after.get(scan, []))
+        others += sum(1 for r_sid, r_rgb in bi.read_device_rows(d / "measurements" / scan)
+                      if bi.device_key(r_rgb) == key and r_sid not in rej)
+    refusal = f"{corner.upper()}_LAST_READING" if corner in ("white", "black") and others == 0 else None
+    media_id, ref_ge = _chart_paper_ge(chart_id)
+    extras = []
+    for x in extra_chart_ids:
+        xm, xge = _chart_paper_ge(x)
+        _assert_source_compatible(media_id, ref_ge, xm, xge, f"chart {x}")
+        extras.append(_chart_snapshot(x, _chart_dir(x), _read_scan_state(_chart_dir(x))))
+    snap_after = _chart_snapshot(chart_id, d, {**state, "rejected_readings": after})
+    bases = {}
+    for base in ("last", "average"):
+        plan = bi.plan_inputs(snap_after, extras, bi.BuildRequest(base=base, policy="apply_all"))
+        if base == "average" and plan.base_effective != "average":
+            continue                                          # fewer than 2 included scans
+        used = any(s.chart_id == chart_id and s.scan == ti3 for s in plan.current)
+        cov = bi.analyze_coverage(plan, _qc_findings_cached(plan))
+        hole = any(bi.device_key(h["rgb"]) == key for h in cov["holes"])
+        lost = corner in ("white", "black") and f"{corner.upper()}_LAST_READING" in cov["refusals"]
+        level = ("ok" if not used else "refused" if lost
+                 else bi._LEVEL_BY_POSITION[pos] if hole else "ok")
+        bases[base] = {"base_effective": plan.base_effective, "reading_used": used, "hole": hole,
+                       "level": level, "refusals": cov["refusals"], "guards": cov["guards"],
+                       "recommend_remeasure": cov["recommend_remeasure"], "reasons": cov["reasons"]}
+    level = max([b["level"] for b in bases.values()] + (["refused"] if refusal else ["ok"]), key=_SEVERITY.index)
+    return {"reading": {"chart_id": chart_id, "scan": ti3, "sid": sid, "rgb": list(rgb), "position": pos,
+                        "corner": corner},
+            "other_compatible_readings_in_chart": others, "chart_level_refusal": refusal,
+            "level": level, "bases": bases}
+
+
+@router.post("/{chart_id}/scans/{ti3}/readings/{sample_id}/exclusion")
+def set_reading_exclusion(chart_id: str, ti3: str, sample_id: str, body: ExclusionBody) -> dict:
+    """Explicit, reversible exclusion of ONE reading (scan × SAMPLE_ID), also possible with a
+    single scan. Writes only scan_state.json (rejected_readings = the registry, rejection_meta =
+    informative). Returns the foreseeable impact per base; refuses (409) only the last
+    compatible reading of white or black in the chart. ``dry_run`` writes nothing. Never
+    automatic, no Z9 act, the ti3 is never touched."""
+    from webapp.backend.services import scan_delta
+    d = _chart_dir(chart_id)
+    if ti3 not in {p.name for p in _raw_ti3_paths(d)}:
+        raise HTTPException(404, detail={"error": "unknown_scan", "message": f"unknown scan: {ti3}"})
+    st = _read_scan_state(d)
+    if _scan_role(st, ti3) != "included":
+        raise HTTPException(409, detail={"error": "scan_excluded",
+                                         "message": "the scan is excluded: exclusions apply to included scans"})
+    try:
+        sids = scan_delta.ti3_sample_ids(d / "measurements" / ti3)
+    except (OSError, ValueError) as e:
+        raise HTTPException(422, detail={"error": "unreadable", "message": f"unreadable ti3: {e}"})
+    if sample_id not in sids:
+        raise HTTPException(404, detail={"error": "unknown_reading", "message": f"unknown reading in {ti3}: {sample_id}"})
+    cur = set(st["rejected_readings"].get(ti3, []))
+    if not body.excluded:
+        if not body.dry_run and sample_id in cur:
+            cur.discard(sample_id)
+            st["rejected_readings"] = {**st["rejected_readings"], ti3: sorted(cur)}
+            st["rejected_readings"] = {k: v for k, v in st["rejected_readings"].items() if v}
+            _write_scan_state(d, st)
+        return {"ok": True, "chart_id": chart_id, "scan": ti3, "sid": sample_id, "excluded": False,
+                "applied": not body.dry_run, "decision": "accepted"}
+    try:
+        impact = _exclusion_impact(chart_id, d, st, ti3, sample_id, body.extra_chart_ids)
+    except (ValueError, HTTPException) as e:
+        raise HTTPException(422, detail={"error": "impact_failed", "message": str(getattr(e, "detail", e))})
+    if impact["chart_level_refusal"]:
+        raise HTTPException(409, detail={"error": "exclusion_refused", "code": impact["chart_level_refusal"],
+                                         "message": "last compatible reading of a structural point",
+                                         "impact": impact})
+    if not body.dry_run and sample_id not in cur:
+        from datetime import datetime, timezone
+        st["rejected_readings"] = {**st["rejected_readings"], ti3: sorted(cur | {sample_id})}
+        meta = st.get("rejection_meta") if isinstance(st.get("rejection_meta"), dict) else {}
+        meta.setdefault(ti3, {})[sample_id] = {
+            "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "origin": "user",
+            "api": "exclusion/v1", "reason": body.reason, "impact_level": impact["level"]}
+        st["rejection_meta"] = meta
+        _write_scan_state(d, st)
+    return {"ok": True, "chart_id": chart_id, "scan": ti3, "sid": sample_id, "excluded": True,
+            "applied": not body.dry_run, "decision": "accepted", "impact": impact}
+
+
 @router.get("/{chart_id}/scan/qc")
 def scan_qc(chart_id: str) -> dict:
     """QC matrix patch × scan on the INCLUDED scans (≥2) : one L/a/b reading per scan,
@@ -833,12 +952,83 @@ def scan_patches(chart_id: str, ti3: str) -> dict:
     if ti3 not in {x.name for x in _raw_ti3_paths(d)} or not p.is_file():
         raise HTTPException(404, detail=f"unknown scan: {ti3}")
     try:
-        data = scan_delta._read_lab_rgb(p)
+        data, lab_integrity = scan_delta.read_scan(p)
     except (OSError, ValueError) as e:
-        raise HTTPException(422, detail=f"unreadable ti3: {e}")
-    patches = [{"id": sid, "rgb": v["rgb"], "lab": [round(x, 2) for x in v["lab"]]}
+        # Raw cause kept in the logs (freeglaz.log); the UI localizes from the stable code.
+        logger.warning("measurements unreadable — chart %s scan %s: %s", chart_id, ti3, e)
+        raise HTTPException(422, detail={"code": "UNREADABLE", "message": f"unreadable ti3: {e}"})
+    # Use state (phase 4D, read-only): excluded or not, informative reason, and the foreseeable
+    # risk if this reading were excluded (same chart-level rule as the exclusion API).
+    st = _read_scan_state(d)
+    rej = set(st["rejected_readings"].get(ti3, []))
+    meta = ((st.get("rejection_meta") or {}).get(ti3) or {}) if isinstance(st.get("rejection_meta"), dict) else {}
+    risks = _exclusion_risks(d, st, ti3)
+    patches = [{"id": sid, "rgb": v["rgb"], "lab": [round(x, 2) for x in v["lab"]],
+                "excluded": sid in rej, "exclusion_reason": (meta.get(sid) or {}).get("reason"),
+                "exclusion_risk": risks.get(sid)}
                for sid, v in data.items()]
-    return {"chart_id": chart_id, "ti3": ti3, "n_patches": len(patches), "patches": patches}
+    # lab_integrity: Lab recomputed from XYZ (Argyll D50) when present; stored LAB_* only checked.
+    return {"chart_id": chart_id, "ti3": ti3, "n_patches": len(patches), "patches": patches,
+            "lab_integrity": lab_integrity, "scan_role": _scan_role(st, ti3),
+            "n_excluded": sum(1 for x in patches if x["excluded"])}
+
+
+def _exclusion_risks(d: Path, state: dict, ti3: str) -> dict:
+    """{sid: {position, corner, other_compatible_readings, level}} for every reading of ``ti3``:
+    the level the exclusion API would announce at chart level — "ok" when another compatible
+    reading (same device value, any SAMPLE_ID) remains in the chart's included scans, else by
+    cube position (info / warning / strong_warning), "refused" for the last white or black.
+    The per-base consequences are computed by the API at the moment of the action."""
+    from collections import Counter
+    from lib.z9_client import build_inputs as bi
+    try:
+        rows = bi.read_device_rows(d / "measurements" / ti3)
+    except (OSError, ValueError):
+        return {}
+    pool: Counter = Counter()
+    for p in _raw_ti3_paths(d):
+        if _scan_role(state, p.name) != "included":
+            continue
+        rej = set(state["rejected_readings"].get(p.name, []))
+        try:
+            pool.update(bi.device_key(rgb) for sid, rgb in bi.read_device_rows(p) if sid not in rej)
+        except (OSError, ValueError):
+            continue
+    own_rej = set(state["rejected_readings"].get(ti3, []))
+    included = _scan_role(state, ti3) == "included"
+    out = {}
+    for sid, rgb in rows:
+        key = bi.device_key(rgb)
+        pos, corner = bi.device_position(rgb)
+        others = pool[key] - (1 if (included and sid not in own_rej) else 0)
+        if others > 0:
+            level = "ok"
+        elif corner in ("white", "black"):
+            level = "refused"
+        else:
+            level = bi._LEVEL_BY_POSITION[pos]
+        out[sid] = {"position": pos, "corner": corner, "other_compatible_readings": others, "level": level}
+    return out
+
+
+@router.get("/{chart_id}/scans/{ti3}/qc")
+def scan_measure_qc(chart_id: str, ti3: str) -> dict:
+    """INTRINSIC measurement QC of ONE raw scan (single-scan, advisory): each reading is
+    compared with the prediction from the OTHER colours of the chart (lib.z9_client.measure_qc).
+    READ-ONLY: no exclusion, no profile, no Z9 act; cached under measurements/.qc/ (keyed by
+    ti3 sha256 + algorithm version + parameters). Comparing scans stays /scan/qc's job."""
+    from webapp.backend.services import measure_qc as qc_service
+    d = _chart_dir(chart_id)
+    p = next((x for x in _raw_ti3_paths(d) if x.name == ti3), None)   # RAW scans only (anti-traversal)
+    if p is None:
+        raise HTTPException(404, detail={"code": "SCAN_NOT_FOUND", "message": f"unknown scan: {ti3}"})
+    try:
+        out = qc_service.get_report(p)
+    except qc_service.ScanQCError as e:
+        status = 404 if e.code == "SCAN_NOT_FOUND" else 422
+        logger.info("measure QC not possible — chart %s scan %s: %s (%s)", chart_id, ti3, e.code, e)
+        raise HTTPException(status, detail={"code": e.code, "message": str(e)})
+    return {"chart_id": chart_id, "ti3": ti3, **out}
 
 
 @router.delete("/{chart_id}/scans/{ti3}")
@@ -853,6 +1043,8 @@ def delete_scan(chart_id: str, ti3: str) -> dict:
     if ti3 not in raw:
         raise HTTPException(404, detail=f"unknown scan: {ti3}")
     meas = d / "measurements"
+    from webapp.backend.services import measure_qc as qc_service
+    qc_service.purge(meas / ti3)                                  # derived QC cache of this scan
     (meas / ti3).unlink(missing_ok=True)
     (meas / f"{Path(ti3).stem}.cgats").unlink(missing_ok=True)   # twin cgats (best-effort)
     st = _read_scan_state(d)
@@ -892,6 +1084,11 @@ class ProfileChartBody(BaseModel):
     # Collision resolution intent (OS paradigm) : None/"cancel" = SAFE (collision → 409,
     # no write) ; "replace" = overwrite + preserve tags/notes ; "keep_both" = -N suffix.
     on_conflict: Optional[str] = None
+    # Rejection policy (phase 4C). None/"legacy" = historical behaviour (base "last" ignores the
+    # current chart's rejections). "apply_all" applies them in every mode; it must be requested
+    # explicitly AND carry the fingerprint returned by POST /profile/preview.
+    policy: Optional[str] = None
+    expected_fingerprint: Optional[str] = None
 
 
 _VALID_ON_CONFLICT = {"cancel", "replace", "keep_both"}
@@ -968,6 +1165,28 @@ def profile_chart(chart_id: str, body: ProfileChartBody) -> dict:
     if body.name and body.name.strip():
         from webapp.backend.routes.papers import _validate_profile_name
         _validate_profile_name(body.name.strip())     # 400 if non-ASCII / forbidden chars / >63
+    # Phase 4C: "apply_all" only on explicit request, and only for the inputs the user previewed.
+    try:
+        policy = _build_policy(body)
+    except ValueError as e:
+        raise HTTPException(422, detail=str(e))
+    if policy == "apply_all" and not body.expected_fingerprint:
+        raise HTTPException(422, detail={"error": "fingerprint_required", "message":
+                                         "policy apply_all requires expected_fingerprint (POST /profile/preview first)"})
+    if body.expected_fingerprint:
+        try:
+            ctx = _prepare_build(chart_id, body)
+        except ValueError as e:
+            raise HTTPException(422, detail=str(e))
+        if ctx.plan.fingerprint != body.expected_fingerprint:
+            raise HTTPException(409, detail={"error": "inputs_changed", "expected": body.expected_fingerprint,
+                                             "actual": ctx.plan.fingerprint,
+                                             "message": "the inputs changed since the preview: preview again"})
+        if policy == "apply_all":
+            refusals = _coverage_for(ctx).get("refusals") or []
+            if refusals:
+                raise HTTPException(409, detail={"error": "coverage_refused", "refusals": refusals,
+                                                 "message": "a structural point (white/black) would have no reading left"})
     if oc in (None, "cancel"):
         coll = _build_profile_conflict(chart_id, body)
         if coll:
@@ -988,6 +1207,264 @@ def profile_chart(chart_id: str, body: ProfileChartBody) -> dict:
     return resp
 
 
+def _selection_key(request: dict) -> tuple:
+    """What a user CHOOSES for a build (compared with the current build's request)."""
+    return (request.get("base") or "last", tuple(request.get("extra_chart_ids") or ()),
+            tuple(request.get("source_profiles") or ()), tuple(request.get("colprof_flags_resolved") or ()),
+            request.get("policy") or "legacy")
+
+
+def _current_build_policy(chart_id: str, d: Path, ptr: dict) -> Optional[str]:
+    """Rejection policy of the CURRENT profile's build: None = no current profile; "unknown" =
+    no reliable manifest (same criteria as profile.status v2: a build manifest with request and
+    fingerprint whose recorded ICC sha256 is the current file's); else "legacy" | "apply_all"
+    (a build manifest without a policy predates 4C, when every build was legacy)."""
+    icc = d / f"{chart_id}.icc"
+    if not icc.is_file():
+        return None
+    req, fp = ptr.get("request"), (ptr.get("plan") or {}).get("inputs_fingerprint")
+    if not (req and fp) or ptr.get("kind") != "build" \
+            or (ptr.get("pointer") or {}).get("icc_sha256") != hashlib_sha256(icc.read_bytes()):
+        return "unknown"
+    return req.get("policy") or "legacy"
+
+
+@router.post("/{chart_id}/profile/preview")
+def profile_preview(chart_id: str, body: ProfileChartBody) -> dict:
+    """What a build with this request WOULD use, without building: same planning engine as the
+    build (build_inputs.plan_inputs), no working ti3, no colprof, no write. Returns the inputs
+    fingerprint to send back as ``expected_fingerprint``; the build refuses if it changed."""
+    from lib.z9_client import profile_versions
+    d = _chart_dir(chart_id)
+    try:
+        ctx = _prepare_build(chart_id, body)
+        cov = _coverage_for(ctx)
+    except ValueError as e:
+        raise HTTPException(422, detail=str(e))
+    req = _build_request_record(body, ctx.flags, ctx.plan.policy)
+    ptr = profile_versions.read_pointer(d) or {}
+    cur_req = ptr.get("request")
+    plan = ctx.plan.to_dict()
+    # Rejections that the legacy policy (previous builds) ignored and that apply_all applies:
+    # explained to the user as a change of rule, not as a detector finding.
+    newly = []
+    if ctx.plan.policy == "apply_all":
+        try:
+            legacy = _prepare_build(chart_id, body.model_copy(update={"policy": "legacy"})).plan
+            leg = {(s.chart_id, s.scan): set(s.rejections_applied) for s in legacy.scans}
+            for s in ctx.plan.scans:
+                extra = sorted(set(s.rejections_applied) - leg.get((s.chart_id, s.scan), set()))
+                if extra:
+                    newly.append({"chart_id": s.chart_id, "scan": s.scan, "sids": extra})
+        except (ValueError, HTTPException):
+            newly = []
+    # Strongly suspect readings still INCLUDED (cached QC reports only; never computed here):
+    # a warning, never an obligation to exclude.
+    from webapp.backend.services import measure_qc as qc_service
+    strong = []
+    for s in ctx.plan.scans:
+        rep = qc_service.cached_report(s.path)
+        if rep:
+            sids = [p["sample_id"] for p in rep.get("patches", []) if p.get("status") == "strong"
+                    and p["sample_id"] not in set(s.rejections_applied)]
+            if sids:
+                strong.append({"chart_id": s.chart_id, "scan": s.scan, "sids": sids})
+    return {"chart_id": chart_id, "policy": ctx.plan.policy, "base_requested": ctx.plan.base_requested,
+            "base_effective": ctx.plan.base_effective, "inputs_fingerprint": ctx.plan.fingerprint,
+            "sources": {"current_scans": plan["current_scans"], "extra_scans": plan["extra_scans"],
+                        "source_profiles": plan["source_profiles"]},
+            "rejections_applied": [{"chart_id": x["chart_id"], "scan": x["scan"], "sids": x["rejections_applied"]}
+                                   for x in plan["current_scans"] + plan["extra_scans"] if x["rejections_applied"]],
+            "rejections_not_applied": plan["rejections_not_applied"],
+            "rejections_unmatched": plan["rejections_unmatched"],
+            "holes": cov.get("holes", []), "guards": cov.get("guards", []), "refusals": cov.get("refusals", []),
+            "would_be_refused": ctx.plan.policy == "apply_all" and bool(cov.get("refusals")),
+            "recommend_remeasure": cov.get("recommend_remeasure", False), "reasons": cov.get("reasons", []),
+            "coverage": cov, "colprof_flags": list(ctx.flags),
+            "current_build_id": (ptr.get("pointer") or {}).get("build_id"),
+            "current_inputs_fingerprint": (ptr.get("plan") or {}).get("inputs_fingerprint"),
+            "differs_from_current_build": (None if not cur_req else _selection_key(cur_req) != _selection_key(req)),
+            "newly_applied_vs_legacy": newly, "qc_strong_included": strong,
+            # decides how the UI words newly_applied_vs_legacy: a historical notice only when the
+            # current build really used the legacy rule, a neutral one without a reliable manifest
+            "current_build_policy": _current_build_policy(chart_id, d, ptr)}
+
+
+def _profile_status(chart_id: str, d: Path) -> dict:
+    """New semantics (phase 4C, not displayed yet): the current profile is STALE if the same
+    request, replanned now, would use different inputs. unknown = no reliable manifest (never
+    presumed up to date). missing_input = a used source no longer exists. toolchain_changed =
+    colprof version differs from the one recorded."""
+    from lib.z9_client import build_inputs, profile_versions
+    ptr = profile_versions.read_pointer(d) or {}
+    bid = (ptr.get("pointer") or {}).get("build_id")
+    base = {"state": "unknown", "stale": None, "missing_input": [], "toolchain_changed": None, "build_id": bid}
+    if not (d / f"{chart_id}.icc").is_file():
+        return {**base, "state": "no_profile"}
+    req, fp = ptr.get("request"), (ptr.get("plan") or {}).get("inputs_fingerprint")
+    icc_sha = hashlib_sha256((d / f"{chart_id}.icc").read_bytes())
+    if not (req and fp) or ptr.get("kind") != "build" or (ptr.get("pointer") or {}).get("icc_sha256") != icc_sha:
+        return base
+    missing = []
+    plan = ptr["plan"]
+    for x in plan.get("current_scans", []) + plan.get("extra_scans", []):
+        cd = d if x["chart_id"] == chart_id else _cache.locate_chart_dir(x["chart_id"])
+        if cd is None or not (cd / "measurements" / x["scan"]).is_file():
+            missing.append({"kind": "scan", "chart_id": x["chart_id"], "scan": x["scan"]})
+    missing += [{"kind": "profile", "path": p} for p in req.get("source_profiles") or [] if not Path(p).is_file()]
+    cur_colprof = build_inputs.software_versions().get("colprof")
+    built_colprof = (ptr.get("software") or {}).get("colprof")
+    # None = unknown (a version missing on either side): never asserted either way
+    toolchain = (cur_colprof != built_colprof) if (cur_colprof and built_colprof) else None
+    if missing:
+        return {**base, "state": "missing_input", "stale": True, "missing_input": missing, "toolchain_changed": toolchain}
+    replay = ProfileChartBody(colprof_flags=req.get("colprof_flags"), profile_base=req.get("base"),
+                              extra_chart_ids=req.get("extra_chart_ids") or [],
+                              source_profiles=[SourceProfileRef(path=p) for p in req.get("source_profiles") or []],
+                              policy=req.get("policy"))
+    try:
+        now_fp = _prepare_build(chart_id, replay).plan.fingerprint
+    except (ValueError, HTTPException) as e:
+        return {**base, "state": "missing_input", "stale": True, "toolchain_changed": toolchain,
+                "missing_input": [{"kind": "replan_failed", "detail": str(getattr(e, "detail", e))}]}
+    stale = now_fp != fp
+    return {**base, "state": "stale" if stale else "up_to_date", "stale": stale, "toolchain_changed": toolchain}
+
+
+def hashlib_sha256(data: bytes) -> str:
+    import hashlib
+    return hashlib.sha256(data).hexdigest()
+
+
+def _build_summary(chart_dir: Path, v: dict, current_id: Optional[str]) -> dict:
+    """One version of the history, from what is STORED (manifest + references): nothing is
+    recomputed or invented; a preserved profile keeps its unknown provenance."""
+    import json
+    from lib.z9_client import profile_versions
+    out = {"build_id": v["build_id"], "kind": v["kind"], "created_at": v.get("created_at"),
+           "current": v["build_id"] == current_id, "intact": v["intact"], "problem": v["problem"],
+           "icc_sha256": v["icc_sha256"], "manifest_available": v["manifest_sha256"] is not None,
+           "provenance": None, "label": None, "base_requested": None, "base_effective": None, "policy": None,
+           "n_scans": None, "n_extra_charts": None, "n_source_profiles": None, "n_excluded": None,
+           "n_holes": None, "colprof_flags": None, "references": []}
+    try:
+        m = profile_versions.read_version_manifest(chart_dir, v["build_id"])
+    except (OSError, ValueError):
+        return out
+    plan = m.get("plan") or {}
+    if m.get("kind") == "preserved":
+        out["provenance"] = m.get("provenance") or "unknown"
+    else:
+        out["provenance"] = "complete"
+    out["label"] = (m.get("result") or {}).get("label") or (m.get("request") or {}).get("name")
+    if plan:
+        scans = plan.get("current_scans", []) + plan.get("extra_scans", [])
+        out.update({"base_requested": plan.get("base_requested"), "base_effective": plan.get("base_effective"),
+                    "policy": plan.get("policy"), "n_scans": len(scans),
+                    "n_extra_charts": len({x["chart_id"] for x in plan.get("extra_scans", [])}),
+                    "n_source_profiles": len(plan.get("source_profiles", [])),
+                    "n_excluded": sum(len(x.get("rejections_applied", [])) for x in scans),
+                    "colprof_flags": plan.get("colprof_flags")})
+    cov = m.get("coverage") or {}
+    if "holes" in cov:
+        out["n_holes"] = len(cov["holes"])
+    try:
+        refs = json.loads((profile_versions.builds_dir(chart_dir) / v["build_id"] / profile_versions.REFERENCES_NAME)
+                          .read_text(encoding="utf-8")).get("references", [])
+        out["references"] = [{"kind": r.get("kind"), "filename": r.get("filename")} for r in refs]
+    except (OSError, ValueError):
+        pass
+    return out
+
+
+@router.get("/{chart_id}/builds")
+def list_builds(chart_id: str) -> dict:
+    """History of the profiles built for this chart (immutable versions, newest first) and the
+    publication state. READ-ONLY: exposes what is stored, never rebuilds, never deletes."""
+    from lib.z9_client import profile_versions
+    d = _chart_dir(chart_id)
+    rep = profile_versions.inspect(d, chart_id)
+    cur = rep["current_build_id"]
+    builds = [_build_summary(d, v, cur) for v in reversed(rep["versions"])]
+    return {"chart_id": chart_id, "current_build_id": cur, "pointer_build_id": rep["pointer_build_id"],
+            "publication": {"state": rep["state"], "problems": rep["problems"]}, "builds": builds}
+
+
+@router.get("/{chart_id}/builds/{build_id}/manifest")
+def get_build_manifest(chart_id: str, build_id: str) -> dict:
+    """The stored manifest of one version (read-only)."""
+    from lib.z9_client import profile_versions
+    d = _chart_dir(chart_id)
+    if build_id not in {v["build_id"] for v in profile_versions.list_versions(d)}:
+        raise HTTPException(404, detail={"error": "unknown_build", "message": f"unknown build: {build_id}"})
+    try:
+        return profile_versions.read_version_manifest(d, build_id)
+    except (OSError, ValueError) as e:
+        raise HTTPException(422, detail={"error": "unreadable_manifest", "message": str(e)})
+
+
+class CompareBuildsBody(BaseModel):
+    a: str                                    # reference version (build id)
+    b: str                                    # new version (build id)
+    grid_n: int = Field(default=9, ge=3, le=17)
+    top_n: int = Field(default=10, ge=1, le=50)
+
+
+def _excluded_points(chart_id: str, manifest: dict) -> dict:
+    """{(chart, scan, sid): rgb 0-100} of the readings a build EXCLUDED (from its manifest)."""
+    from lib.z9_client import build_inputs as bi
+    out = {}
+    plan = manifest.get("plan") or {}
+    for x in plan.get("current_scans", []) + plan.get("extra_scans", []):
+        if not x.get("rejections_applied"):
+            continue
+        cd = _cache.locate_chart_dir(x["chart_id"])
+        try:
+            rows = dict(bi.read_device_rows(cd / "measurements" / x["scan"])) if cd else {}
+        except (OSError, ValueError):
+            rows = {}
+        for sid in x["rejections_applied"]:
+            if sid in rows:
+                out[(x["chart_id"], x["scan"], sid)] = list(rows[sid])
+    return out
+
+
+@router.post("/{chart_id}/builds/compare")
+def compare_builds(chart_id: str, body: CompareBuildsBody) -> dict:
+    """ΔE00 between the A2B transforms of two STORED versions of this chart's profile (never
+    rebuilt, never installed): measured device values + control grid, relative and perceptual
+    intents, most displaced colours, neighbourhood of the readings excluded in one version only,
+    white and black points. Offline (Argyll xicclu). A transform difference, not a measurement."""
+    from lib.z9_client import profile_diff, profile_versions
+    from lib.z9_client.argyll import ArgyllNotFound
+    d = _chart_dir(chart_id)
+    versions = {v["build_id"]: v for v in profile_versions.list_versions(d)}
+    for bid in (body.a, body.b):
+        if bid not in versions:
+            raise HTTPException(404, detail={"error": "unknown_build", "message": f"unknown build: {bid}"})
+        if not versions[bid]["intact"]:
+            raise HTTPException(409, detail={"error": "altered_build", "message": f"version {bid} is altered"})
+    ma, mb = (profile_versions.read_version_manifest(d, x) for x in (body.a, body.b))
+    ea, eb = _excluded_points(chart_id, ma), _excluded_points(chart_id, mb)
+    focus = ([{"rgb": rgb, "label": f"{k[0]}/{k[1]}/{k[2]}", "excluded_in": "b"} for k, rgb in eb.items() if k not in ea]
+             + [{"rgb": rgb, "label": f"{k[0]}/{k[1]}/{k[2]}", "excluded_in": "a"} for k, rgb in ea.items() if k not in eb])
+    ia, ib = (profile_versions.builds_dir(d) / x / profile_versions.VERSION_ICC for x in (body.a, body.b))
+    try:
+        res = profile_diff.compare_profiles(ia, ib, focus=focus, grid_n=body.grid_n, top_n=body.top_n)
+    except ArgyllNotFound as e:
+        raise HTTPException(503, detail={"error": "argyll_missing", "message": str(e)})
+    except RuntimeError as e:
+        raise HTTPException(422, detail={"error": "lookup_failed", "message": str(e)})
+    for f, src in zip(res["focus"], focus):
+        f["excluded_in"] = src["excluded_in"]
+    return {"chart_id": chart_id, "a": {"build_id": body.a, "label": (ma.get("result") or {}).get("label"),
+                                         "kind": ma.get("kind"), **profile_diff.file_identity(ia)},
+            "b": {"build_id": body.b, "label": (mb.get("result") or {}).get("label"), "kind": mb.get("kind"),
+                  **profile_diff.file_identity(ib)},
+            "identical_files": profile_diff.file_identity(ia)["sha256"] == profile_diff.file_identity(ib)["sha256"],
+            **res}
+
+
 @router.get("/{chart_id}/profile/status")
 def profile_status(chart_id: str) -> dict:
     """State of the CURRENT/last build for THIS chart (background job) → re-attaches the front
@@ -999,22 +1476,29 @@ def profile_status(chart_id: str) -> dict:
     return {"state": "idle", "chart_id": chart_id, "phase": None, "result": None, "error": None}
 
 
-def _build_profile_now(chart_id: str, body: ProfileChartBody, set_phase) -> dict:
-    """Builds the ICC (concat included−rejections → colprof → disk storage). Run by the
-    chart_profile_job worker (background thread, or inline in test). Raises SIMPLE exceptions
-    (ValueError/RuntimeError), NEVER HTTPException (outside request context). set_phase(str)
-    reports progress (preparing → building). NO Z9 : colprof + disk copy."""
+def _build_policy(body) -> str:
+    """Rejection policy of a build: "legacy" unless "apply_all" is EXPLICITLY requested."""
+    p = (getattr(body, "policy", None) or "legacy").strip().lower()
+    if p not in ("legacy", "apply_all"):
+        raise ValueError(f"unknown build policy: {p!r}")
+    return p
+
+
+def _prepare_build(chart_id: str, body: "ProfileChartBody"):
+    """Shared by the build, the preview and the profile status: frozen snapshot, paper/GE
+    guards of the additional sources, resolved flags, and the PLAN (build_inputs.plan_inputs).
+    No side effect: reads only (no repair, no build directory, no ti3 written).
+    Raises ValueError (or HTTPException for an unknown chart) like the build did."""
     import json
     import shlex
     from datetime import date
-    from lib.z9_client.profiling import ProfilingOps
-
-    set_phase("preparing")
     d = _chart_dir(chart_id)
-    included_paths = _included_ti3_paths(d)    # INCLUDED scans (excluded ones don't feed the profile)
-    if not included_paths:
+    # FROZEN snapshot (read ONCE): the same state decides the inputs AND writes the trace —
+    # a role/rejection changed during colprof never pretends to have been used.
+    _state_for_build = _read_scan_state(d)
+    snap = _chart_snapshot(chart_id, d, _state_for_build)
+    if not snap.included():
         raise ValueError("no included scan")
-    ti3 = included_paths[-1]              # last INCLUDED scan (base "last"/default)
     desc = json.loads((d / "chart.json").read_text(encoding="utf-8"))
     paper = desc.get("paper") or {}
     paper_name = paper.get("name") or paper.get("media_id") or chart_id
@@ -1035,142 +1519,143 @@ def _build_profile_now(chart_id: str, body: ProfileChartBody, set_phase) -> dict
         flags = resolve_gamut_aliases_in_flags(flags)
     except FileNotFoundError as e:
         raise ValueError(f"invalid colprof source gamut (-s/-S): {e}") from e
-    out_icc = d / f"{chart_id}.icc"                       # original in the chart folder
+    out_icc = d / f"{chart_id}.icc"                       # current profile in the chart folder
     serial = _resolve_serial_for_ranging(desc)
     media_id = paper.get("media_id")
 
-    profile_ti3 = ti3
-    origin = "free_chart_argyll"
-
-    # Base "average" (§4d) : AVERAGE of the INCLUDED scans (durable measurements/ set, excluding excluded).
-    # concat of the ti3 (≥2) dedup="keep" → colprof averages the repeated measurements per patch (below
-    # the mono-scan floor ≈0.10 ΔE). Reuses concat_ti3 (validated). base="last"/None →
-    # last included. Works session AND pre-session chart.
-    # Patch rejections : applied ONLY to the "average" base (the multi-scan scalpel).
-    # Each included scan with rejected readings is concatenated via a filtered COPY (rejected
-    # rows removed, SAMPLE_ID anchoring) → colprof averages the patch over its remaining readings
-    # in the other scans. The ≥1-valid-reading-per-patch guard (POST reject) prevents any hole.
-    _state_for_build = _read_scan_state(d)
-    _rej_for_build = _rejected_map(_state_for_build)
-    averaged = False
-    if body.profile_base == "average":
-        paths = included_paths
-        if len(paths) >= 2:
-            from webapp.backend.services import scan_delta
-            from lib.z9_client.multipass import concat_ti3
-            concat_paths: list[Path] = []
-            for p in paths:
-                rj = _rej_for_build.get(p.name)
-                if rj:
-                    filt = d / "measurements" / f"{p.stem}_qcfilt.ti3"
-                    filt.write_text(scan_delta.filter_ti3_text(
-                        p.read_text(encoding="ascii", errors="replace"), rj), encoding="ascii")
-                    concat_paths.append(filt)
-                else:
-                    concat_paths.append(p)
-            merged = d / "measurements" / f"{chart_id}_avg.ti3"
-            try:
-                concat_ti3(concat_paths, merged,
-                           labels=[f"scan{i + 1}" for i in range(len(concat_paths))],
-                           dedup_strategy="keep", descriptor=f"freeglaz average {chart_id}")
-            except (ValueError, FileNotFoundError) as e:
-                raise ValueError(f"Scan averaging refused (inconsistent measurements): {e}")
-            finally:
-                for cp in concat_paths:                       # cleans temporary filtered copies
-                    if cp.stem.endswith("_qcfilt"):
-                        cp.unlink(missing_ok=True)
-            profile_ti3 = merged
-            averaged = True
-        # < 2 "kept" scans → cleanly falls back to the last ti3 (average of 1 = itself)
-
-    # ── multi-source foundation (non-regressive) ────────────────────────────
-    # The CURRENT CHART's contribution is `profile_ti3` (last scan /
-    # _avg depending on the branch above). We expose it as the 1st entry of a
-    # source list ; the additional charts/profiles are added there (after
-    # paper+GE guard). Rule : 1 source → PASSTHROUGH (strict file identity
-    # of the current case) ; ≥2 → A single concat_ti3(keep) (renumbers the SAMPLE_ID,
-    # dedup by RGB device — cf. findings). Here the list always has 1 entry
-    # → colprof receives the SAME `profile_ti3` as before → identical .icc by
-    # construction (average/last-scan unchanged).
-    source_paths: list[Path] = [profile_ti3]
-    # ── resolution of the ADDITIONAL sources (paper+GE guard) ──
-    # Any exception is converted to ValueError (no HTTPException outside request).
+    # ── ADDITIONAL sources (paper+GE guard, authoritative server-side identity) ──
+    # (b) other charts: their included scans with THEIR rejections ; (c) existing profiles
+    # (measurements extracted from CIED/targ/CxF). Any exception → ValueError (no HTTPException
+    # outside request context).
     ref_ge = _norm_ge(paper.get("gloss_enhancer"))
-    _tmp_src = None
-    _extra_qcfilt: list[Path] = []     # temporary _qcfilt copies of the source charts (to clean up)
-    if body.extra_chart_ids or body.source_profiles:
-        # (b) other charts : INCLUDED ti3 of their measurements/, AFTER paper+GE guard
-        # AND AFTER applying THEIR OWN patch rejections (symmetry with current chart :
-        # a source contributes included scans × kept patches, not the hand-discarded readings).
-        for xcid in body.extra_chart_ids:
-            try:
-                xm, xge = _chart_paper_ge(xcid)
-            except HTTPException:
-                raise ValueError(f"source chart not found/invalid: {xcid}")
-            _assert_source_compatible(media_id, ref_ge, xm, xge, f"chart {xcid}")
-            xpaths = _included_ti3_paths(_chart_dir(xcid))
-            if not xpaths:
-                raise ValueError(f"source chart {xcid}: no included scan")
-            xused, xtmp = _apply_patch_rejections(_chart_dir(xcid), xpaths)
-            source_paths.extend(xused)
-            _extra_qcfilt.extend(xtmp)
-        # (c) existing profiles : paper/GE identity derived SERVER-SIDE from the
-        # adjacent manifest (_profile_identity, authoritative — zero client
-        # trust), guard, then ti3 extracted from the CIED. Clean refusal if not
-        # authenticatable (raises BEFORE extraction/concat).
-        for i, sp in enumerate(body.source_profiles):
-            sm, sge = _profile_identity(sp.path)
-            _assert_source_compatible(media_id, ref_ge, sm, sge, f"profile {Path(sp.path).name}")
-            if _tmp_src is None:
-                import tempfile
-                _tmp_src = Path(tempfile.mkdtemp(prefix="freeglaz_src_"))
-            sp_ti3 = _tmp_src / f"src_profile_{i}.ti3"
-            try:
-                ProfilingOps().extract_cgats_from_icc(
-                    sp.path, sp_ti3, descriptor=f"freeglaz source {Path(sp.path).name}")
-            except (FileNotFoundError, ValueError) as e:
-                raise ValueError(f"source profile {Path(sp.path).name}: extraction failed ({e})")
-            source_paths.append(sp_ti3)
-
-    if len(source_paths) > 1:
-        from lib.z9_client.multipass import concat_ti3
-        merged_ms = d / "measurements" / f"{chart_id}_multisource.ti3"
+    extra_snaps = []
+    for xcid in body.extra_chart_ids:
         try:
-            concat_ti3(source_paths, merged_ms, dedup_strategy="keep",
-                       descriptor=f"freeglaz multi-source {chart_id}")
-        except (ValueError, FileNotFoundError) as e:
-            raise ValueError(f"multi-source concat refused (inconsistent measurements): {e}")
-        finally:
-            if _tmp_src is not None:
-                import shutil as _sh
-                _sh.rmtree(_tmp_src, ignore_errors=True)
-            for cp in _extra_qcfilt:                     # temporary filtered copies of the sources
-                cp.unlink(missing_ok=True)
-        profile_ti3 = merged_ms
+            xm, xge = _chart_paper_ge(xcid)
+        except HTTPException:
+            raise ValueError(f"source chart not found/invalid: {xcid}")
+        _assert_source_compatible(media_id, ref_ge, xm, xge, f"chart {xcid}")
+        xd = _chart_dir(xcid)
+        extra_snaps.append(_chart_snapshot(xcid, xd, _read_scan_state(xd)))
+    profile_paths = []
+    for sp in body.source_profiles:
+        sm, sge = _profile_identity(sp.path)
+        _assert_source_compatible(media_id, ref_ge, sm, sge, f"profile {Path(sp.path).name}")
+        profile_paths.append(sp.path)
 
-    set_phase("building")              # colprof — ~2.5 min on ~1400 measurements (the job holds the duration)
-    base_icc = profile_ti3.with_suffix(".icc")   # <base>.icc written by colprof BEFORE the atomic move
+    # ── ONE preparation for every mode (lib/z9_client/build_inputs.py) ──
+    # Policy "legacy" = historical behaviour, unchanged: base "last" ignores the current chart's
+    # rejections (now TRACED as not applied), "average" applies them, additional charts always
+    # apply theirs, source profiles are used as extracted. Every write happens in a private
+    # `.build/<build_id>/` directory (never in measurements/, never in another chart).
+    from lib.z9_client import build_inputs
+    plan = build_inputs.plan_inputs(snap, extra_snaps, build_inputs.BuildRequest(
+        base=body.profile_base, source_profiles=tuple(profile_paths), colprof_flags=tuple(flags),
+        policy=_build_policy(body)))
+    return SimpleNamespace(d=d, snap=snap, state=_state_for_build, desc=desc, paper=paper,
+                           paper_name=paper_name, custom_name=custom_name, label=label, flags=flags,
+                           out_icc=out_icc, serial=serial, media_id=media_id, extra_snaps=extra_snaps,
+                           profile_paths=profile_paths, plan=plan)
+
+
+def _qc_findings_cached(plan) -> dict:
+    """{(chart, scan): [finding codes]} from the CACHED measurement-QC summaries only."""
+    from webapp.backend.services import measure_qc as qc_service
+    out = {}
+    for s in plan.scans:
+        summ = qc_service.cached_summary(s.path)
+        if summ:
+            out[(s.chart_id, s.scan)] = list(summ.get("findings") or [])
+    return out
+
+
+def _coverage_for(ctx) -> dict:
+    """Coverage of the effective set (build_inputs.analyze_coverage). Policy legacy: informative
+    and best-effort (never changes a legacy build); apply_all: errors propagate."""
+    from lib.z9_client import build_inputs
     try:
-        result = ProfilingOps().build_profile(
-            profile_ti3.with_suffix(""), descriptor=label, output_icc_path=out_icc,
-            colprof_flags=flags)
-    except (FileNotFoundError, RuntimeError) as e:
-        raise RuntimeError(f"colprof failed: {e}")
-    finally:
-        # atomic hygiene : build_profile moves <base>.icc → out_icc ON SUCCESS. If colprof was
-        # interrupted (reap), a PARTIAL <base>.icc (0 bytes) may remain → we remove it (never
-        # a file that looks like a valid ICC ; out_icc stays complete-or-absent).
-        if base_icc != out_icc and base_icc.exists():
-            base_icc.unlink(missing_ok=True)
+        return build_inputs.analyze_coverage(ctx.plan, _qc_findings_cached(ctx.plan))
+    except Exception as e:                                         # noqa: BLE001
+        if ctx.plan.policy == "apply_all":
+            raise
+        logger.warning("coverage not computed (legacy build): %s", e)
+        return {"error": str(e), "refusals": [], "guards": []}
 
-    # Trace of the EFFECTIVE SET that fed this profile → "stale" if we change included/excluded OR
-    # the patch rejections afterward (the detail compares to the current set). Rejections only bite
-    # the "average" base → we only trace rejections IN THAT CASE (otherwise rejection set = empty). Best-effort.
+
+def _build_profile_now(chart_id: str, body: ProfileChartBody, set_phase) -> dict:
+    """Builds the ICC (concat included−rejections → colprof → disk storage). Run by the
+    chart_profile_job worker (background thread, or inline in test). Raises SIMPLE exceptions
+    (ValueError/RuntimeError), NEVER HTTPException (outside request context). set_phase(str)
+    reports progress (preparing → building). NO Z9 : colprof + disk copy."""
+    import hashlib
+    import json
+    import os
+    import shlex
+    from datetime import date
+    from lib.z9_client.profiling import ProfilingOps
+
+    set_phase("preparing")
+    from lib.z9_client import build_inputs, profile_versions
+    ctx = _prepare_build(chart_id, body)
+    d, snap, _state_for_build, desc, paper = ctx.d, ctx.snap, ctx.state, ctx.desc, ctx.paper
+    paper_name, custom_name, label, flags = ctx.paper_name, ctx.custom_name, ctx.label, ctx.flags
+    out_icc, serial, media_id, plan = ctx.out_icc, ctx.serial, ctx.media_id, ctx.plan
+    origin = "free_chart_argyll"
+    # The inputs shown in a preview are the ones built, or nothing is built.
+    if body.expected_fingerprint and plan.fingerprint != body.expected_fingerprint:
+        raise ValueError(f"inputs changed since the preview (expected {body.expected_fingerprint}, "
+                         f"now {plan.fingerprint}): preview again")
+    coverage = _coverage_for(ctx)
+    if plan.policy == "apply_all" and coverage.get("refusals"):
+        raise ValueError("build refused: " + ", ".join(coverage["refusals"]))
+    averaged = plan.base_effective == "average"
+    build_inputs.sweep_stale_build_dirs(d)                 # leftovers of an interrupted build only
+    # Recovery of an interrupted publication + preservation of a pre-versions profile (safe
+    # operations only: never modifies or deletes a version).
+    legacy_trace = {"profile_built_from": _state_for_build.get("profile_built_from"),
+                    "profile_built_rejections": _state_for_build.get("profile_built_rejections")}
+    for _action in profile_versions.repair(d, chart_id, legacy_trace=legacy_trace):
+        logger.info("profile publication repair (%s): %s", chart_id, _action)
+    build_id, workdir = build_inputs.create_build_dir(d)
+    try:
+        eff = build_inputs.materialize(plan, workdir)
+        set_phase("building")          # colprof — ~2.5 min on ~1400 measurements (the job holds the duration)
+        tmp_icc = workdir / f"{chart_id}.icc"
+        try:
+            result = ProfilingOps().build_profile(
+                eff.profile_ti3.with_suffix(""), descriptor=label, output_icc_path=tmp_icc,
+                colprof_flags=flags)
+        except (FileNotFoundError, RuntimeError) as e:
+            raise RuntimeError(f"colprof failed: {e}")
+        # n_patches = REAL count of the ti3 that fed colprof (header NUMBER_OF_SETS, as before).
+        n_patches = _ti3_n_sets(eff.profile_ti3) or (desc.get("geometry") or {}).get("patch_count")
+        icc_size = result.output_icc_size_bytes
+        manifest = build_inputs.build_manifest(
+            plan, eff, build_id=build_id, request=_build_request_record(body, flags, plan.policy),
+            coverage=coverage,
+            snapshot={"included": list(snap.included()),
+                      "rejected": {k: list(v) for k, v in snap.rejected.items()}},
+            software=build_inputs.software_versions(),
+            result={"icc": out_icc.name, "icc_sha256": hashlib.sha256(tmp_icc.read_bytes()).hexdigest(),
+                    "icc_size_bytes": icc_size, "n_patches": n_patches, "label": label})
+        # Publication (lib/z9_client/profile_versions.py): a current profile missing from the
+        # history is preserved first, then version (atomic directory rename) → current profile
+        # (os.replace) → pointer. The previous profile is never lost; colprof failure = nothing
+        # published; an interruption between steps is detected and repaired at the next build.
+        profile_versions.preserve_current(d, chart_id, legacy_trace)
+        publication = profile_versions.publish(d, chart_id, build_id, tmp_icc, manifest)
+    finally:
+        build_inputs.remove_build_dir(workdir)            # success, failure or exception
+
+    # Trace (legacy keys, still read by `stale`): written FROM THE SNAPSHOT. Rejections only
+    # bite the "average" base in the legacy policy → traced in that case only. Best-effort ;
+    # the CURRENT state is re-read only to preserve the user's concurrent edits (roles…).
     try:
         _st = _read_scan_state(d)
-        _st["profile_built_from"] = sorted(p.name for p in _included_ti3_paths(d))
-        _st["profile_built_rejections"] = ({k: sorted(v) for k, v in _rej_for_build.items() if v}
+        _st["profile_built_from"] = sorted(snap.included())
+        _st["profile_built_rejections"] = ({k: sorted(v) for k, v in snap.rejected.items() if v}
                                            if averaged else {})
+        _st["last_build_id"] = build_id
         _write_scan_state(d, _st)
     except OSError:
         logger.warning("profile_built_from trace not written (%s)", chart_id)
@@ -1181,12 +1666,10 @@ def _build_profile_now(chart_id: str, body: ProfileChartBody, set_phase) -> dict
     if serial and media_id:
         try:
             cm = desc.get("color_management") or {}
-            # n_patches = REAL count of the ti3 that fed colprof (final profile_ti3, after
-            # passthrough / _avg / _multisource / rejection-filtered) — single source of truth, not
-            # the chart geometry (which ignores the additional sources and the rejections).
-            n_patches = _ti3_n_sets(profile_ti3) or (desc.get("geometry") or {}).get("patch_count")
+            # n_patches = REAL count of the ti3 that fed colprof (computed above, before the
+            # build directory was removed) — not the chart geometry.
             rp, _ = _cache.save_repo_z9_profile(
-                icc_bytes=Path(result.output_icc_path).read_bytes(),
+                icc_bytes=out_icc.read_bytes(),
                 serial=serial, media_id=media_id, paper_name=paper_name,
                 # Custom name (basename, slugified, WITHOUT date) OR auto <paper>_GE-<slot>_<date>.
                 label=(custom_name or paper_name),
@@ -1198,21 +1681,32 @@ def _build_profile_now(chart_id: str, body: ProfileChartBody, set_phase) -> dict
                 origin=origin,
                 notes=f"chart {chart_id}",
                 # OS intent validated at the route ; without collision (default case) save_repo writes the
-                # exact name. replace → overwrite+preserve tags/notes ; keep_both → -N suffix.
-                on_conflict=((body.on_conflict or "").strip().lower() or None))
+                # exact name. replace → full overwrite (icc + fresh sidecar, no tag/note carried
+                # over — see cache.save_repo_z9_profile) ; keep_both → -N suffix.
+                on_conflict=((body.on_conflict or "").strip().lower() or None),
+                # provenance of the stored copy: the build and its manifest (kept with the copy,
+                # which survives the deletion of the chart)
+                extra_meta={"build_id": build_id, "chart_id": chart_id,
+                            "icc_sha256": manifest["result"]["icc_sha256"],
+                            "manifest_sha256": publication["manifest_sha256"], "build": manifest})
             ranged_path = str(rp)
+            profile_versions.add_reference(d, build_id, {"kind": "repo_z9", "path": ranged_path,
+                                                         "filename": Path(ranged_path).name})
         except (OSError, ValueError):
             logger.exception("repo z9 storage failed (non-blocking) — chart %s", chart_id)
 
-    return {"ok": True, "chart_id": chart_id, "icc": Path(result.output_icc_path).name,
-            "icc_size_bytes": result.output_icc_size_bytes,
+    for _w in publication["warnings"]:
+        logger.warning("profile publication (%s): %s", chart_id, _w)
+    return {"ok": True, "chart_id": chart_id, "icc": out_icc.name, "build_id": build_id,
+            "publication_warnings": publication["warnings"],
+            "icc_size_bytes": icc_size,
             "ranged_icc_path": ranged_path,             # None if serial unknown (backward-compat)
             # repo/z9 coordinates of the stored profile → enables "Install" on the front side
             "ranged": ({"serial": serial, "media_id": media_id,
                         "filename": Path(ranged_path).name} if ranged_path else None),
             "paper_name": paper_name,
             "averaged": averaged,                       # base = average of the stable scans (§4d)
-            "n_scans_averaged": len(paths) if averaged else None,
+            "n_scans_averaged": len(plan.current) if averaged else None,
             "installable": ranged_path is not None}     # → installable from Papers/Profiles
 
 
@@ -1491,6 +1985,7 @@ def chart_detail(chart_id: str) -> dict:
     import json
     from datetime import datetime
     from webapp.backend.services import scan_session
+    from webapp.backend.services import measure_qc as qc_service
 
     d = _chart_dir(chart_id)   # 404 if unknown chart
     desc = json.loads((d / "chart.json").read_text(encoding="utf-8"))
@@ -1538,6 +2033,8 @@ def chart_detail(chart_id: str) -> dict:
                               if (sa and _printed_dt) else None),  # None if delay unknown
             "rejected_readings": list(rej_map.get(p.name) or []),  # rejected SAMPLE_ID
             "size_bytes": p.stat().st_size,
+            # intrinsic QC summary ONLY if a valid cached report exists (never computed here)
+            "qc_summary": qc_service.cached_summary(p),
         })
 
     # Chart profile (A4) : the ICC in the chart folder (charts/<id>/<id>.icc).
@@ -1558,6 +2055,9 @@ def chart_detail(chart_id: str) -> dict:
             "built": True, "icc_path": str(icc),
             "built_from": built_from,
             "stale": stale,
+            # phase 4C semantics (not displayed yet): replan of the same request → stale /
+            # missing_input / toolchain_changed / unknown (no reliable manifest)
+            "status": _profile_status(chart_id, d),
         }
 
     return {"identity": identity, "scans": scans, "profile": profile}

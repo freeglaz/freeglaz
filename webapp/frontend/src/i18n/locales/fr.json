@@ -1218,7 +1218,13 @@
       "title_other": "Mesures — {{count}} patches",
       "view": "Voir les mesures",
       "delete": "Supprimer ce set de mesures",
-      "unavailable": "mesures indisponibles"
+      "title_plain": "Mesures",
+      "loading": "Chargement des mesures…",
+      "error": {
+        "not_found": "Scan introuvable : ce fichier de mesures n'existe plus dans la charte.",
+        "unreadable": "Mesures illisibles : le fichier ti3 de ce scan est endommagé ou incomplet. Le détail technique est consigné dans le journal de freeglaz (freeglaz.log).",
+        "unavailable": "Mesures indisponibles : erreur technique pendant la lecture. Réessayez."
+      }
     },
     "qc": {
       "title_one": "Contrôle qualité — {{count}} patch",
@@ -1349,7 +1355,7 @@
     "profile_name_ascii_only": "Caractères ASCII uniquement (sans accents).",
     "profile_name_maxlen": "Maximum 63 caractères (limite du desc ICC).",
     "profile_conflict_title": "Profil déjà existant",
-    "profile_conflict_body": "Un profil « {{name}} » existe déjà pour ce papier. « Remplacer » écrase entièrement le profil existant (mesures, tags et notes). Pour les conserver, choisissez « Garder les deux ».",
+    "profile_conflict_body": "Un profil « {{name}} » existe déjà dans la bibliothèque de ce papier. « Remplacer » y met le nouveau profil à sa place ; l'ancien fichier est conservé, avec ses tags et ses notes, dans les sauvegardes du papier (dossier .replaced, hors des listes). Les tags et notes ne sont pas reportés sur le nouveau profil. « Garder les deux » ajoute le nouveau profil sous un autre nom et laisse l'ancien intact.",
     "profile_conflict_keep_both": "Garder les deux",
     "profile_conflict_replace": "Remplacer",
     "build_done": "Profil construit",
@@ -1358,7 +1364,8 @@
     "build_done_installable": "Prêt à installer sur l'imprimante.",
     "build_done_not_ranged": "Profil construit, mais non rangé (imprimante inconnue) — non installable.",
     "loading": "Chargement…",
-    "no_charts": "Aucune charte."
+    "no_charts": "Aucune charte.",
+    "profile_conflict_body_build": "Un profil « {{name}} » existe déjà dans la bibliothèque de ce papier. « Remplacer » y met le nouveau profil à sa place ; l'ancien fichier est conservé, avec ses tags et ses notes, dans les sauvegardes du papier (dossier .replaced, hors des listes). Les tags et notes ne sont pas reportés sur le nouveau profil. « Garder les deux » ajoute le nouveau profil sous un autre nom et laisse l'ancien intact. Les versions construites depuis cette charte restent toutes dans son historique."
   },
   "chart_create": {
     "kicker": "CHARTE LIBRE",
@@ -1453,5 +1460,385 @@
     "profile_done_local": "Profil construit (dans le dossier charte). Rangement par papier indisponible (imprimante non identifiée à la création).",
     "colprof_line": "Options colprof (génération du profil)",
     "colprof_help": "aide colprof"
+  },
+  "measure_qc": {
+    "open": "Voir le détail",
+    "open_measures": "Voir les mesures et le contrôle",
+    "export_title": "Exporte toutes les mesures (pas seulement le filtre), avec les colonnes du contrôle quand il est disponible.",
+    "summary": {
+      "loading": "Contrôle de cohérence des mesures en cours…",
+      "attention_one": "{{count}} mesure mérite votre attention.",
+      "attention_other": "{{count}} mesures méritent votre attention.",
+      "limited_one": "Aucune incohérence détectée par ce contrôle, avec une limite : {{count}} mesure non évaluable.",
+      "limited_other": "Aucune incohérence détectée par ce contrôle, avec des limites : {{count}} mesures non évaluables.",
+      "limited_no_na": "Aucune incohérence détectée par ce contrôle, avec des limites (voir ci-dessous).",
+      "limited_check": "Contrôle de cohérence limité.",
+      "attention_findings": "Incohérence d'ensemble détectée : voir ci-dessous.",
+      "clean": "Aucune incohérence détectée par ce contrôle.",
+      "counts": "{{n}} patchs examinés · {{strong}} fortement suspectes · {{to_check}} à vérifier · {{na}} non évaluables",
+      "disclaimer": "Contrôle consultatif : chaque mesure est comparée aux autres couleurs de la même charte. Il ne supprime rien, ne valide pas les mesures et ne garantit pas le profil. Une dérive régulière de toute une zone peut lui échapper."
+    },
+    "state": {
+      "invalid": "Contrôle impossible : mesures non analysables ({{reason}}). Ce n'est pas un résultat « aucune anomalie ».",
+      "unavailable": "Contrôle qualité indisponible pour ce scan.",
+      "error": "Erreur technique du contrôle qualité. Ce n'est pas un résultat « aucune anomalie ».",
+      "measurements_shown": "Les mesures lisibles restent affichées ci-dessous, sans contrôle de cohérence."
+    },
+    "error": {
+      "unknown": "raison inconnue",
+      "TRUNCATED": "fichier ti3 tronqué",
+      "NO_DATA": "aucune donnée de mesure",
+      "MERGED_FILE": "fichier fusionnant plusieurs scans",
+      "MISSING_COLUMNS": "colonnes indispensables absentes",
+      "SHORT_ROW": "ligne de mesure incomplète",
+      "DUPLICATE_SAMPLE_ID": "identifiants de patchs en double",
+      "INVALID_VALUE": "valeur non numérique",
+      "RGB_OUT_OF_RANGE": "valeurs RGB hors de 0–100",
+      "INVALID_COLORIMETRY": "colorimétrie absente ou invalide (XYZ/Lab)",
+      "SCAN_NOT_FOUND": "scan introuvable",
+      "NOT_A_RAW_SCAN": "fichier qui n'est pas un scan brut",
+      "UNREADABLE": "fichier illisible"
+    },
+    "status": {
+      "strong": "Fortement suspecte",
+      "to_check": "À vérifier",
+      "not_assessable": "Non évaluable",
+      "coherent": "Cohérente"
+    },
+    "status_title": {
+      "strong": "Écart important et fiable avec les autres couleurs de la charte, ou contrôle physique non satisfait. À examiner : cela ne prouve pas que la mesure soit fausse.",
+      "to_check": "Écart modéré avec les autres couleurs de la charte : à regarder, sans conclusion.",
+      "not_assessable": "Le contrôle ne peut pas juger cette mesure (voisinage insuffisant ou incohérent). C'est une limite du contrôle : ni une validation, ni une erreur.",
+      "coherent": "Cohérente avec les autres couleurs de la charte selon ce contrôle (ce n'est pas une validation)."
+    },
+    "position": {
+      "interior": "intérieur",
+      "face": "face",
+      "edge": "arête",
+      "corner": "coin"
+    },
+    "model": {
+      "linear": "linéaire",
+      "quadratic": "quadratique"
+    },
+    "reliability": {
+      "ok": "fiable ({{model}})",
+      "short_ok": "fiable",
+      "weak": "peu fiable",
+      "assessable": "prédiction fiable",
+      "not_assessable": "prédiction peu fiable"
+    },
+    "reason": {
+      "PHYS_LIGHTER_THAN_PAPER": "Plus claire que le papier (L* {{l}} > blanc {{white_l}})",
+      "PHYS_WHITE_SUSPECT": "Lecture du blanc papier suspecte : {{n_lighter}} patchs plus clairs que lui",
+      "PHYS_CHROMA": "Chroma physiquement improbable ({{chroma}})",
+      "PHYS_NEGATIVE_XYZ": "Valeurs XYZ négatives",
+      "DUP_DISCORDANT": "Lectures répétées discordantes : {{dist_to_median}} ΔE00 de la médiane des {{n}} lectures du même patch",
+      "DUP_PAIR_DIVERGENT": "Les 2 lectures de ce patch divergent de {{disagreement}} ΔE00",
+      "DUP_TWIN_DIVERGES": "Son doublon s'écarte des voisins ; cette lecture-ci est cohérente",
+      "DUP_CONFIRMED": "Confirmée par {{n}} lectures concordantes du même patch",
+      "MODEL_RESIDUAL": "Incohérente avec les patchs voisins : écart {{residual}} ΔE00 (score {{score}})",
+      "MODEL_EXTRAPOLATION": "Prédiction peu fiable : extrapolation (bord ou coin du cube)",
+      "MODEL_INCOHERENT_NEIGHBORHOOD": "Prédiction peu fiable : voisins incohérents entre eux ou réponse très courbe",
+      "MODEL_SPARSE": "Prédiction peu fiable : voisinage trop clairsemé",
+      "HIGH_DEVIATION_UNRELIABLE_PREDICTION": "Écart élevé ({{residual}} ΔE00) mais prédiction peu fiable : remesurer plutôt que conclure",
+      "MONOTONIC_INVERSION": "Inversion de luminance : plus sombre que des patchs plus encrés ({{n_inversions}})"
+    },
+    "finding": {
+      "SET_INCOHERENT": "Jeu globalement incohérent : {{pct}} % des patchs ont un voisinage incohérent. Vérifiez la charte (décalage, mauvais fichier) avant d'examiner les patchs un par un.",
+      "ZONE_INCOHERENT": "Zone incohérente : {{n}} patchs autour de RGB ({{rgb}}). Remesurer la zone est plus sûr que juger chaque patch.",
+      "SET_INCOHERENT_LOW_DENSITY": "Voisinages souvent incohérents ({{pct}} % des patchs) sur une charte peu dense : cela peut venir de la faible densité plutôt que d'une erreur d'attribution. Le contrôle est peu concluant sur cette charte.",
+      "LOW_DENSITY": "Charte peu dense ({{n}} patchs) : la sensibilité du contrôle est réduite."
+    },
+    "warning": {
+      "LAB_COLUMNS_INCONSISTENT_WITH_XYZ": "Les colonnes Lab du fichier ne correspondent pas à ses XYZ : le contrôle utilise les XYZ (ce que lit colprof).",
+      "NO_XYZ_LAB_COLUMNS_USED": "Pas de XYZ dans le fichier : contrôle effectué sur les colonnes Lab.",
+      "XYZ_SCALE_0_1_RESCALED": "XYZ fournis sur l'échelle 0–1 : remis à l'échelle 0–100 pour le contrôle.",
+      "NUMBER_OF_SETS_MISMATCH": "Le nombre de patchs annoncé dans le fichier ne correspond pas aux lignes présentes.",
+      "MERGED_FILE_ANALYSED": "Fichier fusionnant plusieurs sources analysé : les doublons viennent d'autres scans.",
+      "IDENTICAL_DUPLICATE_ROWS": "Lignes de mesure strictement identiques : elles ne sont pas comptées comme des lectures indépendantes."
+    },
+    "table": {
+      "status": "Contrôle",
+      "swatch": "Aperçu ≈",
+      "swatch_title": "Aperçu approximatif à l'écran (sRGB) : mesure | prédiction. Non fidèle hors gamut sRGB ; les valeurs numériques font foi.",
+      "swatch_cell": "≈ sRGB — mesure Lab {{measured}} | prédiction Lab {{predicted}}",
+      "out_of_srgb": "couleur hors sRGB : aperçu approximatif",
+      "device_swatch_title": "Valeur RGB envoyée à l'imprimante (pas la couleur mesurée)",
+      "de00": "ΔE pred.",
+      "de00_title": "ΔE00 entre la mesure et la prédiction faite à partir des autres patchs",
+      "position": "Position",
+      "reason": "Motif",
+      "reliability": "Prédiction",
+      "reliability_title": "Fiabilité de la prédiction (pas de la mesure)"
+    },
+    "sort": {
+      "suspicion": "Par suspicion",
+      "natural": "Ordre des patchs"
+    },
+    "filter": {
+      "all": "Toutes ({{n}})",
+      "flagged": "Signalées ({{n}})",
+      "not_assessable": "Non évaluables ({{n}})",
+      "all_title": "Toutes les mesures",
+      "flagged_title": "Fortement suspectes, à vérifier ET non évaluables",
+      "not_assessable_title": "Mesures que le contrôle ne peut pas juger",
+      "empty": "Aucune mesure dans ce filtre.",
+      "excluded": "Exclues ({{n}})",
+      "excluded_title": "Lectures exclues du prochain profil par votre décision"
+    },
+    "detail": {
+      "lab_measured": "Lab mesuré",
+      "lab_predicted": "Lab prédit",
+      "de00": "ΔE00 mesure–prédiction",
+      "score": "Score",
+      "position": "Position dans le cube RGB",
+      "neighbors": "Voisinage",
+      "neighbors_value": "{{n}} voisins · modèle {{model}} · voisins effectifs {{neff}}",
+      "reliability": "Fiabilité",
+      "duplicates": "Lectures répétées",
+      "duplicates_value": "{{n}} lectures ({{ids}}) · désaccord max {{dis}} ΔE00",
+      "identical_values": "valeurs strictement identiques",
+      "reasons": "Motifs",
+      "no_reason": "aucun"
+    },
+    "badge": {
+      "attention_one": "{{count}} à examiner",
+      "attention_other": "{{count}} à examiner",
+      "limits_one": "{{count}} non évaluable",
+      "limits_other": "{{count}} non évaluables",
+      "finding": "incohérence d'ensemble",
+      "limited_check": "contrôle limité",
+      "title": "Contrôle de cohérence des mesures de ce scan (consultatif). Cliquer pour voir le détail."
+    }
+  },
+  "exclusion": {
+    "dialog": {
+      "title": "Exclure la lecture {{sid}}",
+      "subject": "Patch {{sid}} · scan {{scan}} · RGB {{rgb}}",
+      "checking": "Évaluation des conséquences…"
+    },
+    "impact": {
+      "duplicate": "Une autre lecture compatible de cette couleur reste disponible ({{n}}) : exclusion simple.",
+      "interior": "Dernière lecture de ce patch intérieur : il sera interpolé à partir de ses voisins.",
+      "face": "Dernière lecture de ce patch de face : il sera interpolé à partir de ses voisins.",
+      "edge": "Dernière lecture de ce patch d'arête : le profil sera moins contraint sur cette arête.",
+      "corner": "Dernière lecture d'un coin du cube : le profil sera nettement moins contraint dans cette région.",
+      "refused_white": "C'est la dernière lecture du blanc : l'exclure empêcherait de construire le profil.",
+      "refused_black": "C'est la dernière lecture du noir : l'exclure fausserait le point noir du profil."
+    },
+    "level_explain": {
+      "ok": "Aucun patch ne se retrouve sans mesure.",
+      "info": "Information : la couleur sera estimée par le profil à partir des mesures voisines.",
+      "warning": "Avertissement : la précision peut baisser localement.",
+      "strong_warning": "Avertissement renforcé : une nouvelle mesure est préférable si le patch est douteux.",
+      "refused": "Exclusion refusée."
+    },
+    "base": {
+      "last": "Construction « dernier scan »",
+      "average": "Construction « moyenne »"
+    },
+    "base_not_used": "scan non utilisé dans ce mode",
+    "base_level": {
+      "ok": "sans conséquence",
+      "info": "interpolation (information)",
+      "warning": "avertissement",
+      "strong_warning": "avertissement renforcé",
+      "refused": "construction refusée dans ce mode"
+    },
+    "bases_differ": "Les conséquences diffèrent selon le mode de construction choisi.",
+    "recommend_remeasure": "nouvelle mesure recommandée",
+    "refused_advice": "Mesurez à nouveau la charte, ou ajoutez un scan contenant une lecture valide de ce patch.",
+    "reason_label": "Motif (facultatif, pour mémoire)",
+    "reason": {
+      "none": "— aucun —",
+      "doubtful": "Mesure douteuse",
+      "visible_defect": "Défaut visible sur le tirage",
+      "other": "Autre"
+    },
+    "reason_other_placeholder": "Préciser…",
+    "reason_informative": "Le motif est conservé pour information ; il n'influence pas la construction du profil.",
+    "confirm": "Exclure cette lecture",
+    "exclude": "Exclure",
+    "exclude_title": "Exclure cette lecture du prochain profil (réversible)",
+    "reinclude": "Réintégrer",
+    "reinclude_title": "Réintégrer cette lecture dans le prochain profil",
+    "use": {
+      "included": "Incluse",
+      "excluded": "Exclue",
+      "excluded_title": "Exclue du prochain profil par votre décision (réversible)"
+    },
+    "table": {
+      "use": "Utilisation",
+      "use_title": "Incluse ou exclue du prochain profil — indépendant du contrôle QC",
+      "risk": "Si exclue",
+      "risk_title": "Conséquence annoncée si cette lecture était exclue (confirmée au moment de l'action)"
+    },
+    "risk": {
+      "ok": "doublon",
+      "info": "interpolée",
+      "warning": "arête",
+      "strong_warning": "coin",
+      "refused": "refus"
+    },
+    "risk_title": {
+      "ok": "Une autre lecture compatible reste disponible",
+      "info": "Patch intérieur ou de face : interpolé",
+      "warning": "Patch d'arête : avertissement",
+      "strong_warning": "Coin du cube : avertissement renforcé",
+      "refused": "Dernier blanc ou noir : exclusion refusée"
+    },
+    "scan_excluded_hint": "Ce scan est exclu : les lectures ne peuvent être exclues que dans un scan inclus.",
+    "error": {
+      "refused": "Exclusion refusée par le contrôle des points structurants.",
+      "scan_excluded": "Ce scan est exclu : réincluez-le pour gérer ses lectures.",
+      "not_found": "Lecture ou scan introuvable : les données ont peut-être changé. L'affichage a été actualisé.",
+      "unreadable": "Mesures illisibles : impossible d'évaluer cette exclusion.",
+      "network": "Le serveur local ne répond pas : aucune modification n'a été enregistrée.",
+      "error": "Erreur technique : aucune modification n'a été enregistrée."
+    }
+  },
+  "build_preview": {
+    "loading": "Calcul de l'aperçu de la construction…",
+    "error": "Aperçu indisponible : {{message}}. La construction est désactivée.",
+    "title": "Aperçu de la construction",
+    "base_fallback": "Base demandée : {{requested}} — base réellement utilisée : {{effective}}.",
+    "base_used": "Base utilisée : {{base}}.",
+    "base": {
+      "last": "dernier scan",
+      "average": "moyenne des scans"
+    },
+    "excluded_one": "{{count}} lecture exclue sera appliquée",
+    "excluded_other": "{{count}} lectures exclues seront appliquées",
+    "inactive_one": "{{count}} exclusion inactive dans ce mode",
+    "inactive_other": "{{count}} exclusions inactives dans ce mode",
+    "holes_one": "{{count}} patch sans aucune mesure",
+    "holes_other": "{{count}} patchs sans aucune mesure",
+    "newly_applied_one": "La construction courante utilise l'ancienne règle (base « dernier scan » sans exclusions) : {{count}} exclusion enregistrée n'y est pas appliquée ; cette construction l'appliquera. Effet de la règle, pas un nouveau constat du contrôle.",
+    "newly_applied_other": "La construction courante utilise l'ancienne règle (base « dernier scan » sans exclusions) : {{count}} exclusions enregistrées n'y sont pas appliquées ; cette construction les appliquera. Effet de la règle, pas un nouveau constat du contrôle.",
+    "strong_included_one": "{{count}} mesure fortement suspecte reste incluse : vous pouvez l'examiner avant de construire.",
+    "strong_included_other": "{{count}} mesures fortement suspectes restent incluses : vous pouvez les examiner avant de construire.",
+    "guard": {
+      "HOLE_INTERIOR": "patch intérieur interpolé",
+      "HOLE_FACE": "patch de face interpolé",
+      "HOLE_EDGE": "patch d'arête sans mesure",
+      "HOLE_CORNER": "coin du cube sans mesure",
+      "QC_ZONE_INCOHERENT": "zone signalée incohérente par le contrôle",
+      "QC_SET_INCOHERENT_ISOLATED_EXCLUSIONS": "jeu globalement incohérent : exclusions isolées déconseillées"
+    },
+    "recommend": "Une nouvelle mesure de la charte est recommandée.",
+    "reason": {
+      "STRUCTURAL_POINT_LOST": "point structurant perdu",
+      "CORNERS_MISSING": "plusieurs coins sans mesure",
+      "EDGE_COVERAGE": "arête mal couverte",
+      "HOLE_CLUSTER": "trous voisins",
+      "WIDE_GAP": "trou large",
+      "TOO_MANY_HOLES": "trop de patchs sans mesure",
+      "QC_ZONE_INCOHERENT": "zone incohérente",
+      "QC_SET_INCOHERENT_ISOLATED_EXCLUSIONS": "jeu incohérent"
+    },
+    "refusal": {
+      "WHITE_LAST_READING": "Construction impossible : le blanc n'a plus aucune lecture dans les scans utilisés. Réintégrez-la, changez de base ou mesurez à nouveau.",
+      "BLACK_LAST_READING": "Construction impossible : le noir n'a plus aucune lecture dans les scans utilisés. Réintégrez-la, changez de base ou mesurez à nouveau."
+    },
+    "differs_current": "Les entrées diffèrent de celles du profil courant : la construction produira un profil différent.",
+    "same_as_current": "Entrées identiques à celles du profil courant.",
+    "show_list": "Voir la liste des exclusions",
+    "list_applied": "Appliquées :",
+    "list_inactive": "Inactives dans ce mode :",
+    "list_unmatched": "Introuvables dans le scan :",
+    "inactive_reason": {
+      "not_used_by_base_last": "scan non utilisé par « dernier scan »",
+      "scan_excluded": "scan exclu",
+      "scan_not_found": "scan introuvable",
+      "legacy_last_ignores_rejections": "ignorée par l'ancien mode"
+    },
+    "confirm_title": "Construire le profil avec ces choix ?",
+    "confirm_note": "Le profil actuel et toutes les versions précédentes sont conservés. Les exclusions restent réversibles.",
+    "confirm": "Construire le profil",
+    "inputs_changed": "Les mesures ou les choix ont changé depuis l'aperçu : l'aperçu a été recalculé, vérifiez-le puis confirmez à nouveau.",
+    "coverage_refused": "La construction a été refusée : un point structurant n'a plus de mesure. L'aperçu a été recalculé.",
+    "selection_differs": "Vos choix actuels diffèrent aussi de ceux de la construction courante.",
+    "newly_applied_neutral_one": "{{count}} exclusion enregistrée sera appliquée. Le profil courant n'a pas de manifeste fiable : on ne peut pas savoir s'il en tenait compte.",
+    "newly_applied_neutral_other": "{{count}} exclusions enregistrées seront appliquées. Le profil courant n'a pas de manifeste fiable : on ne peut pas savoir s'il en tenait compte."
+  },
+  "profile_history": {
+    "title_one": "Historique du profil ({{count}} version)",
+    "title_other": "Historique du profil ({{count}} versions)",
+    "loading": "Chargement de l'historique…",
+    "error": "Historique indisponible.",
+    "publication": "État de publication : {{state}} (réparé à la prochaine construction).",
+    "empty": "Aucune version enregistrée.",
+    "select": "Sélectionner la version {{id}} pour la comparaison",
+    "preserved": "Profil antérieur",
+    "current": "courant",
+    "corrupt": "version altérée",
+    "provenance_unknown": "Profil antérieur — provenance inconnue (construit avant le suivi des versions).",
+    "provenance_partial": "Profil antérieur — provenance partielle (description d'origine conservée).",
+    "summary": "Base : {{base}} · {{scans}} scan(s) · {{extra}} charte(s) ajoutée(s) · {{profiles}} profil(s) source · {{excluded}} lecture(s) exclue(s) · {{holes}} patch(s) sans mesure",
+    "no_manifest": "manifeste indisponible",
+    "compare": "Comparer les deux versions sélectionnées",
+    "kept_note": "Toutes les versions sont conservées ; aucune suppression automatique.",
+    "state": {
+      "up_to_date": "Profil conforme à ses entrées",
+      "stale": "Entrées modifiées depuis la construction",
+      "missing_input": "Source utilisée indisponible",
+      "unknown": "Situation indéterminée",
+      "no_profile": "Aucun profil",
+      "up_to_date_title": "La même demande, refaite maintenant, utiliserait exactement les mêmes entrées.",
+      "stale_title": "Les mesures, exclusions ou sources ont changé depuis la construction : le profil n'est pas défectueux, mais une reconstruction donnerait un profil différent.",
+      "missing_input_title": "Un scan, une charte ou un profil source utilisé n'existe plus.",
+      "unknown_title": "Impossible de le déterminer avec certitude (profil sans manifeste fiable).",
+      "no_profile_title": "Aucun profil construit."
+    },
+    "toolchain": {
+      "changed": "Outil de profilage différent",
+      "unknown": "Version de l'outil incertaine",
+      "changed_title": "La version de colprof diffère de celle utilisée pour construire le profil.",
+      "unknown_title": "La version de colprof n'est pas connue d'un côté ou de l'autre."
+    }
+  },
+  "profile_compare": {
+    "title": "Comparer deux versions du profil",
+    "loading": "Calcul des écarts entre les deux transformations…",
+    "error": {
+      "argyll_missing": "ArgyllCMS (xicclu) est introuvable : la comparaison ne peut pas être calculée.",
+      "altered_build": "Une des versions est altérée : comparaison impossible.",
+      "unknown_build": "Version introuvable.",
+      "lookup_failed": "Le calcul a échoué.",
+      "network": "Le serveur local ne répond pas.",
+      "error": "Erreur technique."
+    },
+    "identical_files": "Les deux fichiers ICC sont identiques.",
+    "col": {
+      "intent": "Intention",
+      "set": "Points",
+      "n": "Nb",
+      "mean": "ΔE00 moyen",
+      "p95": "p95",
+      "max": "max"
+    },
+    "intent": {
+      "relative": "Colorimétrique relative",
+      "perceptual": "Perceptuelle"
+    },
+    "set": {
+      "measured": "patchs mesurés",
+      "grid": "grille de contrôle"
+    },
+    "no_perceptual": "Intention perceptuelle non comparée : absente d'un des deux profils.",
+    "top_title": "Couleurs les plus déplacées (colorimétrique relative)",
+    "swatch_note": "Aperçu approximatif des valeurs RGB envoyées",
+    "wb": {
+      "white_point_tag": "Point blanc (tag)",
+      "black_point_tag": "Point noir (tag)",
+      "device_white": "Blanc du support (RGB 255)",
+      "device_black": "Noir (RGB 0)"
+    },
+    "limits": "Écarts entre deux transformations ICC, calculés hors ligne (ArgyllCMS xicclu) sur les patchs mesurés ({{measured}}) et une grille de contrôle {{grid}}³. Ce n'est pas une nouvelle mesure : la comparaison ne dit pas quel profil imprime le mieux. Aucun profil n'est installé ni reconstruit.",
+    "perceptual_same_both": "Dans les deux profils, la table perceptuelle (A2B0) est identique octet pour octet à la table colorimétrique (A2B1) : les lignes perceptuelles répètent donc les lignes relatives.",
+    "perceptual_same_one": "Dans le profil {{side}}, la table perceptuelle (A2B0) est identique octet pour octet à la table colorimétrique (A2B1) ; l'autre profil a une table perceptuelle propre.",
+    "focus_concentrated": "Lecture {{label}} (exclue dans {{side}}) : ΔE00 {{at}} au patch, jusqu'à {{nearMax}} sur {{nearN}} points voisins (à moins de {{radius}}/255 en RGB) ; ailleurs au plus {{farMax}} (p95 {{farP95}}). L'écart est concentré autour de ce patch.",
+    "focus_descriptive": "Lecture {{label}} (exclue dans {{side}}) : ΔE00 {{at}} au patch, jusqu'à {{nearMax}} sur {{nearN}} points voisins (à moins de {{radius}}/255 en RGB) ; ailleurs au plus {{farMax}} (p95 {{farP95}})."
   }
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import BuildPreviewSummary from './BuildPreviewSummary.jsx';
 import { useTranslation } from 'react-i18next';
 import { HelpCircle, Save, RefreshCw, Loader2 } from 'lucide-react';
 import * as api from '../../api/client.js';
@@ -31,6 +32,7 @@ export default function ProfileBuildPanel({
   onBuild, busy = false, buildPhase = null, buildLabel,     // optional button (otherwise parent footer)
   chartId = null, onSelectionChange,                        // additional sources
   nameNotice = null,                                        // ASCII/length only (BELOW the field; collision → parent pop-up)
+  preview = null,                                           // useBuildPreview state: shown, and gates the build
 }) {
   const { t } = useTranslation();
 
@@ -193,8 +195,12 @@ export default function ProfileBuildPanel({
         <code className="font-mono text-text-muted break-all">colprof {colprofFlags}</code>
       </div>
 
+      {/* What the build WILL use (preview, apply_all) — mandatory before building */}
+      <BuildPreviewSummary preview={preview}/>
+
       {onBuild && (
-        <button type="button" onClick={() => onBuild()} disabled={busy}
+        <button type="button" onClick={() => onBuild()} data-action="build-profile"
+                disabled={busy || preview?.status !== 'ready' || !!preview?.data?.would_be_refused}
                 className="inline-flex items-center gap-1.5 text-xs2 font-semibold bg-accent text-on-accent px-4 py-1.5 rounded-md hover:bg-accent-press disabled:opacity-50">
           {buildPhase
             ? <><Loader2 size={13} className="animate-spin"/> {t('mesures.building')}</>

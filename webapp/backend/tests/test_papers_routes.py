@@ -23,6 +23,19 @@ def _clear_overrides():
 
 
 @pytest.fixture(autouse=True)
+def _no_ledm_fetch(monkeypatch):
+    """The routes enrich papers with the LEDM calibration snapshot, fetched over HTTPS
+    from ``z9.host``. The mock's host (192.168.1.50) is a plausible REAL printer address:
+    never fetch it. An empty snapshot is what get_snapshot returns when the printer is
+    unreachable (neutral for these tests). Module cache reset to avoid cross-test leaks."""
+    from webapp.backend.services import ledm_calibration_cache
+    monkeypatch.setattr(ledm_calibration_cache, "_cache", None)
+    monkeypatch.setattr(ledm_calibration_cache, "_reader", None)
+    monkeypatch.setattr(ledm_calibration_cache, "get_snapshot",
+                        lambda z9_client, force_refresh=False: {})
+
+
+@pytest.fixture(autouse=True)
 def _isolate_state(tmp_path, monkeypatch):
     """Redirect paper_favorites/notes to tmp_path."""
     monkeypatch.setattr(paper_state, "DATA_DIR", tmp_path)

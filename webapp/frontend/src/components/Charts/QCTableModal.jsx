@@ -2,8 +2,11 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { saveFile } from '../../lib/fileIO.js';
+import { compareNatural } from '../../lib/naturalSort.js';
 import { X, Ban, RotateCcw, AlertTriangle, ArrowUp, ArrowDown } from 'lucide-react';
 import * as api from '../../api/client.js';
+import ExclusionDialog from './ExclusionDialog.jsx';
+import { classifyExclusionError } from '../../lib/exclusion.js';
 
 // QC patch × scan view — the scalpel. FROZEN columns on the left: SAMPLE_ID + RGB device
 // (the common-sense anchor) + sortable DISAGREEMENT index → the suspects rise on their own. One column
@@ -27,7 +30,8 @@ export default function QCTableModal({ open, chartId, title, onClose, onChanged 
   const { t } = useTranslation();
   const [qc, setQc] = useState(null);
   const [err, setErr] = useState(null);
-  const [busy, setBusy] = useState(false);          // a rejection in flight (locks the table)
+  const [busy, setBusy] = useState(false);          // a re-inclusion in flight (locks the table)
+  const [dialog, setDialog] = useState(null);        // {ti3, sid, rgb}: exclusion being confirmed
   const [sortKey, setSortKey] = useState('disagreement');
   const [sortDir, setSortDir] = useState('desc');
 
@@ -40,8 +44,10 @@ export default function QCTableModal({ open, chartId, title, onClose, onChanged 
 
   const sorted = useMemo(() => {
     if (!qc?.patches) return [];
-    const fn = sortKey === 'id' ? ((p) => p.id) : ((p) => p.disagreement);
-    const arr = [...qc.patches].sort((a, b) => (fn(a) > fn(b) ? 1 : fn(a) < fn(b) ? -1 : 0));
+    // ids are SAMPLE_ID strings → natural order ("2" before "10"), not lexicographic.
+    const cmp = sortKey === 'id' ? ((a, b) => compareNatural(a.id, b.id))
+              : ((a, b) => a.disagreement - b.disagreement);
+    const arr = [...qc.patches].sort(cmp);
     return sortDir === 'desc' ? arr.reverse() : arr;
   }, [qc, sortKey, sortDir]);
 
@@ -52,13 +58,15 @@ export default function QCTableModal({ open, chartId, title, onClose, onChanged 
     else { setSortKey(k); setSortDir(k === 'disagreement' ? 'desc' : 'asc'); }
   };
 
-  const reject = (ti3, sampleId, rejected) => {
-    if (busy) return;
+  // Same explicit exclusion API and confirmation as MeasurementsModal (one logic): excluding opens
+  // ExclusionDialog (dry run, impact, confirmation); re-including is always allowed.
+  const reject = (ti3, sampleId, rejected, rgb) => {
+    if (busy || dialog) return;
+    if (rejected) { setDialog({ ti3, sid: sampleId, rgb }); return; }
     setBusy(true); setErr(null);
-    api.setReadingRejected(chartId, ti3, sampleId, rejected)
+    api.setReadingExclusion(chartId, ti3, sampleId, { excluded: false })
       .then(() => { load(); onChanged?.(); })
-      .catch((e) => setErr((e?.message || '').includes('409')
-        ? t('scan.qc.last_valid') : (e?.message || t('scan.qc.reject_failed'))))
+      .catch((e) => setErr(t(`exclusion.error.${classifyExclusionError(e).kind}`)))
       .finally(() => setBusy(false));
   };
 
@@ -155,7 +163,7 @@ export default function QCTableModal({ open, chartId, title, onClose, onChanged 
                             </button>
                           ) : (
                             <button type="button" disabled={busy} title={t('scan.qc.reject')}
-                                    onClick={() => reject(r.ti3, p.id, true)}
+                                    onClick={() => reject(r.ti3, p.id, true, p.rgb)}
                                     className="text-text-faint hover:text-danger disabled:opacity-40">
                               <Ban size={13}/>
                             </button>
@@ -175,6 +183,12 @@ export default function QCTableModal({ open, chartId, title, onClose, onChanged 
           <button type="button" onClick={onClose}
                   className="text-xs2 font-semibold bg-accent text-on-accent px-4 py-1.5 rounded-md hover:bg-accent-press">{t('common.close')}</button>
         </div>
+        {dialog && (
+          <ExclusionDialog key={`${dialog.ti3}/${dialog.sid}`} chartId={chartId} ti3={dialog.ti3} sid={dialog.sid} rgb={dialog.rgb}
+                           onClose={() => setDialog(null)}
+                           onSettled={() => onChanged?.()}
+                           onDone={() => { setDialog(null); setErr(null); load(); }}/>
+        )}
       </div>
     </div>,
     document.body,

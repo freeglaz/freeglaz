@@ -1321,6 +1321,13 @@ export async function getScanPatches(chartId, ti3) {
   return http(`/api/charts/${encodeURIComponent(chartId)}/scans/${encodeURIComponent(ti3)}/patches`,
               { method: 'GET' });
 }
+/** INTRINSIC measurement QC of ONE raw scan (advisory, read-only, cached server-side) →
+ *  {chart_id, ti3, ti3_sha256, cached, report}. 422 = ti3 not analysable (detail {code, message}),
+ *  404 = unknown scan. Never mutates anything (no exclusion, no profile, no Z9). */
+export async function getScanMeasureQC(chartId, ti3) {
+  return http(`/api/charts/${encodeURIComponent(chartId)}/scans/${encodeURIComponent(ti3)}/qc`,
+              { method: 'GET' });
+}
 /** PERMANENTLY deletes a measurement set (ti3 + cgats) — destructive, irreversible (vs
  *  "exclude" reversible). UI confirmation. Local, no Z9. */
 export async function deleteScan(chartId, ti3) {
@@ -1334,6 +1341,14 @@ export async function setReadingRejected(chartId, ti3, sampleId, rejected) {
               + `/readings/${encodeURIComponent(sampleId)}/reject`,
               { method: 'POST', body: JSON.stringify({ rejected }) });
 }
+/** EXPLICIT exclusion of ONE reading (phase 4C API; also with a single scan). body:
+ *  {excluded=true, reason?, dry_run=false, extra_chart_ids=[]}. dry_run → impact only, nothing
+ *  written. 409 exclusion_refused (last white/black) carries the impact. No Z9, ti3 untouched. */
+export async function setReadingExclusion(chartId, ti3, sampleId, body) {
+  return http(`/api/charts/${encodeURIComponent(chartId)}/scans/${encodeURIComponent(ti3)}`
+              + `/readings/${encodeURIComponent(sampleId)}/exclusion`,
+              { method: 'POST', body: JSON.stringify(body || {}) });
+}
 /** Sets the ROLE of a scan (software MUTATION, no Z9): 'included' (feeds the profile) |
  *  'excluded' (out of the profile, but ti3 KEPT/displayed). Role = durable flag, ti3 never deleted. */
 export async function setScanRole(chartId, ti3, role) {
@@ -1345,6 +1360,26 @@ export async function setScanRole(chartId, ti3, role) {
 export async function profileChart(chartId, body) {
   return http(`/api/charts/${encodeURIComponent(chartId)}/profile`,
               { method: 'POST', body: JSON.stringify(body || {}) });
+}
+/** What a build WOULD use, without building (no ti3 written, no colprof): sources, applied and
+ *  not-applied exclusions, holes, guards, refusals and the inputs fingerprint to send back as
+ *  expected_fingerprint. Local, no Z9. */
+export async function previewProfile(chartId, body) {
+  return http(`/api/charts/${encodeURIComponent(chartId)}/profile/preview`,
+              { method: 'POST', body: JSON.stringify(body || {}) });
+}
+/** History of the immutable profile versions of a chart (newest first) + publication state. */
+export async function listBuilds(chartId) {
+  return http(`/api/charts/${encodeURIComponent(chartId)}/builds`, { method: 'GET' });
+}
+/** The stored manifest of one version (read-only). */
+export async function getBuildManifest(chartId, buildId) {
+  return http(`/api/charts/${encodeURIComponent(chartId)}/builds/${encodeURIComponent(buildId)}/manifest`, { method: 'GET' });
+}
+/** ΔE00 between the A2B transforms of two STORED versions (offline, never rebuilt nor installed). */
+export async function compareBuilds(chartId, a, b, opts = {}) {
+  return http(`/api/charts/${encodeURIComponent(chartId)}/builds/compare`,
+              { method: 'POST', body: JSON.stringify({ a, b, ...opts }) });
 }
 /** State of the CURRENT/last profile build for this chart → {state, phase, result|error}. */
 export async function getProfileStatus(chartId) {

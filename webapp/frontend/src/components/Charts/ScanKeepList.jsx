@@ -4,7 +4,8 @@
 // feeds the profile · Excluded = out of the profile but KEPT/displayed. The REASON (too fresh, botched)
 // is read from the print→scan DELAY shown next to it, not from a 3rd role. onSetRole(ti3, role).
 import { useTranslation } from 'react-i18next';
-import { Eye, Trash2 } from 'lucide-react';
+import { Eye, Trash2, AlertTriangle } from 'lucide-react';
+import { summaryBadge } from '../../lib/measureQc.js';
 
 const _ROLES = ['included', 'excluded'];
 
@@ -33,6 +34,18 @@ export default function ScanKeepList({ scans, onSetRole, disabled, onView, onDel
                className={`flex items-center justify-between gap-2 text-xs2 border-b border-border-soft/40 py-1 ${rowCls}`}>
             <span className="font-mono truncate no-underline">{s.ti3}</span>
             <span className="flex items-center gap-2 flex-shrink-0 no-underline not-italic">
+              {/* intrinsic QC indicator — ONLY from an already-cached summary (never computed here) */}
+              {(() => {
+                const b = summaryBadge(s.qc_summary);
+                if (!b) return null;
+                const cls = `inline-flex items-center gap-0.5 text-tiny px-1.5 rounded border ${
+                  b.kind === 'warn' ? 'border-icc-warn/40 text-icc-warn bg-icc-warn/10' : 'border-border-soft text-text-faint'}`;
+                const label = t(b.key, { count: b.count });
+                return onView
+                  ? <button type="button" className={`${cls} hover:bg-sunken`} title={t('measure_qc.badge.title')}
+                            onClick={() => onView(s.ti3)}><AlertTriangle size={10}/>{label}</button>
+                  : <span className={cls} title={t('measure_qc.badge.title')}><AlertTriangle size={10}/>{label}</span>;
+              })()}
               <span className="text-text-faint">{s.n_patches != null ? `${s.n_patches}p` : '—'}</span>
               <span className="text-text-faint tabular-nums" title={t('scan.delay_title')}>
                 {formatDelay(s.delay_seconds, t)}

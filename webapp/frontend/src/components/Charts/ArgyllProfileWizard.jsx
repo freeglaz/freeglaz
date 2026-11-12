@@ -17,6 +17,12 @@ import AllPatchesModal from '../Profiles/AllPatchesModal.jsx';
 import ScanDeltaCard from './ScanDeltaCard.jsx';   // extracted (shared wizard + Measurements tab)
 import ChartCard from './ChartCard.jsx';           // extracted chart-card (shared)
 import ScanKeepList from './ScanKeepList.jsx';     // keep/exclude toggle (shared)
+import MeasurementsModal from './MeasurementsModal.jsx';   // single-scan view + intrinsic QC (shared with Measurements)
+import MeasureQcSummary from './MeasureQcSummary.jsx';     // QC summary (shared with MeasurementsModal)
+import { qcPanelState } from '../../lib/measureQc.js';
+import BuildConfirmModal from './BuildConfirmModal.jsx';
+import { useBuildPreview, buildWithPreview } from '../../hooks/useBuildPreview.js';
+import { buildRequestBody, chartStateStamp, classifyBuildError, summarizePreview } from '../../lib/buildPreview.js';
 
 /**
  * ArgyllProfileWizard — custom profiling (Argyll) as an ACTION ON THE SLOT, mirroring
@@ -146,11 +152,26 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
   const [clcWarn, setClcWarn] = useState(null);               // clc status to warn about (never|stale|pending) | null
   const scanPollRef = useRef(null);
   const cooldownRef = useRef(null);
-  const formatDefaultedRef = useRef(false);   // format default applied once per open (see effect)
+  const formatDefaultedRef = useRef(false);
+  const profileInFlight = useRef(false);   // format default applied once per open (see effect)
   const [scanDelta, setScanDelta] = useState(null);   // mini inter-scan ΔE report (scanned screen)
   const [chartDetail, setChartDetail] = useState(null);  // scans+kept (keep/exclude toggle)
   const [concordanceDelta, setConcordanceDelta] = useState(null);  // report opened from the chart view
   const [deltaAllOpen, setDeltaAllOpen] = useState(false);
+  // Intrinsic measurement QC of the scan JUST acquired (advisory, separate from the acquisition:
+  // its failure never turns a successful scan into a failed one).
+  const [qcScan, setQcScan] = useState({ key: null, loading: false, report: null, error: null });
+  const [measuresOpen, setMeasuresOpen] = useState(false);
+  // Phase 4D — the same build contract as Measurements: preview (apply_all) → confirmation → build
+  // with the preview's fingerprint. The preview follows settings, sources, roles and exclusions.
+  const [previewNonce, setPreviewNonce] = useState(0);
+  const [confirmKey, setConfirmKey] = useState(null);
+  const nKeptBuild = (chartDetail?.scans || []).filter((s) => s.kept).length;
+  const buildBody = useMemo(() => buildRequestBody({ nKept: nKeptBuild, profileBase, colprofFlags, extraSources }),
+                            [nKeptBuild, profileBase, colprofFlags, extraSources]);
+  const stateStamp = useMemo(() => chartStateStamp(chartDetail), [chartDetail]);
+  const preview = useBuildPreview(selected?.chart_id, buildBody, {
+    enabled: phase === 'scanned' && !isValidate && !!chartDetail, stateStamp, nonce: previewNonce });
 
   // reset on opening
   useEffect(() => {
@@ -164,6 +185,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
     setError(null); setBusy(false); setSelected(directScan ? initialChart : null); setResult(null);
     setScanInfo(null); setProfInfo(null); setPrintInfo(null); setConfirmPrint(false);
     setScanProg(null); setCooldownSec(0); setNScans(0);
+    setQcScan({ key: null, loading: false, report: null, error: null }); setMeasuresOpen(false);
     setProfileBase('average'); setChartMovedAsk(false);
     setCChoice('zero');                 // reset precond default (Start from scratch) each open
     formatDefaultedRef.current = false; // re-arm the format default (applied once formats load)
@@ -381,6 +403,16 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
     }, 1000);
   }
 
+  // Explicit QC of the NEW scan (cached server-side → Measurements shows it without recomputing).
+  function _runScanQc(chartId, ti3) {
+    if (!chartId || !ti3) return;
+    const key = `${chartId}/${ti3}`;
+    setQcScan({ key, loading: true, report: null, error: null });
+    api.getScanMeasureQC(chartId, ti3)
+      .then((r) => setQcScan((cur) => (cur.key === key ? { key, loading: false, report: r.report, error: null } : cur)))
+      .catch((e) => setQcScan((cur) => (cur.key === key ? { key, loading: false, report: null, error: e } : cur)));
+  }
+
   // Poll the background job until done/error (never block the UI; NO kill on the UI side).
   function _pollScan(chartId) {
     if (scanPollRef.current) clearInterval(scanPollRef.current);
@@ -394,6 +426,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
           clearInterval(scanPollRef.current);
           setScanInfo({ ti3: job.ti3, n_patches: job.n_patches, bands: job.bands });
           setPhase('scanned');
+          _runScanQc(chartId, job.ti3);                 // advisory, after the scan is recorded
         } else if (job.state === 'error') {
           clearInterval(scanPollRef.current);
           // EXPECTED failure path = CALM message (not anxiety-inducing red). Retry COOLDOWN-GATED.
@@ -426,11 +459,11 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
         // Inter-chart lock → offer a DIRECT "finish the blocking session" action
         // (modal below) instead of a dead-end text refusal.
         setSessionBlockedBy(e.detail.chart_id);
-      } else if (msg.includes('429')) {             // SOL cooldown (server hard guard)
+      } else if (e?.status === 429) {               // SOL cooldown (server hard guard)
         const st = await api.getScanStatus(selected.chart_id).catch(() => null);
         _startCooldown(st?.cooldown_remaining_s || 30);
         setError(t('scan.roll.cooldown_sol'));
-      } else if (e?.status === 409 || msg.includes('409')) {  // scan already in progress
+      } else if (e?.status === 409) {               // scan already in progress
         setError(t('scan.roll.already_running'));
       } else {
         setError(msg || t('scan.roll.scan_failed'));
@@ -447,7 +480,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
       const r = await api.getScanDelta(chart.chart_id);
       setConcordanceDelta({ ...r, _chartId: chart.chart_id });
     } catch (e) {
-      setError((e?.message || '').includes('409')
+      setError(e?.status === 409
         ? t('scan.roll.less_than_two_scans')
         : (e?.message || t('scan.roll.concordance_unavailable')));
     }
@@ -455,35 +488,37 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
 
   // ─── Profile (local, colprof) ───
   // onConflict: null (collision → pop-up) | 'replace' | 'keep_both' (replay from the pop-up).
-  async function doProfile(onConflict = null) {
+  async function doProfile(onConflict = null, confirmed = false) {
+    if (profileInFlight.current) return;                // synchronous double-click guard (phase 4E)
+    if (preview.status !== 'ready' || preview.data?.would_be_refused) return;
+    if (typeof onConflict !== 'string' && !confirmed && summarizePreview(preview.data).needsConfirmation) {
+      setConfirmKey(preview.key); return;               // confirmation bound to THIS preview
+    }
+    setConfirmKey(null);
+    const previewed = preview.data;
+    profileInFlight.current = true;
     setBusy(true); setError(null); setPhase('profiling');
     try {
-      const body = {};
-      if (colprofFlags.trim()) body.colprof_flags = colprofFlags.trim();
-      const nKept = (chartDetail?.scans || []).filter((s) => s.kept).length;
-      if (nKept >= 2) body.profile_base = profileBase;   // average (KEPT set) / last
-      if (extraSources.extra_chart_ids.length) body.extra_chart_ids = extraSources.extra_chart_ids;
-      if (extraSources.source_profiles.length) body.source_profiles = extraSources.source_profiles;
-      if (extraSources.name) body.name = extraSources.name;     // custom name (null if auto default)
+      const body = { ...buildBody };
       // Defensive type guard (the button is already wired arrow, but we align
       // with buildProfile to harden against a future onClick={handler} rewiring).
       if (typeof onConflict === 'string') body.on_conflict = onConflict;  // replay after pop-up choice
       setConflict(null); setNameNotice(null);
-      // Build = background job: starts + polls until done|error (info = same shape as before).
-      const info = await api.buildProfileAndWait(selected.chart_id, body);
+      // Build = background job (apply_all + previewed fingerprint): starts + polls until done|error.
+      const info = await buildWithPreview(selected.chart_id, body, previewed);
       setProfInfo(info); setPhase('profiled');
       onDone?.(info);
     } catch (e) {
-      if (e?.status === 409 && e.detail?.error === 'name_conflict') {  // collision → 3-choice pop-up
-        setConflict(e.detail);
-      } else if (e?.status === 422) {                           // length → readable message BELOW the field
-        setNameNotice(t('mesures.profile_name_maxlen'));
-      } else if (e?.status === 400) {                           // invalid name → backend detail BELOW the field
-        setNameNotice(e.message);
-      } else { setError(e.message); }
+      const c = classifyBuildError(e);
+      if (c.kind === 'name_conflict') setConflict(e.detail);   // collision → 3-choice pop-up
+      else if (c.kind === 'inputs_changed' || c.kind === 'coverage_refused') {
+        setError(t(`build_preview.${c.kind}`)); setPreviewNonce((n) => n + 1);   // re-preview, re-confirm
+      } else if (c.kind === 'name_length') setNameNotice(t('mesures.profile_name_maxlen'));
+      else if (c.kind === 'name_invalid') setNameNotice(e.message);
+      else setError(e.message);
       setPhase('scanned');
     }
-    finally { setBusy(false); }
+    finally { profileInFlight.current = false; setBusy(false); }
   }
 
   // ─── Validate (profcheck b) — local, forward A2B terminal ───
@@ -675,6 +710,17 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
             <div className="space-y-4">
               <ScannedView t={t} scanInfo={scanInfo}/>
 
+              {/* Intrinsic QC of THIS scan (advisory). Same presentation as Measurements. */}
+              {scanInfo?.ti3 && (
+                <div className="space-y-2">
+                  <MeasureQcSummary compact state={qcPanelState(qcScan)}/>
+                  <button type="button" onClick={() => setMeasuresOpen(true)}
+                          className="text-xs2 font-semibold px-3 py-1.5 rounded-md border border-border-soft text-text-strong hover:bg-sunken">
+                    {t('measure_qc.open_measures')}
+                  </button>
+                </div>
+              )}
+
               {/* Scans + KEEP/EXCLUDE toggle (software mutation; exclude a bad scan before averaging) */}
               {chartDetail && chartDetail.scans.length >= 2 && (
                 <div className="space-y-1">
@@ -700,7 +746,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
                 loadColprofHelp={loadColprofHelp} showColprofHelp={showColprofHelp}
                 colprofHelp={colprofHelp}
                 chartId={selected?.chart_id} onSelectionChange={setExtraSources}
-                nameNotice={nameNotice}/>
+                nameNotice={nameNotice} preview={preview}/>
 
               <div className="rounded-md border border-border-soft px-3 py-2 text-tiny text-text-faint leading-relaxed">
                 <Info size={12} className="inline mr-1 -mt-0.5"/>
@@ -769,7 +815,8 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
                 <ScanLine size={14}/>{t('scan.roll.scan_again')}
               </button>
             )}
-            <button type="button" onClick={() => (isValidate ? doValidate() : doProfile())} disabled={busy}
+            <button type="button" onClick={() => (isValidate ? doValidate() : doProfile())} data-action="wizard-build"
+                    disabled={busy || (!isValidate && (preview.status !== 'ready' || !!preview.data?.would_be_refused))}
                     className="flex items-center gap-1.5 text-xs2 font-semibold bg-accent text-on-accent px-4 py-1.5 rounded-md hover:bg-accent-press disabled:opacity-50">
               {isValidate ? <ShieldCheck size={14}/> : <FlaskConical size={14}/>}
               {isValidate ? t('chart_create.validate_btn') : t('chart_create.profile_btn')}
@@ -899,7 +946,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
           + preserves tags/notes. Replay = doProfile(intent) with the same body. */}
       <ConfirmModal open={!!conflict}
         title={t('mesures.profile_conflict_title')}
-        message={conflict ? t('mesures.profile_conflict_body', { name: conflict.name }) : ''}
+        message={conflict ? t('mesures.profile_conflict_body_build', { name: conflict.name }) : ''}
         cancelLabel={t('common.cancel')}
         thirdLabel={t('mesures.profile_conflict_keep_both')}
         confirmLabel={t('mesures.profile_conflict_replace')} confirmKind="danger"
@@ -927,6 +974,17 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
             <ScanDeltaCard delta={concordanceDelta} onSeeAll={() => setDeltaAllOpen(true)}/>
           </div>
         </div>, document.body)}
+
+      {confirmKey && confirmKey === preview.key && preview.status === 'ready' && (
+        <BuildConfirmModal summary={summarizePreview(preview.data)}
+          onCancel={() => setConfirmKey(null)} onConfirm={() => doProfile(null, true)}/>
+      )}
+
+      {/* Single-scan measurements + intrinsic QC (the SAME component as the Measurements tab) */}
+      {measuresOpen && scanInfo?.ti3 && selected?.chart_id && (
+        <MeasurementsModal open chartId={selected.chart_id} ti3={scanInfo.ti3} onChanged={_loadScanned}
+          onClose={() => setMeasuresOpen(false)}/>
+      )}
 
       {/* Complete data of the inter-scan comparison (reuses the generalized AllPatchesModal) */}
       {deltaAllOpen && activeDelta && (

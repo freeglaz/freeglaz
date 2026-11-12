@@ -24,10 +24,16 @@ if unshare -rn true 2>/dev/null; then
   exec unshare -rn bash -c "ip link set lo up && $CHECK_LO"' && exec unshare --user --map-user="$1" --map-group="$2" -- "${@:3}"' \
     _ "$uid" "$gid" "${CMD[@]}"
 elif command -v sudo >/dev/null && sudo -n true 2>/dev/null; then
-  echo "run_tests_offline: sudo network namespace (loopback only)" >&2
-  exec sudo -n --preserve-env unshare --net -- bash -c \
-    "ip link set lo up && $CHECK_LO"' && exec setpriv --reuid="$1" --regid="$2" --init-groups -- "${@:3}"' \
-    _ "$uid" "$gid" "${CMD[@]}"
+  # sudo resets the environment (HOME=/root, FREEGLAZ_* dropped) and sudo-rs, the default
+  # on Ubuntu 26.04 runners, ignores a bare --preserve-env. Pass the caller's exported
+  # variables as arguments and restore exactly them with `env -i` once back to the real
+  # uid, so the suite sees the same environment as on the unprivileged path.
+  CALLER_ENV=()
+  while IFS= read -r name; do CALLER_ENV+=("$name=${!name}"); done < <(compgen -e)
+  echo "run_tests_offline: sudo network namespace (loopback only), caller environment kept (HOME=$HOME)" >&2
+  exec sudo -n unshare --net -- bash -c \
+    "ip link set lo up && $CHECK_LO"' && n="$3" && exec setpriv --reuid="$1" --regid="$2" --init-groups -- env -i "${@:4:n}" "${@:$((4 + n))}"' \
+    _ "$uid" "$gid" "${#CALLER_ENV[@]}" "${CALLER_ENV[@]}" "${CMD[@]}"
 elif [ "${FREEGLAZ_REQUIRE_NETNS:-0}" = "1" ]; then
   {
     echo "run_tests_offline: ERROR — no network namespace could be created, and FREEGLAZ_REQUIRE_NETNS=1."

@@ -129,6 +129,12 @@ export default function ProfileBuildPanel({
               <input type="checkbox" checked={selCharts.has(c.chart_id)}
                      onChange={() => toggleChart(c.chart_id)} className="accent-accent"/>
               <span className="flex-1 font-mono truncate" title={c.chart_id}>{c.chart_id}</span>
+              {c.measurement_compatibility && c.measurement_compatibility !== 'compatible' && (
+                <span className="text-tiny text-warn flex-shrink-0" data-source-compat={c.measurement_compatibility}
+                      title={t(`measurement.source_compat_title.${c.measurement_compatibility}`, { defaultValue: '' })}>
+                  {t(`measurement.source_compat.${c.measurement_compatibility}`, { defaultValue: c.measurement_compatibility })}
+                </span>
+              )}
               <span className="text-tiny text-text-faint flex-shrink-0">
                 {t('mesures.scans_count', { count: c.n_scans })}
                 {c.n_rejected > 0 && (
@@ -147,6 +153,11 @@ export default function ProfileBuildPanel({
           ))}
           </div>
           <p className="text-tiny text-text-faint leading-snug">{t('mesures.sources_hint')}</p>
+          {selProfiles.size > 0 && (
+            <p className="text-tiny text-text-muted leading-snug" data-untracked-selected={selProfiles.size}>
+              {t('measurement.untracked_profiles', { count: selProfiles.size })}
+            </p>
+          )}
         </div>
       )}
 

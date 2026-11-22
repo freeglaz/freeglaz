@@ -24,6 +24,14 @@ import { qcPanelState } from '../../lib/measureQc.js';
 import BuildConfirmModal from './BuildConfirmModal.jsx';
 import { useBuildPreview, buildWithPreview } from '../../hooks/useBuildPreview.js';
 import { buildRequestBody, chartStateStamp, classifyBuildError, summarizePreview } from '../../lib/buildPreview.js';
+import { errorText } from '../../lib/errorText.js';
+import {
+  METHOD_EXTERNAL, METHOD_INTEGRATED, chartMeasurement, externalFormats, externalMediaCheck, instrumentLabel,
+  methodAvailability, printtargSummary, resolveInstrument, resolveMethod, validationIdentityNotice,
+} from '../../lib/measurementMethod.js';
+import { openInLibrary } from '../../lib/libraryLink.js';
+import MeasurementBadge from './MeasurementBadge.jsx';
+import ExternalMeasurementPending from './ExternalMeasurementPending.jsx';
 
 /**
  * ArgyllProfileWizard — custom profiling (Argyll) as an ACTION ON THE SLOT, mirroring
@@ -36,6 +44,13 @@ import { buildRequestBody, chartStateStamp, classifyBuildError, summarizePreview
  *
  * Measurement is OFFLINE (Path A: print → dry → reload → scan) — so there
  * is NO "auto" mode on the Argyll side (unlike HP).
+ *
+ * Measurement method (chosen at composition, kept for the whole creation): the built-in HP
+ * spectrophotometer (honeycomb chart, SOL scan, Z9 only) or an external spectrophotometer
+ * (printtarg strips, any printer; instruments listed by GET /api/charts/printtarg-options).
+ * An external chart is printed by the same pipeline and never reaches the SOL scan: after
+ * printing, and whenever one is picked for measurement, the wizard shows that the external
+ * measurement is not driven by freeglaz yet.
  *
  * Plumbing (resident tag, slot, FULLPAGE, raw values) HIDDEN in prod;
  * revealed behind the DEV FLAG (localStorage freeglaz_dev='1') for diagnostics.
@@ -126,6 +141,11 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
   const [showHelp, setShowHelp] = useState(false);
   const [confirmPrint, setConfirmPrint] = useState(false);
   const [result, setResult] = useState(null);               // created chart (preview before printing)
+  // Measurement method: explicit user choice (null = the family's default) and instrument.
+  // Instruments, presets and media come from the backend (no whitelist kept here).
+  const [ptOptions, setPtOptions] = useState(null);          // printtarg options | null loading | false error
+  const [methodChoice, setMethodChoice] = useState(null);    // integrated | external | null
+  const [instrumentChoice, setInstrumentChoice] = useState(null);
 
   // ─── scan ───
   const [charts, setCharts] = useState(null);
@@ -194,6 +214,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
     setQcScan({ key: null, loading: false, report: null, error: null }); setMeasuresOpen(false);
     setProfileBase('average'); setChartMovedAsk(false);
     setCChoice('zero');                 // reset precond default (Start from scratch) each open
+    setMethodChoice(null); setInstrumentChoice(null);   // family default at each open, then the user's
     formatDefaultedRef.current = false; // re-arm the format default (applied once formats load)
     setClcWarn(null);
     setConcordanceDelta(null); setDeltaAllOpen(false);
@@ -228,6 +249,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
     if (!open || mode === 'scan') return;
     api.getChartFormats().then((d) => setFormats(d.formats || [])).catch(() => {});
     api.getTargenPresets().then((d) => setPresets(d.presets || [])).catch(() => {});
+    api.getPrinttargOptions().then(setPtOptions).catch(() => setPtOptions(false));
   }, [open, mode]);
 
   // colprof: presets + opinionated default line (pre-filled, overridable). Loaded
@@ -275,6 +297,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
   // session was ended — the ti3 stays on disk).
   useEffect(() => {
     if (phase !== 'scanready' || !selected?.chart_id) return;
+    if (chartMeasurement(selected).external) return;     // no SOL session for an external chart
     api.getScanStatus(selected.chart_id).then((st) => {
       setNScans(st.n_scans || 0);
       if ((st.cooldown_remaining_s || 0) > 0) _startCooldown(st.cooldown_remaining_s);
@@ -311,8 +334,18 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
       .catch((e) => setError(e?.message || t('scan.toggle_failed')));
   };
 
-  const fmt = useMemo(() => formats.find((f) => f.key === mediaKey), [formats, mediaKey]);
-  const maxPatches = fmt?.max_patches ?? null;
+  const availability = useMemo(() => methodAvailability(printerFamily, ptOptions), [printerFamily, ptOptions]);
+  const method = resolveMethod(methodChoice, availability, printerFamily);
+  const external = method === METHOD_EXTERNAL;
+  const instrument = resolveInstrument(instrumentChoice, ptOptions || null);
+  const extFormats = useMemo(() => externalFormats(ptOptions || null, formats), [ptOptions, formats]);
+  const mediaCheck = externalMediaCheck(loadedPaper, ptOptions || null, formats);
+  // External charts: the media the generator supports (roll 24" today); the honeycomb choice
+  // (mediaKey) is kept untouched for a switch back.
+  const effMediaKey = external ? (extFormats[0]?.key || (ptOptions?.media || [])[0] || null) : mediaKey;
+  const fmt = useMemo(() => formats.find((f) => f.key === effMediaKey), [formats, effMediaKey]);
+  // honeycomb capacity only: the printtarg generator lays out any count on the roll
+  const maxPatches = external ? null : (fmt?.max_patches ?? null);
   const fCount = srcMode === 'targen' ? _extractF(flags) : null;
   const fOver = fCount != null && maxPatches != null && fCount > maxPatches;
   const residentCurrent = preconds.find((p) => p.id === `resident:${geStr}`);
@@ -355,25 +388,27 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
   // Create + print stay a single session on the same paper; we just insert
   // a validation LOOK (preview) before the physical act. Cancelling at the preview
   // records nothing in the library (library = printed only) → no phantom chart.
-  const canCreate = mediaid && !fOver && !busy
+  const canCreate = mediaid && !fOver && !busy && method != null
+    && (!external || (instrument && effMediaKey && availability[METHOD_EXTERNAL].note !== 'printtarg_missing'))
     && (srcMode === 'ti1' ? ti1Text.trim() : flags.trim());
 
   async function doCreate() {
     setBusy(true); setError(null);
     try {
       const body = {
-        media_key: mediaKey,   // cols derived on the backend (step-not-fixed model), no longer sent
+        media_key: effMediaKey,   // cols derived on the backend (step-not-fixed model), no longer sent
         paper_mediaid: mediaid, paper_name: paperName,
         gloss_enhancer: geStr,
         // validation: NEVER -c (independence); purpose='validation' on the server
         c_profile: isValidate ? 'none' : resolveCProfile(),
         purpose: isValidate ? 'validation' : 'profiling',
       };
+      if (external) { body.layout = 'printtarg'; body.instrument = instrument; }   // honeycomb: body unchanged
       if (srcMode === 'ti1') body.ti1_text = ti1Text;
       else body.targen_flags = `-d2 ${flags}`.trim();
       const created = await api.createChart(body);
       setResult(created); setPhase('preview');
-    } catch (e) { setError(e.message); setPhase('compose'); }
+    } catch (e) { setError(errorText(e, t)); setPhase('compose'); }
     finally { setBusy(false); }
   }
 
@@ -395,7 +430,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
     try {
       const info = await api.printChart(result.chart_id, { quality: 'HIGH' });
       setSelected(result); setPrintInfo(info); setPhase('printed');
-    } catch (e) { setError(e.message); setPhase('preview'); }
+    } catch (e) { setError(errorText(e, t)); setPhase('preview'); }
     finally { setBusy(false); }
   }
 
@@ -488,9 +523,9 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
       const r = await api.getScanDelta(chart.chart_id);
       setConcordanceDelta({ ...r, _chartId: chart.chart_id });
     } catch (e) {
-      setError(e?.status === 409
-        ? t('scan.roll.less_than_two_scans')
-        : (e?.message || t('scan.roll.concordance_unavailable')));
+      setError(e?.detail?.code === 'scans_not_comparable' ? errorText(e, t)   // other instrument / condition
+        : e?.status === 409 ? t('scan.roll.less_than_two_scans')
+          : (e?.message || t('scan.roll.concordance_unavailable')));
     }
   }
 
@@ -519,11 +554,13 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
     } catch (e) {
       const c = classifyBuildError(e);
       if (c.kind === 'name_conflict') setConflict(e.detail);   // collision → 3-choice pop-up
-      else if (c.kind === 'inputs_changed' || c.kind === 'coverage_refused') {
+      else if (c.kind === 'identity_refused') {
+        setError(errorText(e, t)); setPreviewNonce((n) => n + 1);           // the preview explains what to exclude
+      } else if (c.kind === 'inputs_changed' || c.kind === 'coverage_refused') {
         setError(t(`build_preview.${c.kind}`)); setPreviewNonce((n) => n + 1);   // re-preview, re-confirm
       } else if (c.kind === 'name_length') setNameNotice(t('mesures.profile_name_maxlen'));
       else if (c.kind === 'name_invalid') setNameNotice(e.message);
-      else setError(e.message);
+      else setError(errorText(e, t));
       setPhase('scanned');
     }
     finally { profileInFlight.current = false; setBusy(false); }
@@ -581,8 +618,9 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
     // (the job resolves the session: success → awaiting_next, error → close).
     // abandonScan on a chart with no active session is a harmless 404 (caught).
     // Deliberate multi-scan stays open as long as the wizard stays open.
-    const cid = selected?.chart_id || initialChart?.chart_id;
-    if (cid && phase !== 'scanning') api.abandonScan(cid).catch(() => {});
+    const target = selected || initialChart;
+    const cid = target?.chart_id;
+    if (cid && phase !== 'scanning' && !chartMeasurement(target).external) api.abandonScan(cid).catch(() => {});
     onClose?.();
   }
 
@@ -591,6 +629,12 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
   // Source of the ΔE report: the card/table serves the scanned screen (scanDelta) OR the opening
   // from the chart view (concordanceDelta). Mutually exclusive (different phases).
   const activeDelta = concordanceDelta || scanDelta;
+  // The selected chart is measured outside freeglaz (printtarg): never the SOL screens.
+  const selectedExternal = chartMeasurement(selected).external;
+  const resultExternal = result?.layout === 'printtarg';
+  // Printing an external chart needs the media the generator supports (roll 24", roll 1).
+  const printBlockedBy = resultExternal && ['sheet_loaded', 'roll_width', 'roll_source_unsupported'].includes(mediaCheck.status)
+    ? mediaCheck : null;
   const activeDeltaChartId = concordanceDelta?._chartId || selected?.chart_id;
   // Number of KEPT scans (the toggle excludes) → drives the base selector + the average.
   const nKeptScanned = chartDetail ? chartDetail.scans.filter((s) => s.kept).length : nScans;
@@ -639,18 +683,28 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
               showHelp={showHelp} help={help} geStr={geStr}
               cChoice={cChoice} setCChoice={setCChoice} cCustom={cCustom} setCCustom={setCCustom}
               residentCurrent={residentCurrent} customs={customs} dev={DEV}
-              validate={isValidate}/>
+              validate={isValidate}
+              method={method} availability={availability} onMethod={setMethodChoice}
+              ptOptions={ptOptions} instrument={instrument} onInstrument={setInstrumentChoice}
+              extFormats={extFormats} mediaCheck={mediaCheck}/>
           )}
 
-          {phase === 'preview' && result && (
+          {phase === 'preview' && result && !resultExternal && (
             <PreviewView t={t} result={result} mediaKey={mediaKey} geStr={geStr} dev={DEV}/>
+          )}
+          {phase === 'preview' && result && resultExternal && (
+            <PrinttargPreviewView t={t} result={result} family={printerFamily} printBlockedBy={printBlockedBy} dev={DEV}/>
           )}
 
           {phase === 'printing' && <Spinner t={t} label={t('chart_create.printing')}/>}
 
-          {phase === 'printed' && (
+          {phase === 'printed' && !selectedExternal && (
             <PrintedView t={t} chartId={selected?.chart_id} printInfo={printInfo}
                          onScan={() => setPhase('scanready')} onClose={handleClose}/>
+          )}
+          {phase === 'printed' && selectedExternal && (
+            <PrintedExternalView t={t} chart={selected} onClose={handleClose}
+                                 onOpenLibrary={() => { const id = selected?.chart_id; handleClose(); if (id) openInLibrary(id); }}/>
           )}
 
           {mode === 'scan' && phase === 'select' && (
@@ -674,7 +728,13 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
                         onLighten={(c) => setChartAction({ type: 'lighten', chart: c })}/>
           )}
 
-          {phase === 'scanready' && selected && (
+          {phase === 'scanready' && selected && selectedExternal && (
+            <div className="space-y-2.5">
+              <ScanReadyView chart={selected}/>
+              <ExternalMeasurementPending chart={selected} nScans={selected.n_scans ?? 0}/>
+            </div>
+          )}
+          {phase === 'scanready' && selected && !selectedExternal && (
             <div className="space-y-2.5">
               <ScanReadyView chart={selected}/>
               {scanUnsupported && (
@@ -797,7 +857,8 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
           <div className="px-6 py-4 border-t border-border-soft flex items-center justify-end gap-2">
             <button type="button" onClick={handleClose}
                     className="text-xs2 text-text-muted hover:text-text-strong px-3 py-1.5">{t('common.cancel')}</button>
-            <button type="button" onClick={() => setConfirmPrint(true)} disabled={busy}
+            <button type="button" onClick={() => setConfirmPrint(true)} disabled={busy || !!printBlockedBy}
+                    data-action="print-chart"
                     className="flex items-center gap-1.5 text-xs2 font-semibold bg-accent text-on-accent px-4 py-1.5 rounded-md hover:bg-accent-press disabled:opacity-50">
               <Printer size={14}/>{t('chart_create.print_btn')}
             </button>
@@ -806,7 +867,13 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
 
         {/* FIXED footer of the "ready to scan" screen: "Scan" action always
             visible (same principle as the preview screen — chart preview at top). */}
-        {phase === 'scanready' && selected && (
+        {phase === 'scanready' && selected && selectedExternal && (
+          <div className="px-6 py-4 border-t border-border-soft flex items-center justify-end gap-2">
+            <button type="button" onClick={handleClose}
+                    className="text-xs2 font-semibold bg-accent text-on-accent px-4 py-1.5 rounded-md hover:bg-accent-press">{t('common.close')}</button>
+          </div>
+        )}
+        {phase === 'scanready' && selected && !selectedExternal && (
           <div className="px-6 py-4 border-t border-border-soft flex items-center justify-end gap-2">
             <button type="button" onClick={handleClose}
                     className="text-xs2 text-text-muted hover:text-text-strong px-3 py-1.5">{t('common.cancel')}</button>
@@ -823,7 +890,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
           <div className="px-6 py-4 border-t border-border-soft flex items-center justify-end gap-2">
             <button type="button" onClick={handleClose}
                     className="text-xs2 text-text-muted hover:text-text-strong px-3 py-1.5">{t('common.cancel')}</button>
-            {!isValidate && (
+            {!isValidate && !selectedExternal && (
               <button type="button" onClick={() => { setError(null); setPhase('scanready'); }} disabled={busy || scanUnsupported}
                       className="flex items-center gap-1.5 text-xs2 font-medium border border-border-soft text-text-muted px-3 py-1.5 rounded-md hover:text-text-strong hover:bg-sunken disabled:opacity-50">
                 <ScanLine size={14}/>{t('scan.roll.scan_again')}
@@ -851,7 +918,10 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
         <ConfirmModal open
           icon={<AlertTriangle size={18} className="text-warn"/>}
           title={t('chart_create.print_confirm_title')}
-          message={t('chart_create.print_confirm', { paper: paperName, format: mediaKey.toUpperCase(), ge: _geLabel(geStr) })}
+          message={resultExternal
+            ? t('measurement.print_confirm', { paper: paperName, instrument: instrumentLabel(t, result?.instrument),
+                                              ge: _geLabel(geStr), mm: Math.round(result?.roll_length_mm ?? result?.tiff_h_mm ?? 0) })
+            : t('chart_create.print_confirm', { paper: paperName, format: mediaKey.toUpperCase(), ge: _geLabel(geStr) })}
           confirmLabel={t('chart_create.print_confirm_btn')}
           cancelLabel={t('common.cancel')}
           confirmKind="primary"
@@ -1041,21 +1111,41 @@ function ComposeView({
   onTi1File, presets, presetKey, setPresetKey, savePreset, loadHelp, showHelp, help,
   geStr, cChoice, setCChoice, cCustom, setCCustom, residentCurrent, customs, dev,
   validate = false,
+  method, availability, onMethod, ptOptions, instrument, onInstrument, extFormats = [], mediaCheck,
 }) {
+  const external = method === METHOD_EXTERNAL;
   return (
     <>
-      <Section n="1" title={t('chart_create.layer_format')}>
-        <div className="flex items-center gap-3 flex-wrap">
-          <NSelect value={mediaKey} onChange={pickFormat}
-                   options={formats.map((f) => ({ value: f.key, label: f.name }))}/>
-          {/* DERIVED columns (step-not-fixed model, native density imposed) — no more input;
-              the user drives the NUMBER OF PATCHES (targen -f / .ti1) → rows */}
-          {maxPatches != null && <span className="text-xs2 text-text-faint">{t('chart_create.max_patches', { n: maxPatches })}</span>}
-          {fmt?.is_roll && <span className="text-tiny text-warn">{t('chart_create.roll_note')}</span>}
-        </div>
+      <Section n="1" title={t('measurement.method_title')}>
+        <MethodChooser t={t} method={method} availability={availability} onMethod={onMethod}
+                       ptOptions={ptOptions} instrument={instrument} onInstrument={onInstrument}/>
       </Section>
 
-      <Section n="2" title={t('chart_create.layer_composition')}>
+      <Section n="2" title={t('chart_create.layer_format')}>
+        {external ? (
+          <div className="space-y-1.5" data-format-external="1">
+            <div className="flex items-center gap-3 flex-wrap">
+              <NSelect value={extFormats[0]?.key || ''} onChange={() => {}} disabled
+                       options={extFormats.length ? extFormats.map((f) => ({ value: f.key, label: f.name }))
+                                                  : [{ value: '', label: '—' }]}/>
+              <span className="text-tiny text-text-faint">{t('measurement.media.only')}</span>
+            </div>
+            <MediaNotice t={t} check={mediaCheck}/>
+            <p className="text-tiny text-text-faint leading-snug">{t('measurement.dims_after_creation')}</p>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3 flex-wrap">
+            <NSelect value={mediaKey} onChange={pickFormat}
+                     options={formats.map((f) => ({ value: f.key, label: f.name }))}/>
+            {/* DERIVED columns (step-not-fixed model, native density imposed) — no more input;
+                the user drives the NUMBER OF PATCHES (targen -f / .ti1) → rows */}
+            {maxPatches != null && <span className="text-xs2 text-text-faint">{t('chart_create.max_patches', { n: maxPatches })}</span>}
+            {fmt?.is_roll && <span className="text-tiny text-warn">{t('chart_create.roll_note')}</span>}
+          </div>
+        )}
+      </Section>
+
+      <Section n="3" title={t('chart_create.layer_composition')}>
         <Segmented value={srcMode} options={[
           { value: 'targen', label: t('chart_create.mode_targen') },
           { value: 'ti1', label: t('chart_create.mode_ti1') },
@@ -1158,6 +1248,81 @@ function ComposeView({
   );
 }
 
+// Measurement method: two cards (built-in HP / external) + the instrument list of the backend.
+// An unavailable method stays visible, disabled, with its reason (never silently dropped).
+function MethodChooser({ t, method, availability, onMethod, ptOptions, instrument, onInstrument }) {
+  const cards = [
+    { value: METHOD_INTEGRATED, title: t('measurement.method.integrated'), desc: t('measurement.method.integrated_desc') },
+    { value: METHOD_EXTERNAL, title: t('measurement.method.external'), desc: t('measurement.method.external_desc') },
+  ];
+  const instruments = (ptOptions && ptOptions.instruments) || [];
+  const current = instruments.find((i) => i.key === instrument);
+  const preset = current?.presets?.[0];
+  return (
+    <div className="space-y-2" data-method={method || ''}>
+      <div className="grid grid-cols-2 gap-2">
+        {cards.map((c) => {
+          const av = availability?.[c.value] || {};
+          const on = method === c.value;
+          return (
+            <button key={c.value} type="button" data-method-option={c.value} disabled={!av.available}
+                    aria-pressed={on} onClick={() => onMethod(c.value)}
+                    className={`text-left rounded-lg px-3 py-2 border transition-colors ${
+                      on ? 'border-accent/50 bg-accent/[0.06]' : 'border-border-soft hover:border-border-strong'
+                    } ${av.available ? '' : 'opacity-50 cursor-not-allowed'}`}>
+              <span className="flex items-center gap-2">
+                <span className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${on ? 'border-accent' : 'border-border-strong'}`}>
+                  {on && <span className="w-1.5 h-1.5 rounded-full bg-accent"/>}
+                </span>
+                <span className="text-xs2 font-semibold text-text-strong">{c.title}</span>
+              </span>
+              <span className="block text-tiny text-text-faint mt-1 leading-snug">{c.desc}</span>
+              {av.note && (
+                <span className={`block text-tiny mt-1 leading-snug ${av.available && av.note !== 'printtarg_missing' ? 'text-text-muted' : 'text-warn'}`}
+                      data-method-note={av.note}>
+                  {t(`measurement.note.${av.note}`)}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      {method === METHOD_EXTERNAL && instruments.length > 0 && (
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="text-xs2 text-text-muted">{t('measurement.instrument_label')}</span>
+            <NSelect value={instrument || ''} onChange={onInstrument}
+                     options={instruments.map((i) => ({ value: i.key, label: instrumentLabel(t, i.key) }))}/>
+          </div>
+          {preset && (
+            <p className="text-tiny text-text-faint leading-snug" data-preset={current.key}>
+              {t('measurement.preset', { selector: current.printtarg_selector, page: Math.round(preset.page_h_mm) })}
+              {preset.unlimited_strip && <> {t('measurement.preset_long_strips')}</>}
+            </p>
+          )}
+          <p className="text-tiny text-text-faint leading-snug">{t('measurement.to_verify_physically')}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Loaded media vs the external chart (roll 24" on roll 1): informative before creating, the
+// same check blocks printing on the preview screen.
+function MediaNotice({ t, check }) {
+  if (!check || check.status === 'ok') return null;
+  const blocking = check.status !== 'unknown';
+  return (
+    <div className={`flex items-start gap-1.5 text-tiny leading-snug rounded-md px-2.5 py-1.5 ${
+      blocking ? 'text-warn bg-icc-warn/10' : 'text-text-muted bg-sunken/60'}`} data-media-check={check.status}>
+      <AlertTriangle size={12} className="mt-0.5 flex-shrink-0"/>
+      <span>{t(`measurement.media.${check.status}`, {
+        width: Math.round(check.width_mm || 0), source: check.source || '',
+        expected: (check.expected || []).map((w) => Math.round(w)).join(' / ') || '610' })}</span>
+    </div>
+  );
+}
+
 function CRadio({ label, desc, checked, disabled, onClick }) {
   return (
     <button type="button" onClick={disabled ? undefined : onClick} disabled={disabled}
@@ -1211,6 +1376,105 @@ function PreviewView({ t, result, mediaKey, geStr, dev }) {
       ))}
       <div className="flex items-start gap-2 text-xs2 text-text-strong bg-sunken/60 rounded-md px-3 py-2.5">
         <Info size={14} className="mt-0.5 text-accent"/><span>{t('chart_create.preview_hint')}</span>
+      </div>
+    </div>
+  );
+}
+
+// Preview of an external-instrument (printtarg) chart: what the generator computed — strips,
+// orientation, physical size, roll consumed, resident/GE — and what is still to be proven by a
+// physical reading. No columns, rows or scan feasibility: those belong to the honeycomb chart.
+function PrinttargPreviewView({ t, result, family, printBlockedBy, dev }) {
+  const p = printtargSummary(result);
+  const row = (label, value, attr) => (
+    <>
+      <dt className="text-text-muted">{label}</dt>
+      <dd className="text-text-strong" data-field={attr}>{value}</dd>
+    </>
+  );
+  return (
+    <div className="space-y-3" data-preview-layout="printtarg">
+      <div className="flex items-center gap-2 text-ok">
+        <CheckCircle2 size={18}/><span className="font-semibold">{t('chart_create.created')}</span>
+        <MeasurementBadge chart={result}/>
+      </div>
+      <img src={api.chartPreviewUrl(result.chart_id)} alt="preview"
+           className="w-full max-h-[42vh] object-contain rounded-md border border-border-soft bg-white"
+           onError={(e) => { e.currentTarget.style.display = 'none'; }}/>
+      <dl className="text-xs2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+        {row(t('chart_create.r_id'), <span className="font-mono">{result.chart_id}</span>, 'chart_id')}
+        {row(t('measurement.preview.instrument'), instrumentLabel(t, p.instrument), 'instrument')}
+        {row(t('chart_create.r_patches'), p.nPatches, 'n_patches')}
+        {row(t('measurement.preview.strips'), t('measurement.preview.strips_value', { count: p.nStrips, per: p.patchesPerStrip }), 'strips')}
+        {row(t('measurement.preview.layout'),
+             p.stripsCrossTheRoll
+               ? t('measurement.preview.layout_transverse', { side: t(`measurement.side.${p.patch1Side || 'right'}`) })
+               : t('measurement.preview.layout_pages'), 'roll_layout')}
+        {p.nBlocks > 1 && row(t('measurement.preview.blocks'), p.nBlocks, 'blocks')}
+        {row(t('measurement.preview.size'), t('measurement.preview.size_value', { w: Math.round(p.widthMm), h: Math.round(p.lengthMm) }), 'size')}
+        {p.rollLengthMm != null && row(t('measurement.preview.roll'), t('measurement.preview.roll_value', { mm: Math.round(p.rollLengthMm) }), 'roll_length')}
+        {row(t('measurement.preview.resident'),
+             t('measurement.preview.resident_value', { name: p.iccName || '—', ge: _geLabel(p.ge) }), 'resident')}
+      </dl>
+      {p.generatorWarnings.map((w, i) => (
+        <div key={`g${i}`} className="flex items-start gap-1.5 text-tiny text-text-muted" data-generator-warning={w.code}>
+          <Info size={12} className="mt-0.5 flex-shrink-0"/>
+          <span>{t(`measurement.generator_warning.${w.code}`, { count: w.count, defaultValue: w.code })}</span>
+        </div>
+      ))}
+      {p.warnings.map((w, i) => (
+        <div key={i} className="flex items-start gap-1.5 text-tiny text-warn">
+          <Info size={12} className="mt-0.5"/><span>{w}</span>
+        </div>
+      ))}
+      {printBlockedBy && <MediaNotice t={t} check={printBlockedBy}/>}
+      <div className="grid grid-cols-2 gap-2 text-tiny leading-snug">
+        <div className="rounded-md border border-border-soft bg-sunken/50 px-3 py-2 space-y-0.5" data-block="established">
+          <div className="font-semibold text-text-strong">{t('measurement.preview.established_title')}</div>
+          <p className="text-text-muted">{t('measurement.preview.established')}</p>
+        </div>
+        <div className="rounded-md border border-icc-warn/40 bg-icc-warn/10 px-3 py-2 space-y-0.5" data-block="to_verify">
+          <div className="font-semibold text-text-strong">{t('measurement.preview.to_verify_title')}</div>
+          <p className="text-text-muted">{t('measurement.preview.to_verify')}</p>
+          {family !== 'z9' && <p className="text-text-muted">{t('measurement.preview.color_not_proven')}</p>}
+        </div>
+      </div>
+      {dev && (
+        <p className="text-tiny text-text-faint font-mono">layout=printtarg · roll_layout={p.rollLayout} · {p.stripOrder} · patch 1 {p.patch1Side}</p>
+      )}
+    </div>
+  );
+}
+
+// After printing an external chart: ready for an external measurement, NO scan action (the
+// chartread driver is a later increment). The chart waits in the library.
+function PrintedExternalView({ t, chart, onClose, onOpenLibrary }) {
+  const m = chartMeasurement(chart);
+  return (
+    <div className="space-y-3" data-printed-layout="printtarg">
+      <div className="flex items-center gap-2 text-ok">
+        <Printer size={18}/><span className="font-semibold">{t('measurement.printed.title')}</span>
+        <MeasurementBadge chart={chart}/>
+      </div>
+      {chart?.chart_id && (
+        <img src={api.chartPreviewUrl(chart.chart_id)} alt="preview"
+             className="w-full max-h-[40vh] object-contain rounded-md border border-border-soft bg-white"
+             onError={(e) => { e.currentTarget.style.display = 'none'; }}/>
+      )}
+      <div className="flex items-start gap-2 text-xs2 text-text-strong bg-sunken/60 rounded-md px-3 py-2.5">
+        <Info size={14} className="mt-0.5 text-accent flex-shrink-0"/>
+        <span>{t('measurement.printed.body', { instrument: instrumentLabel(t, m.instrument) })}</span>
+      </div>
+      <p className="text-tiny text-text-faint">{t('measurement.pending.later')}</p>
+      <div className="flex items-center justify-end gap-2 pt-1">
+        <button type="button" onClick={onOpenLibrary} data-action="open-library"
+                className="text-xs2 font-medium border border-border-soft text-text-strong px-3 py-1.5 rounded-md hover:bg-sunken">
+          {t('measurement.printed.open_library')}
+        </button>
+        <button type="button" onClick={onClose}
+                className="text-xs2 font-semibold bg-accent text-on-accent px-4 py-1.5 rounded-md hover:bg-accent-press">
+          {t('common.close')}
+        </button>
       </div>
     </div>
   );
@@ -1393,5 +1657,30 @@ function ValidateReadyView({ t, scanInfo, profileName }) {
 // Independent validation report (profcheck b) — reuses ProfcheckReport (scope b).
 function ValidatedView({ t, report, profileName }) {
   if (!report) return <Spinner t={t} label={t('chart_create.validating')}/>;
-  return <ProfcheckReport report={report} scope="independent" profileName={profileName}/>;
+  return (
+    <div className="space-y-3">
+      <ValidationIdentityNotice report={report}/>
+      <ProfcheckReport report={report} scope="independent" profileName={profileName}/>
+    </div>
+  );
+}
+
+// Validation measured with another instrument or condition than the build: allowed, reported
+// as a warning (the result then also contains the gap between instruments) — never an error.
+function ValidationIdentityNotice({ report }) {
+  const { t } = useTranslation();
+  const n = validationIdentityNotice(report);
+  if (!n) return null;
+  const build = n.buildInstruments.map((k) => instrumentLabel(t, k)).join(', ') || t('measurement.value_unknown');
+  const validation = n.validationInstrument ? instrumentLabel(t, n.validationInstrument) : t('measurement.value_unknown');
+  return (
+    <div className="rounded-md border border-icc-warn/40 bg-icc-warn/10 px-3 py-2 text-xs2 space-y-1" data-validation-identity={n.status}>
+      {n.warnings.map((w) => (
+        <div key={w} className="flex items-start gap-1.5 text-text-strong" data-warning={w}>
+          <AlertTriangle size={13} className="mt-0.5 flex-shrink-0 text-icc-warn"/>
+          <span>{t(`measurement.validation.${w}`, { build, validation })}</span>
+        </div>
+      ))}
+    </div>
+  );
 }

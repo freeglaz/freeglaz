@@ -17,6 +17,12 @@ import { buildRequestBody, chartStateStamp, classifyBuildError, summarizePreview
 import MeasurementsModal from '../Charts/MeasurementsModal.jsx';
 import ProfileInspectorModal from '../ProfileInspector/ProfileInspectorModal.jsx';
 import ArgyllProfileWizard from '../Charts/ArgyllProfileWizard.jsx';
+import MeasurementBadge from '../Charts/MeasurementBadge.jsx';
+import IdentityRefusal from '../Charts/IdentityRefusal.jsx';
+import ExternalMeasurementPending from '../Charts/ExternalMeasurementPending.jsx';
+import { chartMeasurement, identityRefusal } from '../../lib/measurementMethod.js';
+import { chartIdFromHash } from '../../lib/libraryLink.js';
+import { errorText } from '../../lib/errorText.js';
 
 /**
  * "Measurements" tab — MANAGEMENT layer, paper-agnostic, always available.
@@ -63,6 +69,7 @@ export default function MesuresPage({ offline }) {
   const [selected, setSelected] = useState(null);   // chart_id of the detail
   const [detail, setDetail] = useState(null);        // {identity, scans, profile}
   const [delta, setDelta] = useState(null);          // concordance (lazy, ≥2 scans)
+  const [deltaRefusal, setDeltaRefusal] = useState(null);  // 409 scans_not_comparable (other instrument/condition)
   const [allOpen, setAllOpen] = useState(false);
   const [inspect, setInspect] = useState(null);      // {path} | null
   const [scanWizard, setScanWizard] = useState(null);// {paper, ge} | null
@@ -145,17 +152,29 @@ export default function MesuresPage({ offline }) {
   }, []);
   useEffect(() => { reload(); }, [reload]);
 
+  // Deep link /mesures#chart=<id> (e.g. "See in Measurements" after printing an external chart).
+  useEffect(() => {
+    const pick = () => { const id = chartIdFromHash(window.location.hash); if (id) setSelected(id); };
+    pick();
+    window.addEventListener('hashchange', pick);
+    window.addEventListener('popstate', pick);
+    return () => { window.removeEventListener('hashchange', pick); window.removeEventListener('popstate', pick); };
+  }, []);
+
   // Detail (A3+A4) + LAZY concordance (A1) if ≥2 KEPT scans (recomputed after toggle).
   const loadDetail = useCallback((id) => {
-    if (!id) { setDetail(null); setDelta(null); return; }
+    if (!id) { setDetail(null); setDelta(null); setDeltaRefusal(null); return; }
     return api.getChartDetail(id).then((d) => {
       setDetail(d);
       const nKept = (d.scans || []).filter((s) => s.kept).length;
-      if (nKept >= 2) return api.getScanDelta(id).then(setDelta).catch(() => setDelta(null));
-      setDelta(null);
+      if (nKept >= 2) {
+        return api.getScanDelta(id).then((r) => { setDelta(r); setDeltaRefusal(null); })
+          .catch((e) => { setDelta(null); setDeltaRefusal(identityRefusal(e) ? e : null); });
+      }
+      setDelta(null); setDeltaRefusal(null);
     }).catch((e) => setError(e.message));
   }, []);
-  useEffect(() => { setDetail(null); setDelta(null); setError(null); setBuildResult(null); loadDetail(selected); }, [selected, loadDetail]);
+  useEffect(() => { setDetail(null); setDelta(null); setDeltaRefusal(null); setError(null); setBuildResult(null); loadDetail(selected); }, [selected, loadDetail]);
 
   // Software mutation: include/exclude a scan → recomputes concordance + detail (no Z9).
   const onSetRole = (ti3, role) => {
@@ -219,11 +238,13 @@ export default function MesuresPage({ offline }) {
       .catch((e) => {
         const c = classifyBuildError(e);
         if (c.kind === 'name_conflict') setConflict(e.detail);             // collision → 3-choice pop-up
-        else if (c.kind === 'inputs_changed' || c.kind === 'coverage_refused') {
+        else if (c.kind === 'identity_refused') {
+          setError(errorText(e, t)); setPreviewNonce((n) => n + 1);           // the preview explains what to exclude
+        } else if (c.kind === 'inputs_changed' || c.kind === 'coverage_refused') {
           setError(t(`build_preview.${c.kind}`)); setPreviewNonce((n) => n + 1);   // re-preview, re-confirm
         } else if (c.kind === 'name_length') setNameNotice(t('mesures.profile_name_maxlen'));
         else if (c.kind === 'name_invalid') setNameNotice(e.message);
-        else setError(e?.message || t('mesures.rebuild_failed'));
+        else setError(errorText(e, t) || t('mesures.rebuild_failed'));
       })
       .finally(() => { buildInFlight.current = false; setBusy(false); setBuildPhase(null); });
   };
@@ -247,7 +268,7 @@ export default function MesuresPage({ offline }) {
   // Fix A: we ALSO pass the chart (chart) → the wizard opens DIRECTLY on
   // it (scanready phase), without an intermediate list, whatever its stage.
   const openScan = () => {
-    if (!detail) return;
+    if (!detail || chartMeasurement(detail.identity).external) return;   // never the SOL flow for an external chart
     setScanWizard({
       paper: { mediaid: detail.identity.paper_media_id, name: detail.identity.paper },
       // Real GE of the chart (was hardcoded `false` → scan screen always showed
@@ -279,6 +300,7 @@ export default function MesuresPage({ offline }) {
   // Current detail (right panel) — null-safe (the drawer is only rendered if detail).
   const id = detail?.identity;
   const prof = detail?.profile;
+  const idMeasurement = chartMeasurement(id);     // honeycomb (built-in scan) or external instrument
   const nIncluded = (detail?.scans || []).filter((s) => s.kept).length;   // scans feeding the profile
 
   // ─── Papers pattern: [filters sidebar] [full-width list] [detail = right drawer] ───
@@ -423,6 +445,12 @@ export default function MesuresPage({ offline }) {
             <div className="px-6 pt-5 pb-4 border-b border-border-soft flex items-start gap-3 flex-shrink-0">
               <div className="flex-1 min-w-0">
                 <h2 className="text-[15px] font-semibold text-text-strong font-mono break-all">{id.chart_id}</h2>
+                <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                  <MeasurementBadge chart={id}/>
+                  {idMeasurement.external && id.measurement?.n_strips != null && (
+                    <span className="text-tiny text-text-faint">{t('measurement.strips_count', { count: id.measurement.n_strips })}</span>
+                  )}
+                </div>
                 <p className="text-tiny text-text-faint mt-0.5">
                   {[id.paper, geLabel(id.gloss_enhancer), id.format, id.patch_count != null && t('mesures.patches', { count: id.patch_count }), id.purpose,
                     id.printed_at && t('mesures.printed_at', { date: id.printed_at })].filter(Boolean).join(' · ')}
@@ -444,6 +472,14 @@ export default function MesuresPage({ offline }) {
                   : <ScanKeepList scans={detail.scans} onSetRole={onSetRole} disabled={busy}
                       onView={(ti3) => setViewTi3(ti3)}
                       onDelete={(ti3) => setConfirm({ type: 'scan', ti3 })}/>}
+                {/* Included scans that could not be averaged (other instrument / condition) */}
+                {detail.included_scans_compatibility && detail.included_scans_compatibility.status !== 'compatible' && (
+                  <p className="text-tiny text-warn bg-icc-warn/10 rounded-md px-2.5 py-1.5 leading-snug"
+                     data-included-compat={detail.included_scans_compatibility.status}>
+                    {t(`measurement.included.${detail.included_scans_compatibility.status}`, { defaultValue: t('measurement.included.insufficient') })}
+                  </p>
+                )}
+                {deltaRefusal && <IdentityRefusal error={deltaRefusal}/>}
                 {/* ΔE repeatability = SUB-section of Scans (CHILD header, weak style) */}
                 {delta && (
                   <div className="space-y-1.5 pt-1">
@@ -515,11 +551,19 @@ export default function MesuresPage({ offline }) {
 
               {/* Actions — scan DELEGATES to the wizard (isLoaded); disk management (DESTRUCTIVE) here */}
               <section className="pt-2 border-t border-border-soft space-y-2">
-                <button type="button" onClick={openScan}
-                        className="inline-flex items-center gap-1.5 text-xs2 font-medium bg-accent/10 text-accent px-3 py-1.5 rounded-md hover:bg-accent/15">
-                  <ScanLine size={14}/> {t('mesures.open_in_scan_flow')}
-                </button>
-                <p className="text-tiny text-text-faint">{t('mesures.open_in_scan_flow_hint')}</p>
+                {idMeasurement.external ? (
+                  // External instrument: the built-in scan is never offered; the chartread driver
+                  // is a later increment — explicit state, no action that would not work.
+                  <ExternalMeasurementPending chart={id} nScans={detail.scans.length} inLibrary/>
+                ) : (
+                  <>
+                    <button type="button" onClick={openScan}
+                            className="inline-flex items-center gap-1.5 text-xs2 font-medium bg-accent/10 text-accent px-3 py-1.5 rounded-md hover:bg-accent/15">
+                      <ScanLine size={14}/> {t('mesures.open_in_scan_flow')}
+                    </button>
+                    <p className="text-tiny text-text-faint">{t('mesures.open_in_scan_flow_hint')}</p>
+                  </>
+                )}
                 <div className="flex items-center gap-2 pt-1">
                   {!id.lightened && (
                     <button type="button" onClick={() => setConfirm({ type: 'lighten' })} disabled={busy}

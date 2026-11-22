@@ -1074,7 +1074,14 @@
     "papers_load": "Impossible de charger les papiers",
     "profiling": "Erreur profilage",
     "profiling_start_failed": "Échec démarrage profilage",
-    "qc_unavailable": "QC indisponible"
+    "qc_unavailable": "QC indisponible",
+    "measurement_identity_incompatible": "Ces mesures n'ont pas été prises de la même façon (instrument ou condition de mesure) : elles ne peuvent pas être combinées.",
+    "measurement_identity_insufficient": "Ces mesures ne sont pas assez identifiées pour être combinées.",
+    "measurement_record_invalid": "Une fiche de mesure est invalide : cette mesure ne peut pas être utilisée.",
+    "scans_not_comparable": "Ces scans n'ont pas été mesurés de la même façon : ce ne sont pas des lectures répétées d'une même mesure.",
+    "printtarg_not_found": "printtarg (ArgyllCMS) est introuvable : installe ArgyllCMS pour créer une charte externe.",
+    "ti1_missing_targen_tables": "Ce .ti1 n'a pas les tables qu'écrit targen : printtarg a besoin d'un .ti1 généré par targen.",
+    "chart_for_external_instrument": "Cette charte se lit avec un instrument externe : le scan intégré n'est pas disponible pour elle."
   },
   "modify_mechanical": {
     "title": "Propriétés mécaniques",
@@ -1843,5 +1850,154 @@
     "perceptual_same_one": "Dans le profil {{side}}, la table perceptuelle (A2B0) est identique octet pour octet à la table colorimétrique (A2B1) ; l'autre profil a une table perceptuelle propre.",
     "focus_concentrated": "Lecture {{label}} (exclue dans {{side}}) : ΔE00 {{at}} au patch, jusqu'à {{nearMax}} sur {{nearN}} points voisins (à moins de {{radius}}/255 en RGB) ; ailleurs au plus {{farMax}} (p95 {{farP95}}). L'écart est concentré autour de ce patch.",
     "focus_descriptive": "Lecture {{label}} (exclue dans {{side}}) : ΔE00 {{at}} au patch, jusqu'à {{nearMax}} sur {{nearN}} points voisins (à moins de {{radius}}/255 en RGB) ; ailleurs au plus {{farMax}} (p95 {{farP95}})."
+  },
+  "measurement": {
+    "method_title": "Méthode de mesure",
+    "method": {
+      "integrated": "Spectrophotomètre intégré HP",
+      "integrated_desc": "Charte nid d'abeille, mesurée par l'imprimante elle-même (Z9).",
+      "external": "Spectrophotomètre externe",
+      "external_desc": "Charte en bandes (ArgyllCMS printtarg), lue avec un spectrophotomètre USB par chartread. Indépendante du modèle d'imprimante."
+    },
+    "method_short": {
+      "sol": "scan intégré",
+      "external": "instrument externe"
+    },
+    "note": {
+      "family_unknown": "Imprimante non identifiée : le scan intégré ne fonctionne que sur une Z9 ; le serveur le vérifie au moment du scan.",
+      "z9pro": "Indisponible sur la Z9 Pro : freeglaz ne peut pas piloter son spectrophotomètre intégré.",
+      "family_unsupported": "Non validé sur cette imprimante.",
+      "options_loading": "Chargement des instruments…",
+      "options_unavailable": "La liste des instruments externes n'a pas pu être lue.",
+      "no_instrument": "Le serveur ne propose aucun instrument externe.",
+      "printtarg_missing": "printtarg (ArgyllCMS) est introuvable : installe ArgyllCMS pour créer une charte externe."
+    },
+    "instrument_label": "Instrument",
+    "instrument": {
+      "colormunki": "ColorMunki",
+      "i1pro3plus": "i1Pro 3 Plus"
+    },
+    "instrument_unknown": "instrument inconnu",
+    "preset": "printtarg -i{{selector}}, bandes disposées sur une page de travail de {{page}} mm.",
+    "preset_long_strips": "Bandes longues (-P).",
+    "to_verify_physically": "La lecture de cette charte avec l'instrument (longueur des bandes, sens de lecture) reste à vérifier lors d'une première mesure réelle.",
+    "media": {
+      "only": "Charte externe : rouleau 24\" uniquement (version actuelle).",
+      "unknown": "Support chargé inconnu : il sera vérifié à l'impression.",
+      "sheet_loaded": "Une feuille est chargée : charge un rouleau 24\" sur le rouleau 1 avant d'imprimer cette charte.",
+      "roll_width": "Le rouleau chargé mesure {{width}} mm ; une charte externe demande un rouleau de {{expected}} mm (24\").",
+      "roll_source_unsupported": "Le papier est chargé sur {{source}} : freeglaz n'imprime que sur le rouleau 1."
+    },
+    "dims_after_creation": "Le nombre de bandes, les dimensions et la longueur de rouleau sont calculés par printtarg à la création de la charte, et affichés avant l'impression.",
+    "print_confirm": "Imprimer la charte {{instrument}} sur « {{paper}} » (rouleau 24\", GE {{ge}}) ? Elle consomme environ {{mm}} mm de rouleau.",
+    "preview": {
+      "instrument": "Instrument",
+      "strips": "Bandes",
+      "strips_value_one": "{{count}} bande de {{per}} patches",
+      "strips_value_other": "{{count}} bandes de {{per}} patches",
+      "layout": "Disposition sur le rouleau",
+      "layout_transverse": "Bandes en travers du rouleau — bande A en haut, patch 1 à {{side}}",
+      "layout_pages": "Pages printtarg empilées dans le sens du rouleau",
+      "blocks": "Blocs",
+      "size": "Dimensions imprimées",
+      "size_value": "{{w}} × {{h}} mm",
+      "roll": "Rouleau consommé",
+      "roll_value": "environ {{mm}} mm (marges comprises)",
+      "resident": "Préparation de l'impression",
+      "resident_value": "profil résident {{name}} · GE {{ge}}",
+      "established_title": "Établi hors ligne",
+      "established": "Géométrie et ordre des bandes calculés par printtarg ; position des patches vérifiée contre le .ti2 sur les pixels de la charte ; impression par le pipeline habituel de freeglaz.",
+      "to_verify_title": "À vérifier à la première lecture",
+      "to_verify": "Lecture avec l'instrument : longueur des bandes, lecture à la règle ou à main levée, sens de lecture de la charte tournée.",
+      "color_not_proven": "Le rendu couleur réel de cette imprimante n'est pas démontré pour ces chartes."
+    },
+    "side": {
+      "right": "droite",
+      "left": "gauche",
+      "top": "haut"
+    },
+    "printed": {
+      "title": "Charte prête pour une mesure externe",
+      "body": "Laisse-la sécher, puis mesure-la avec le {{instrument}}. Elle t'attend dans la bibliothèque (onglet Mesures).",
+      "open_library": "Voir dans Mesures"
+    },
+    "pending": {
+      "title": "Mesure externe pas encore intégrée",
+      "body": "Cette charte se mesure avec le {{instrument}} (chartread). freeglaz ne pilote pas encore cette lecture, et ne lance jamais le scan intégré pour une charte externe.",
+      "has_scans_one": "{{count}} mesure déjà enregistrée : le contrôle qualité et la construction du profil se font dans l'onglet Mesures.",
+      "has_scans_other": "{{count}} mesures déjà enregistrées : le contrôle qualité et la construction du profil se font dans l'onglet Mesures.",
+      "has_scans_here_one": "{{count}} mesure déjà enregistrée : son contrôle qualité et la construction du profil sont ci-dessus.",
+      "has_scans_here_other": "{{count}} mesures déjà enregistrées : leur contrôle qualité et la construction du profil sont ci-dessus.",
+      "later": "La lecture pilotée par freeglaz (chartread) arrivera dans une prochaine version."
+    },
+    "badge": {
+      "integrated": "HP intégré",
+      "external": "Externe — {{instrument}}",
+      "unknown": "Méthode inconnue"
+    },
+    "strips_count_one": "{{count}} bande",
+    "strips_count_other": "{{count}} bandes",
+    "included": {
+      "incompatible": "Les scans inclus n'ont pas été mesurés de la même façon (instrument ou condition) : ils ne peuvent pas être moyennés. Exclus ceux que tu ne veux pas garder, ou construis sur le dernier scan.",
+      "insufficient": "L'identité des scans inclus n'est pas assez connue pour les moyenner.",
+      "record_invalid": "Une fiche de mesure de cette charte est illisible.",
+      "unreadable": "Un scan de cette charte est illisible."
+    },
+    "scan_identity_error": "fiche de mesure illisible",
+    "identity_incomplete": "identité incomplète ({{fields}})",
+    "condition": {
+      "M0": "M0",
+      "M1": "M1",
+      "M2": "M2 (UV coupé)",
+      "M3": "M3 (polarisé)",
+      "D65": "D65",
+      "fixed": "condition unique",
+      "unknown": "condition inconnue"
+    },
+    "value_unknown": "inconnu",
+    "difference": {
+      "method_differs": "méthodes différentes : {{a}} / {{b}}",
+      "instrument_differs": "instruments différents : {{a}} / {{b}}",
+      "condition_differs": "conditions de mesure incompatibles : {{a}} / {{b}}",
+      "spectral_differs": "grilles spectrales différentes : {{a}} / {{b}}",
+      "calibration_standard_differs": "standards de calibration différents : {{a}} / {{b}}",
+      "method_unknown": "méthode de mesure inconnue",
+      "instrument_unknown": "instrument inconnu",
+      "condition_unknown": "condition de mesure inconnue (aucune option -F enregistrée)",
+      "calibration_standard_unknown": "standard de calibration indiqué d'un seul côté"
+    },
+    "record_error": {
+      "measurement_record_malformed": "La fiche de mesure est mal formée.",
+      "measurement_record_unsupported": "La fiche de mesure décrit un instrument ou un réglage non pris en charge.",
+      "measurement_record_mismatch": "La fiche de mesure ne correspond pas à ses mesures (fichier modifié ?)."
+    },
+    "remedy": {
+      "exclude_scan": "Exclus l'une des mesures (rôle « Exclu ») pour construire avec les autres.",
+      "use_base_last": "Ou construis sur le dernier scan seulement.",
+      "remove_extra_chart": "Retire la charte supplémentaire incompatible.",
+      "remove_or_fix_the_record": "La fiche de mesure doit être réparée ou retirée."
+    },
+    "technical_details": "Détails techniques",
+    "untracked_profiles_one": "{{count}} profil source : l'instrument de ses mesures ne peut pas être authentifié (mesures extraites d'un ICC). Il est combiné comme avant, sans contrôle d'identité.",
+    "untracked_profiles_other": "{{count}} profils sources : l'instrument de leurs mesures ne peut pas être authentifié (mesures extraites d'un ICC). Ils sont combinés comme avant, sans contrôle d'identité.",
+    "source_compat": {
+      "incompatible": "autre mesure",
+      "insufficient": "identité inconnue",
+      "record_invalid": "fiche illisible"
+    },
+    "source_compat_title": {
+      "incompatible": "Mesurée avec un autre instrument ou une autre condition : le build refuserait de la combiner.",
+      "insufficient": "Identité pas assez connue : le build refuserait de la combiner.",
+      "record_invalid": "Une fiche de mesure de cette charte est illisible."
+    },
+    "validation": {
+      "validation_identity_differs": "Validation mesurée avec un autre instrument ou une autre condition ({{validation}} ; build : {{build}}) : le résultat inclut aussi l'écart entre eux. Ce n'est pas une erreur.",
+      "validation_identity_unverified": "L'identité des mesures du build ou du scan de validation n'est pas connue : elles peuvent différer.",
+      "build_source_profiles_not_tracked": "Le profil a aussi utilisé des mesures extraites d'autres profils, dont l'instrument n'est pas connu."
+    },
+    "generator_warning": {
+      "patches_not_located_one": "{{count}} patch n'a pas pu être vérifié sur les pixels de la charte (couleur répétée ou blanche) : sa place est celle donnée par printtarg.",
+      "patches_not_located_other": "{{count}} patches n'ont pas pu être vérifiés sur les pixels de la charte (couleur répétée ou blanche) : leur place est celle donnée par printtarg."
+    }
   }
 }

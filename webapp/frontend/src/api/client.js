@@ -74,6 +74,7 @@ function mapPaper(lp) {
     mediaid:   lp.id,           // firmware MEDIAID (used by Papers P4
                                 // to gate the Calibrate button)
     kind:      lp.media_source === 'ROLL' ? 'roll' : 'sheet',
+    media_source: lp.media_source,   // ROLL / ROLL2 / MANUAL_FEED… (external charts: roll 1 only)
     name:      lp.name,
     width_mm:  lp.sheet_width_mm  ?? lp.roll_width_mm,
     height_mm: lp.sheet_height_mm,  // null in ROLL → stays null
@@ -1263,6 +1264,11 @@ export async function saveChartColprofPreset(body) {
 export async function getPreconditionProfiles({ paper, printGe }) {
   const qs = new URLSearchParams({ paper, print_ge: printGe || 'OFF' });
   return http(`/api/charts/precondition-profiles?${qs}`);
+}
+/** What an external-instrument (printtarg) chart can be created with: instruments, presets,
+ *  media, roll composition and whether printtarg / chartread are installed. Read-only. */
+export async function getPrinttargOptions() {
+  return http('/api/charts/printtarg-options');
 }
 export async function createChart(body) {
   return http('/api/charts', { method: 'POST', body: JSON.stringify(body) });

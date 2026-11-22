@@ -51,8 +51,10 @@ Options added to the printtarg command, each for a measured reason:
   - ``-M 6`` (transverse only): printtarg includes its own 6 mm page margin in the
     TIFF, so that once turned the first strip does not sit at the cut edge of the roll.
 
-printtarg pads the last strip with white patches whose SAMPLE_ID is ``0``. They are
-recorded as padding; a ``.ti1`` that already uses SAMPLE_ID ``0`` is refused.
+printtarg pads the last strip with patches whose SAMPLE_ID is ``0``, all of one colour:
+the ``INDEX 0`` row of the ``.ti1``'s DENSITY_EXTREME_VALUES table (white for a plain
+targen run, another colour for a preconditioned one, ``targen -c``). They are recorded as
+padding; a ``.ti1`` that already uses SAMPLE_ID ``0`` is refused.
 
 Offline only: no printer, no instrument, no network. Errors carry stable codes.
 """
@@ -279,6 +281,38 @@ def read_ti1_patches(path: str | Path) -> list[tuple[str, tuple[float, float, fl
     return out
 
 
+_WHITE = (100.0, 100.0, 100.0)
+
+
+def read_ti1_padding_rgb(path: str | Path) -> tuple[float, float, float]:
+    """The colour printtarg pads the last strip with: the ``INDEX 0`` row of the .ti1's
+    DENSITY_EXTREME_VALUES table, white when the table is absent. Established with
+    printtarg 3.5.0 for -iCM and -i3p (2026-11-22): editing that row moves the padding with
+    it, and a preconditioned .ti1 (targen -c) does not pad with white."""
+    text = Path(path).read_text(encoding="utf-8", errors="replace")
+    i = text.find("DENSITY_EXTREME_VALUES")
+    if i < 0:
+        return _WHITE
+    block = text[i:]
+    fmt_m = re.search(r"BEGIN_DATA_FORMAT\s+(.*?)\s+END_DATA_FORMAT", block, re.S)
+    data_m = re.search(r"BEGIN_DATA[ \t]*\n(.*?)\n\s*END_DATA", block, re.S)
+    if not (fmt_m and data_m):
+        return _WHITE
+    fmt = fmt_m.group(1).split()
+    try:
+        ii, ir, ig, ib = (fmt.index(c) for c in ("INDEX", "RGB_R", "RGB_G", "RGB_B"))
+    except ValueError:
+        return _WHITE
+    rows = [ln.split() for ln in data_m.group(1).splitlines() if ln.strip()]
+    row = next((r for r in rows if len(r) > ii and r[ii] == "0"), None)
+    if row is None:
+        return _WHITE
+    try:
+        return (float(row[ir]), float(row[ig]), float(row[ib]))
+    except (ValueError, IndexError):
+        return _WHITE
+
+
 def check_ti1_tables(path: str | Path) -> int:
     """printtarg needs the 2 or 3 tables targen writes (patches, then density extremes
     and device combinations, used for the spacers). A single-table .ti1, accepted by
@@ -309,12 +343,14 @@ class Ti2Check:
         return len(self.passes_in_strips)
 
 
-def check_ti2(ti1_patches: list, ti2_path: str | Path, *, instrument: str) -> Ti2Check:
+def check_ti2(ti1_patches: list, ti2_path: str | Path, *, instrument: str,
+              padding_rgb: Optional[tuple] = None) -> Ti2Check:
     """Check the .ti2 printtarg wrote against the .ti1 it was given.
 
     Every .ti1 SAMPLE_ID appears exactly once with the same RGB (equal once quantized
-    to 16 bits: printtarg -T writes the rendered values); the only extra rows
-    are white padding with SAMPLE_ID 0; every strip × patch slot is used exactly once;
+    to 16 bits: printtarg -T writes the rendered values); the only extra rows are padding
+    with SAMPLE_ID 0 in the colour printtarg pads with (``padding_rgb``, see
+    read_ti1_padding_rgb; white by default); every strip × patch slot is used exactly once;
     the strip count per page and the index patterns are the ones freeglaz understands."""
     spec = INSTRUMENTS[instrument]
     kw, fmt, rows = _read_cgats(Path(ti2_path))
@@ -368,8 +404,9 @@ def check_ti2(ti1_patches: list, ti2_path: str | Path, *, instrument: str) -> Ti
         except ValueError:
             raise PrinttargChartError("ti2_row_invalid", " ".join(r)[:80])
         if sid == PADDING_SAMPLE_ID:
-            if _q16(rgb) != (WHITE16, WHITE16, WHITE16):
-                raise PrinttargChartError("ti2_padding_not_white", f"{loc}: {rgb}")
+            if _q16(rgb) != _q16(padding_rgb or _WHITE):
+                raise PrinttargChartError("ti2_padding_unexpected",
+                                          f"{loc}: {rgb}, expected {padding_rgb or _WHITE}")
             padding.append(loc)
         else:
             if sid not in ti1_rgb:
@@ -430,6 +467,25 @@ def build_printtarg_argv(printtarg_path: str, *, instrument: str, page_w_mm: flo
     return argv
 
 
+_PROGRESS_LINE = re.compile(r"^\s*\d+%\s*$")
+
+
+def printtarg_failure_message(output: str, returncode: int) -> str:
+    """Readable reason of a failed printtarg run: its ``Error`` line when it wrote one, otherwise
+    its exit status (a crash is named as such) and its last meaningful line. The percentage
+    progress lines printtarg writes are never the reason."""
+    lines = [ln.strip() for ln in (output or "").splitlines()
+             if ln.strip() and not _PROGRESS_LINE.match(ln)]
+    err = next((ln for ln in lines if "Error" in ln), None)
+    if err:
+        return err
+    crashed = returncode < 0 or returncode >= 128
+    head = f"printtarg {'crashed' if crashed else 'failed'} (exit status {returncode})"
+    if any("-nan" in ln or " nan" in ln for ln in lines):
+        head += "; invalid (NaN) colour values in the .ti1"
+    return f"{head}: {lines[-1]}" if lines else head
+
+
 class _LayoutProber:
     """Ask printtarg how many strips fit on a page of a given width (``Rows per page``
     in its -v report), without rendering a TIFF. Each probe is a throw-away run in its
@@ -466,8 +522,7 @@ class _LayoutProber:
         m = re.search(r"Rows per page\s*=\s*(\d+)", out)
         rows = int(m.group(1)) if (m and proc.returncode == 0) else 0
         if rows == 0:
-            self.last_error = next((ln.strip() for ln in out.splitlines() if "Error" in ln),
-                                   out.strip()[-200:])
+            self.last_error = printtarg_failure_message(out, proc.returncode)
         elif self.total_strips is None and (self.folder / f"{base}.ti2").is_file():
             kw, _, _ = _read_cgats(self.folder / f"{base}.ti2")
             try:
@@ -555,8 +610,7 @@ def run_printtarg(workdir: Path, base: str, argv: list[str], *,
     out = (proc.stdout or "").strip()
     err = (proc.stderr or "").strip()
     if proc.returncode != 0 or not (workdir / f"{base}.ti2").is_file():
-        msg = next((ln for ln in (err + "\n" + out).splitlines() if "Error" in ln),
-                   (err or out)[-300:])
+        msg = printtarg_failure_message(err + "\n" + out, proc.returncode)
         raise PrinttargChartError("printtarg_failed", msg.strip(), returncode=proc.returncode)
     logger.info("printtarg executed: %s", " ".join(argv))
     return {"argv": list(argv), "stdout": out, "stderr": err, "returncode": proc.returncode}
@@ -1069,7 +1123,9 @@ def orchestrate_printtarg_chart(
                                     page_h_mm=page_h, unlimited_strip=unlimited, dpi=dpi,
                                     random_start=seed, base=base, margin_in_tiff=transverse)
         run = run_printtarg(work, base, argv, timeout=timeout)
-        ti2 = check_ti2(ti1_patches, work / f"{base}.ti2", instrument=instrument)
+        padding_rgb = read_ti1_padding_rgb(ti1_path)
+        ti2 = check_ti2(ti1_patches, work / f"{base}.ti2", instrument=instrument,
+                        padding_rgb=padding_rgb)
 
         reported = _verbose_layout(run["stdout"])
         if reported.get("patches_per_strip") not in (None, ti2.steps_in_pass) or \
@@ -1217,7 +1273,8 @@ def orchestrate_printtarg_chart(
                                 for b, f in zip(blocks, final)],
             },
             "padding": {"sample_id": PADDING_SAMPLE_ID, "count": len(ti2.padding_locations),
-                        "locations": ti2.padding_locations},
+                        "locations": ti2.padding_locations, "rgb": list(padding_rgb),
+                        "rgb_source": "ti1 DENSITY_EXTREME_VALUES INDEX 0"},
             "patches_by_location": [
                 {k: p[k] for k in ("sample_id", "sample_loc", "strip", "patch", "page", "rgb")}
                 for p in ti2.patches],

@@ -204,7 +204,7 @@ def _mutated(rows, kind):
     ("missing", "ti2_missing_sample_id"),
     ("duplicate_id", "ti2_duplicate_sample_id"),
     ("rgb", "ti2_rgb_mismatch"),
-    ("padding_colour", "ti2_padding_not_white"),
+    ("padding_colour", "ti2_padding_unexpected"),   # was ti2_padding_not_white: padding is not always white
     ("duplicate_loc", "ti2_location_duplicate"),
     ("unknown_id", "ti2_unknown_sample_id"),
 ])
@@ -739,3 +739,63 @@ def test_real_i1pro3plus_reference_at_300_dpi(tmp_path, ti1_800):
     assert (g["tiff_w_px"], g["tiff_h_px"]) == (h, w)              # one page, turned
     assert g["passes_in_strips"] == [40] and abs(g["tiff_w_mm"] - 500) < 0.1
     assert math.isclose(g["tiff_h_mm"], w / 300 * 25.4, abs_tol=1e-3)
+
+
+def test_printtarg_failure_message_is_readable():
+    """printtarg prints percentage progress lines: never the reason of a failure. A crash
+    (a degenerate .ti1 with NaN colour values makes 3.5.0 segfault) is named as such."""
+    out = ("Patches = 64\nWorst case delta E = -nan\nOptimising layout for strip reader:\n"
+           + "\n".join(f"{i}%" for i in range(50, 101)))
+    msg = P.printtarg_failure_message(out, -11)
+    assert "%" not in msg and "crashed (exit status -11)" in msg and "NaN" in msg
+    assert P.printtarg_failure_message("x\nprinttarg: Error - Not enough width for even one row!\n10%", 1) \
+        == "printtarg: Error - Not enough width for even one row!"
+    assert P.printtarg_failure_message("", 2) == "printtarg failed (exit status 2)"
+
+
+
+# ─── padding colour: printtarg pads with the .ti1's DENSITY_EXTREME_VALUES INDEX 0 row ──────
+def _with_density_extremes(path, rgb0):
+    """A .ti1 with targen's second table, its INDEX 0 row set to ``rgb0``."""
+    text = Path(path).read_text()
+    text += ("CTI1\nDENSITY_EXTREME_VALUES \"2\"\nNUMBER_OF_FIELDS 4\nBEGIN_DATA_FORMAT\n"
+             "INDEX RGB_R RGB_G RGB_B\nEND_DATA_FORMAT\nNUMBER_OF_SETS 2\nBEGIN_DATA\n"
+             f"0 {rgb0[0]:.5f} {rgb0[1]:.5f} {rgb0[2]:.5f}\n1 0.00000 0.00000 0.00000\nEND_DATA\n")
+    Path(path).write_text(text)
+
+
+def test_padding_colour_comes_from_the_density_extremes(tmp_path):
+    rows = _ti1_rows(7)
+    _write_ti1(tmp_path / "a.ti1", rows)
+    assert P.read_ti1_padding_rgb(tmp_path / "a.ti1") == (100.0, 100.0, 100.0)     # no table: white
+    _with_density_extremes(tmp_path / "a.ti1", (0.0, 49.99537, 50.0))
+    pad = P.read_ti1_padding_rgb(tmp_path / "a.ti1")
+    assert pad == (0.0, 49.99537, 50.0)
+    entries = [(sid, loc, pad if sid == "0" else rgb) for sid, loc, rgb in _layout_entries(rows, 3, [2, 1])]
+    _write_ti2(tmp_path / "a.ti2", entries, steps=3, passes=[2, 1])
+    chk = P.check_ti2(P.read_ti1_patches(tmp_path / "a.ti1"), tmp_path / "a.ti2",
+                      instrument="i1pro3plus", padding_rgb=pad)
+    assert chk.padding_locations == ["C2", "C3"]
+    _write_ti2(tmp_path / "a.ti2", _layout_entries(rows, 3, [2, 1]), steps=3, passes=[2, 1])   # white padding
+    with pytest.raises(P.PrinttargChartError) as e:
+        P.check_ti2(P.read_ti1_patches(tmp_path / "a.ti1"), tmp_path / "a.ti2",
+                    instrument="i1pro3plus", padding_rgb=pad)
+    assert e.value.code == "ti2_padding_unexpected"
+
+
+@argyll
+@pytest.mark.parametrize("instrument", ["colormunki", "i1pro3plus"])
+def test_real_preconditioned_ti1_pads_with_its_density_extreme(tmp_path, instrument):
+    """targen -c (the wizard's "refine the current profile" start) writes density extremes
+    through the profile: printtarg then pads with a non-white colour. The chart is accepted
+    and the padding colour recorded."""
+    icc = Path(__file__).resolve().parents[3] / "lib/z9_client/assets/sRGB2014.icc"
+    subprocess.run([find_argyll_binary("targen"), "-d2", "-G", "-f", "64", "-c", str(icc),
+                    str(tmp_path / "pc")], check=True, capture_output=True, timeout=120)
+    ti1 = tmp_path / "pc.ti1"
+    pad = P.read_ti1_padding_rgb(ti1)
+    assert P._q16(pad) != P._q16((100, 100, 100))
+    res = _orch(ti1, tmp_path / "charts", instrument=instrument)
+    desc = _check_common(res, ti1)
+    assert desc["padding"]["count"] > 0 and P._q16(desc["padding"]["rgb"]) == P._q16(pad)
+    assert all(P._q16(p["rgb"]) == P._q16(pad) for p in desc["patches_by_location"] if p["sample_id"] == "0")

@@ -6,6 +6,7 @@
 import { useTranslation } from 'react-i18next';
 import { Eye, Trash2, AlertTriangle } from 'lucide-react';
 import { summaryBadge } from '../../lib/measureQc.js';
+import { scanIdentityLine, instrumentLabel } from '../../lib/measurementMethod.js';
 
 const _ROLES = ['included', 'excluded'];
 
@@ -17,6 +18,25 @@ function formatDelay(sec, t) {
   const h = Math.floor(sec / 3600);
   const m = Math.round((sec % 3600) / 60);
   return m > 0 ? `+${h}h${String(m).padStart(2, '0')}` : `+${h}h`;
+}
+
+// Measurement identity of one scan (external readings: instrument + condition). Historical SOL
+// scans show nothing new (their identity is the chart's).
+function ScanIdentity({ t, identity }) {
+  const line = scanIdentityLine(identity);
+  if (!line) return null;
+  if (line.error) {
+    return <span className="text-tiny text-danger no-underline" data-scan-identity="error">{t('measurement.scan_identity_error')}</span>;
+  }
+  const text = [line.instrument ? instrumentLabel(t, line.instrument) : t('measurement.instrument_unknown'),
+                t(`measurement.condition.${line.condition}`, { defaultValue: line.condition })].join(' · ');
+  return (
+    <span className={`text-tiny no-underline truncate ${line.missing.length ? 'text-warn' : 'text-text-faint'}`}
+          data-scan-identity={`${line.instrument || ''}:${line.condition}`}
+          title={line.missing.length ? t('measurement.identity_incomplete', { fields: line.missing.join(', ') }) : undefined}>
+      {text}
+    </span>
+  );
 }
 
 export default function ScanKeepList({ scans, onSetRole, disabled, onView, onDelete }) {
@@ -32,7 +52,10 @@ export default function ScanKeepList({ scans, onSetRole, disabled, onView, onDel
         return (
           <div key={s.ti3}
                className={`flex items-center justify-between gap-2 text-xs2 border-b border-border-soft/40 py-1 ${rowCls}`}>
-            <span className="font-mono truncate no-underline">{s.ti3}</span>
+            <span className="min-w-0 flex items-center gap-1.5">
+              <span className="font-mono truncate no-underline">{s.ti3}</span>
+              <ScanIdentity t={t} identity={s.measurement_identity}/>
+            </span>
             <span className="flex items-center gap-2 flex-shrink-0 no-underline not-italic">
               {/* intrinsic QC indicator — ONLY from an already-cached summary (never computed here) */}
               {(() => {

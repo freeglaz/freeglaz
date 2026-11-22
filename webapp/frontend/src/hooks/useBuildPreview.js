@@ -14,7 +14,7 @@ export function useBuildPreview(chartId, body, { enabled = true, stateStamp = ''
     const timer = setTimeout(() => {
       api.previewProfile(chartId, previewRequest(body))
         .then((d) => { if (alive) setRes({ key, data: d, error: null }); })
-        .catch((e) => { if (alive) setRes({ key, data: null, error: { status: e?.status, message: e?.message } }); });
+        .catch((e) => { if (alive) setRes({ key, data: null, error: { status: e?.status, message: e?.message, detail: e?.detail } }); });
     }, 250);
     return () => { alive = false; clearTimeout(timer); };
   }, [key]);   // eslint-disable-line react-hooks/exhaustive-deps -- body/chartId are in the key

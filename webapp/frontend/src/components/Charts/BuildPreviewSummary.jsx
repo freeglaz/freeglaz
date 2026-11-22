@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Info, Loader2, XCircle, ChevronDown, ChevronRight } from 'lucide-react';
 import { summarizePreview } from '../../lib/buildPreview.js';
+import { identityRefusal, untrackedSourceProfiles } from '../../lib/measurementMethod.js';
+import IdentityRefusal from './IdentityRefusal.jsx';
 
 // What the next build WILL use (POST /profile/preview, apply_all) — shown before any build, in
 // Measurements and in the scan wizard. Presentational: every number is the backend's. Warnings
@@ -29,12 +31,17 @@ export default function BuildPreviewSummary({ preview }) {
     return <div className="text-tiny text-text-muted flex items-center gap-1.5" data-preview-status="loading">
       <Loader2 size={12} className="animate-spin"/>{t('build_preview.loading')}</div>;
   }
+  if (preview.status === 'error' && identityRefusal(preview.error)) {
+    // measurements that cannot be combined: explained, with what to exclude (backend authority)
+    return <div data-preview-status="identity_refused"><IdentityRefusal error={preview.error}/></div>;
+  }
   if (preview.status === 'error') {
     return <div className="text-tiny text-danger bg-danger/10 border border-danger/30 rounded-md px-2.5 py-1.5" role="alert"
                 data-preview-status="error">{t('build_preview.error', { message: preview.error?.message || '' })}</div>;
   }
   const p = preview.data;
   const s = summarizePreview(p);
+  const nUntracked = untrackedSourceProfiles(p);
   const box = s.refused ? 'border-danger/40 bg-danger/10' : (s.warnings.length || s.recommend) ? 'border-icc-warn/40 bg-icc-warn/10' : 'border-border-soft bg-sunken/50';
   return (
     <div className={`rounded-md border px-3 py-2 text-xs2 space-y-1 ${box}`} data-preview-status={s.refused ? 'refused' : 'ready'}
@@ -51,6 +58,11 @@ export default function BuildPreviewSummary({ preview }) {
       {s.newlyNotice && (
         <div className="flex items-start gap-1.5 text-text-strong" data-newly-notice={s.newlyNotice}><Info size={13} className="mt-0.5 flex-shrink-0 text-accent"/>
           <span>{t(NEWLY_KEY[s.newlyNotice], { count: s.nNewlyApplied })}</span></div>
+      )}
+      {nUntracked > 0 && (
+        <div className="flex items-start gap-1.5 text-text-strong" data-untracked-profiles={nUntracked}>
+          <Info size={13} className="mt-0.5 flex-shrink-0 text-accent"/>
+          <span>{t('measurement.untracked_profiles', { count: nUntracked })}</span></div>
       )}
       {s.nStrongIncluded > 0 && (
         <div className="flex items-start gap-1.5 text-text-strong"><AlertTriangle size={13} className="mt-0.5 flex-shrink-0 text-icc-warn"/>

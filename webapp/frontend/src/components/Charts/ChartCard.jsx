@@ -1,10 +1,12 @@
 import * as api from '../../api/client.js';
+import MeasurementBadge from './MeasurementBadge.jsx';
 
 // Shared PRESENTATIONAL chart-card (zero context coupling): preview + chart_id +
 // one `info` line (JSX, varies with context) + an `actions` slot (JSX) on the right.
 // Reused by the scan wizard's SelectView AND the list in the Measurements tab.
 // `onClick(chart)` = primary click (select-to-scan / open-the-detail).
 // `selected` (optional) = highlights the card whose detail is open (Measurements drawer).
+// The measurement method badge (HP built-in / External — instrument) comes from the chart itself.
 export default function ChartCard({ chart, onClick, info, actions, selected = false }) {
   return (
     <div className={`card w-full transition-colors px-3 py-2.5 flex items-center gap-3 ${
@@ -16,7 +18,10 @@ export default function ChartCard({ chart, onClick, info, actions, selected = fa
              className="w-16 h-12 object-contain bg-white rounded border border-border-soft flex-shrink-0"
              onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}/>
         <div className="min-w-0 flex-1">
-          <div className="text-xs2 font-mono text-text-strong truncate">{chart.chart_id}</div>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-xs2 font-mono text-text-strong truncate">{chart.chart_id}</span>
+            <MeasurementBadge chart={chart}/>
+          </div>
           <div className="text-tiny text-text-faint">{info}</div>
         </div>
       </button>

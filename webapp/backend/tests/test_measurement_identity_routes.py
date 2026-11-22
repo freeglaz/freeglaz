@@ -408,3 +408,38 @@ def test_validation_reconstructs_identities_of_an_older_manifest(client, monkeyp
     val, _ = _chart(client, {"v.ti3": ti3_text(grid_rows())})
     rep = _validate(client, monkeypatch, val, icc)
     assert rep["build"]["status"] == "reconstructed" and rep["comparison"]["status"] == "same"
+
+
+# ─── exclusion guards: a reading of another identity is no replacement ──────
+WHITE = next(sid for sid, r, g, b in grid() if (r, g, b) == (100.0, 100.0, 100.0))
+
+
+def test_a_reading_of_another_condition_is_not_a_replacement(client):
+    """M0 and M2 included together: the M2 white cannot stand in for the M0 one (the build
+    would never combine them), so excluding the M0 white is the last-reading refusal."""
+    cid = "CHT-20261122-1600-FA"
+    d = _printtarg_chart(cid, "i1pro3plus")
+    m0 = _m0(d)
+    _m2(d)
+    r = client.post(f"/api/charts/{cid}/scans/{m0}/readings/{WHITE}/exclusion", json={"dry_run": True})
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["code"] == "WHITE_LAST_READING"
+    assert r.json()["detail"]["impact"]["other_compatible_readings_in_chart"] == 0
+    white = next(x for x in client.get(f"/api/charts/{cid}/scans/{m0}/patches").json()["patches"] if x["id"] == WHITE)
+    assert white["exclusion_risk"]["other_compatible_readings"] == 0 and white["exclusion_risk"]["level"] == "refused"
+    r = client.post(f"/api/charts/{cid}/scans/{m0}/readings/5/reject", json={"rejected": True})
+    assert r.status_code == 409, r.text                     # last valid reading of patch 5 at M0
+    assert not json.loads((d / "scan_state.json").read_text() if (d / "scan_state.json").exists() else "{}") \
+        .get("rejected_readings")
+
+
+def test_readings_of_the_same_condition_still_replace_each_other(client):
+    cid = "CHT-20261122-1600-FB"
+    d = _printtarg_chart(cid, "i1pro3plus")
+    a = _m2(d)
+    _m2(d, grid()[::-1])
+    r = client.post(f"/api/charts/{cid}/scans/{a}/readings/{WHITE}/exclusion", json={"dry_run": True})
+    assert r.status_code == 200, r.text
+    assert r.json()["impact"]["other_compatible_readings_in_chart"] == 1
+    r = client.post(f"/api/charts/{cid}/scans/{a}/readings/5/reject", json={"rejected": True})
+    assert r.status_code == 200, r.text

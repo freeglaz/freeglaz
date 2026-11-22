@@ -124,6 +124,14 @@ def test_create_with_real_targen_and_printtarg(client, monkeypatch):
     assert body["layout"] == "printtarg" and body["instrument"] == "colormunki"
     assert body["roll_layout"] == "transverse"
     assert abs(body["tiff_w_mm"] - 450) < 0.3                      # strips cross the roll
+    # what the UI shows before printing: roll consumed and printed orientation (generator values)
+    assert body["media_key"] == "roll24" and body["roll_length_mm"] > body["tiff_h_mm"]
+    assert body["composition"] == {"rotation": "cw", "strips_cross_the_roll": True,
+                                   "strip_order": "top_to_bottom", "patch_1_side": "right"}
+    pm = json.loads((Path(body["chart_dir"]) / "chart.json").read_text())["patch_map"]
+    expected = ([{"code": "patches_not_located", "count": pm["patch_count"] - pm["located"]}]
+                if pm["located"] < pm["patch_count"] else [])
+    assert body["generator_warnings"] == expected                  # codes, worded by the UI
     assert body["n_patches"] == 120 and body["steps_in_pass"] == 26 and body["n_pages"] == 1
     desc = json.loads((Path(body["chart_dir"]) / "chart.json").read_text())
     assert desc["layout"] == "printtarg" and "scanLayout" not in desc

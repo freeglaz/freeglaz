@@ -1,6 +1,7 @@
 // Build request + preview presentation (phase 4D). Every profile build launched by the
 // interface goes through the same contract: preview (policy apply_all, no write) → explicit
 // confirmation → build with the preview's inputs fingerprint. Pure functions only.
+import { IDENTITY_CODES } from './measurementMethod.js';
 
 /** The build request of the current selection (shared by Measurements and the wizard). */
 export function buildRequestBody({ nKept = 0, profileBase = 'average', colprofFlags = '', extraSources = {} }) {
@@ -67,10 +68,12 @@ export function summarizePreview(p) {
   return s;
 }
 
-/** Build error → {kind}: name_conflict | inputs_changed | coverage_refused | fingerprint_required |
- *  name_length | name_invalid | error. inputs_changed is never retried automatically. */
+/** Build error → {kind}: name_conflict | inputs_changed | coverage_refused | identity_refused |
+ *  fingerprint_required | name_length | name_invalid | error. inputs_changed is never retried
+ *  automatically; identity_refused (measurements that cannot be combined) re-previews. */
 export function classifyBuildError(err) {
   const d = err?.detail && typeof err.detail === 'object' ? err.detail : {};
+  if (err?.status === 409 && IDENTITY_CODES.includes(d.code)) return { kind: 'identity_refused', detail: d };
   if (err?.status === 409 && d.error === 'name_conflict') return { kind: 'name_conflict', detail: d };
   if (err?.status === 409 && d.error === 'inputs_changed') return { kind: 'inputs_changed', detail: d };
   if (err?.status === 409 && d.error === 'coverage_refused') return { kind: 'coverage_refused', detail: d };

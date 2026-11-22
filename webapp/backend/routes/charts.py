@@ -405,6 +405,7 @@ def create_chart(request: Request, body: CreateChartBody,
     # color tag (mluc name of the embedded resident) for the result screen + persists
     # purpose in chart.json (drives the UI : colprof terminal vs profcheck).
     cm = {}
+    desc = {}
     try:
         import json
         dpath = Path(res.descriptor_path)
@@ -425,9 +426,18 @@ def create_chart(request: Request, body: CreateChartBody,
             "n_pages": res.n_pages, "steps_in_pass": res.steps_in_pass,
             "total_strips": res.total_strips,
             "tiff_w_mm": round(res.tiff_w_mm, 1), "tiff_h_mm": round(res.tiff_h_mm, 1),
+            # roll consumed (chart + the roll's mechanical margins) and the printed orientation,
+            # computed by the generator: the UI shows them before printing, never recomputes
+            "roll_length_mm": (desc.get("geometry") or {}).get("roll_length_mm"),
+            "media_key": body.media_key,
+            "composition": {k: (desc.get("composition") or {}).get(k) for k in
+                            ("rotation", "strips_cross_the_roll", "strip_order", "patch_1_side")},
             "purpose": body.purpose,
             "tag": {"icc_name": cm.get("icc_name"), "gloss_enhancer": cm.get("gloss_enhancer")},
-            "warnings": warnings + list(res.warnings),
+            # request-level notes as text; the generator's own findings as codes (the UI words
+            # them), their text stays in chart.json for the record
+            "warnings": warnings,
+            "generator_warnings": _printtarg_generator_warnings(desc),
         }
     return {
         "chart_id": res.chart_id, "chart_dir": res.chart_dir,
@@ -437,6 +447,16 @@ def create_chart(request: Request, body: CreateChartBody,
         "tag": {"icc_name": cm.get("icc_name"), "gloss_enhancer": cm.get("gloss_enhancer")},
         "warnings": warnings,
     }
+
+
+def _printtarg_generator_warnings(desc: dict) -> list:
+    """Structured findings of the printtarg generator for the UI: patches whose place could
+    not be checked on the pixels (repeated or white colour; their place is printtarg's)."""
+    pm = desc.get("patch_map") or {}
+    located, total = pm.get("located"), pm.get("patch_count")
+    if isinstance(located, int) and isinstance(total, int) and located < total:
+        return [{"code": "patches_not_located", "count": total - located}]
+    return []
 
 
 # ─── POST print (hardware act, guided path) ──────────────────────────────────
@@ -575,6 +595,29 @@ def _scans_comparability(paths: list) -> Optional[dict]:
                        "they are not repeated readings of one measurement",
             "decision": decision.to_dict(), "remedies": ["exclude_scan"]})
     return decision.to_dict()
+
+
+def _same_measurement_scans(d: Path, ti3: str, names: list) -> list:
+    """Among ``names``, the scans whose readings may stand in for a reading of ``ti3``: same
+    measurement identity, or an identity not known well enough to tell (historical
+    behaviour kept). A reading of another instrument or condition is never a replacement:
+    the build would refuse to combine them. Every historical SOL scan shares one identity,
+    so SOL charts are unaffected."""
+    try:
+        ref = _mi.read_identity(d / "measurements" / ti3)
+    except (OSError, ValueError):
+        return list(names)
+    out = []
+    for name in names:
+        if name != ti3:
+            try:
+                other = _mi.read_identity(d / "measurements" / name)
+            except (OSError, ValueError):
+                other = None
+            if other is not None and _mi.compare_identities(ref, other).status == _mi.INCOMPATIBLE:
+                continue
+        out.append(name)
+    return out
 
 
 def _build_request_record(body, flags: list, policy: str) -> dict:
@@ -954,8 +997,9 @@ def set_reading_rejected(chart_id: str, ti3: str, sample_id: str, body: RejectRe
     if body.rejected:
         # ≥1 valid reading for THIS patch across the INCLUDED scans (otherwise patch without measurement)
         rmap = _rejected_map(st)
+        same = set(_same_measurement_scans(d, ti3, [p.name for p in _included_ti3_paths(d)]))
         remaining = [p.name for p in _included_ti3_paths(d)
-                     if p.name != ti3 and sample_id in scan_delta.ti3_sample_ids(p)
+                     if p.name != ti3 and p.name in same and sample_id in scan_delta.ti3_sample_ids(p)
                      and sample_id not in rmap.get(p.name, set())]
         if not remaining:
             raise HTTPException(409, detail="last valid reading of this patch — rejection forbidden (otherwise patch without measurement)")
@@ -996,7 +1040,8 @@ def _exclusion_impact(chart_id: str, d: Path, state: dict, ti3: str, sid: str,
     key, (pos, corner) = bi.device_key(rgb), bi.device_position(rgb)
     after = {k: list(v) for k, v in state["rejected_readings"].items()}
     after[ti3] = sorted(set(after.get(ti3, [])) | {sid})
-    included = [p.name for p in _raw_ti3_paths(d) if _scan_role(state, p.name) == "included"]
+    included = _same_measurement_scans(
+        d, ti3, [p.name for p in _raw_ti3_paths(d) if _scan_role(state, p.name) == "included"])
     others = 0
     for scan in included:
         rej = set(after.get(scan, []))
@@ -1151,8 +1196,10 @@ def _exclusion_risks(d: Path, state: dict, ti3: str) -> dict:
     except (OSError, ValueError):
         return {}
     pool: Counter = Counter()
+    same = set(_same_measurement_scans(
+        d, ti3, [p.name for p in _raw_ti3_paths(d) if _scan_role(state, p.name) == "included"]))
     for p in _raw_ti3_paths(d):
-        if _scan_role(state, p.name) != "included":
+        if p.name not in same:
             continue
         rej = set(state["rejected_readings"].get(p.name, []))
         try:

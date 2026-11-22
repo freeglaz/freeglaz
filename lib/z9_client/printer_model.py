@@ -32,6 +32,11 @@ Matching is on the casefolded ``ModelName``, never a strict equality (widths
 and the PS suffix vary). ``ModelNumber`` ("Z9 Pro 64in PS") is a second
 witness for the Pro only: a Pro must not fall back to ``z9`` because one
 field is short.
+
+Built-in spectrophotometer scan: freeglaz sends the scan request alone, on a
+chart the printer printed as an ordinary job. The Z9 accepts it; the Z9 Pro
+firmware crashes on it. The scan is therefore allowed on the Z9 family only
+(``scan_supported``): an allow-list, so an untested model is refused too.
 """
 from __future__ import annotations
 
@@ -81,3 +86,27 @@ def support_level(family: Optional[str]) -> Optional[str]:
     """``validated`` / ``partial`` / ``untested`` for a family, ``None`` for
     a non-DesignJet."""
     return _SUPPORT.get(family) if family else None
+
+
+def scan_supported(family: Optional[str]) -> bool:
+    """True when freeglaz may drive the built-in spectrophotometer scan on this
+    family: the Z9 only (see the module docstring)."""
+    return family == FAMILY_Z9
+
+
+def printer_family(client) -> Optional[str]:
+    """Family of the printer behind ``client``, from its live identification.
+
+    Memoized on the client like the serial number (one client = one printer;
+    a printer change rebuilds the client). ``None`` is not memoized. Raises
+    what ``client.identification()`` raises (``Z9Error`` when unreachable)."""
+    cached = getattr(client, "_freeglaz_family_cache", None)
+    if cached:
+        return cached
+    family = classify(client.identification())
+    if family is not None:
+        try:
+            client._freeglaz_family_cache = family
+        except AttributeError:
+            pass
+    return family

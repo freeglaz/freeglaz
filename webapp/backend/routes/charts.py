@@ -45,6 +45,7 @@ from pydantic import BaseModel, Field
 from lib.z9_client import Z9Error
 from lib.z9_client import cache as _cache
 from lib.z9_client import chart_geometry_refonte as G
+from lib.z9_client import printer_model
 from lib.z9_client import sol_chart as _sc
 from lib.z9_client import store as _store
 from lib.z9_client import targen_strategies as _tg
@@ -619,8 +620,9 @@ class ScanChartBody(BaseModel):
 def scan_chart(chart_id: str, body: ScanChartBody, z9=Depends(get_chart_z9)) -> dict:
     """Launches the SOL scan of the LOADED chart in the BACKGROUND (NON-BLOCKING : sol_native
     ~10-25 min NEVER holds the handler → freeze pattern avoided). Returns immediately
-    a snapshot ; poll GET ``/{id}/scan/status``. HARD guards : anti-concurrent,
-    cooldown ≥30 s, multi-scan session lock. The ti3 is only written at OP_FINISHED_OK."""
+    a snapshot ; poll GET ``/{id}/scan/status``. HARD guards : supported model (Z9
+    only), anti-concurrent, cooldown ≥30 s, multi-scan session lock. The ti3 is only
+    written at OP_FINISHED_OK."""
     import json
     from webapp.backend.services import chart_scan_job, scan_session
 
@@ -631,8 +633,23 @@ def scan_chart(chart_id: str, body: ScanChartBody, z9=Depends(get_chart_z9)) -> 
         raise HTTPException(422, detail="scanLayout missing from descriptor")
     meas = d / "measurements"
 
-    # HARD anti-hammering guards BEFORE any session write (a refusal NEVER creates
-    # a locked phantom session) :
+    # HARD guards BEFORE any session write (a refusal NEVER creates a locked
+    # phantom session).
+    # Supported model first: the scan is proven on the Z9 only and crashes the Z9
+    # Pro firmware. Read from the LIVE identification, never from store.json (an
+    # entry registered before the Pro was recognised still says "validated").
+    try:
+        family = printer_model.printer_family(z9)
+    except Z9Error as e:
+        raise HTTPException(502, detail=f"cannot identify the printer: {e}")
+    if not printer_model.scan_supported(family):
+        raise HTTPException(409, detail={
+            "code": "scan_unsupported_model",
+            "family": family,
+            "message": ("The built-in spectrophotometer scan is only supported "
+                        "on the DesignJet Z9."),
+        })
+    # Anti-hammering:
     if chart_scan_job.is_busy():
         raise HTTPException(409, detail="A SOL scan is already running")
     rem = chart_scan_job.cooldown_remaining()

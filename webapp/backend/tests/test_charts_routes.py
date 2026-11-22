@@ -20,9 +20,10 @@ MID = "9E489F02AE027F9DD93191D872728C1D"
 SERIAL = "CNXXXXXXXX"
 
 
-def _fake_z9(only_ge=None, loaded=True):
+def _fake_z9(only_ge=None, loaded=True, model="HP DesignJet Z9 24in"):
     """Z9 mock: export_icc writes an ICC from the assets. only_ge=set -> only those GE
-    exist. loaded=False -> device.status() with no paper loaded (-> 409)."""
+    exist. loaded=False -> device.status() with no paper loaded (-> 409). ``model`` =
+    the ModelName the identification reports (the scan is allowed on a Z9 only)."""
     paper = MagicMock()
 
     def _export(*, ref, output_path, gloss_enhancer, quality, color_space):
@@ -48,7 +49,8 @@ def _fake_z9(only_ge=None, loaded=True):
     soap.get_profile.return_value = {"icc_bytes": _RESIDENT.read_bytes()}
     # store.get_serial(z9) (per-serial bridge) reads z9.identification() — not device.status().
     return SimpleNamespace(paper=paper, device=device, soap=soap, host="127.0.0.1",
-                           identification=lambda: {"SerialNumber": SERIAL})
+                           identification=lambda: {"SerialNumber": SERIAL,
+                                                   "ModelName": model})
 
 
 @pytest.fixture
@@ -359,6 +361,48 @@ def test_scan_happy_then_profile_no_ti3_first(client, monkeypatch):
     # the chart is now "scanned" in the library
     lib = client.get(f"/api/charts?paper={MID}").json()["charts"]
     assert any(c["chart_id"] == cid and c["scanned"] for c in lib)
+
+
+def _forbid_hardware(monkeypatch):
+    """Any attempt to start the scan job or talk to the spectro fails the test."""
+    def _boom(*a, **kw):
+        raise AssertionError("scan must not be started")
+    monkeypatch.setattr("lib.z9_client.sol_native.measure", _boom)
+    monkeypatch.setattr("webapp.backend.services.chart_scan_job.start", _boom)
+
+
+@pytest.mark.parametrize("model, family", [
+    ("HP DesignJet Z9 Pro 64in PS", "z9pro"),     # the firmware crashes on this scan
+    ("HP DesignJet Z3200ps 44in", "designjet"),   # untested: allow-list, refused too
+])
+def test_scan_refused_on_non_z9_before_any_session(client, monkeypatch, model, family):
+    from webapp.backend.services import chart_scan_job, scan_session
+    cid = _create_a3(client)
+    _forbid_hardware(monkeypatch)
+    chart_scan_job.reset()
+    app.dependency_overrides[charts_routes.get_chart_z9] = lambda: _fake_z9(model=model)
+    r = client.post(f"/api/charts/{cid}/scan", json={})
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert detail["code"] == "scan_unsupported_model"
+    assert detail["family"] == family
+    assert scan_session.active_session() is None        # refused BEFORE session
+
+
+def test_scan_refused_when_the_printer_cannot_be_identified(client, monkeypatch):
+    from webapp.backend.services import chart_scan_job, scan_session
+    cid = _create_a3(client)
+    _forbid_hardware(monkeypatch)
+    chart_scan_job.reset()
+
+    def _unreachable():
+        raise Z9Error("Cannot reach 127.0.0.1")
+    fake = _fake_z9()
+    fake.identification = _unreachable
+    app.dependency_overrides[charts_routes.get_chart_z9] = lambda: fake
+    r = client.post(f"/api/charts/{cid}/scan", json={})
+    assert r.status_code == 502
+    assert scan_session.active_session() is None
 
 
 def test_scan_status_resume_flag_and_abandon(client, monkeypatch):

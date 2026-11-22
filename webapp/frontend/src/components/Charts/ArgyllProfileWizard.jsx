@@ -12,6 +12,7 @@ import ProfileBuildPanel from './ProfileBuildPanel.jsx';
 import { geLabel } from '../../lib/geLabel.js';
 import { safeLocalGet } from '../../lib/safeLocalStorage.js';
 import { useLoadedPaper } from '../../hooks/useLoadedPaper.js';
+import { usePrinterFamily } from '../../hooks/usePrinterFamily.js';
 import ProfcheckReport from '../Profiles/ProfcheckReport.jsx';
 import AllPatchesModal from '../Profiles/AllPatchesModal.jsx';
 import ScanDeltaCard from './ScanDeltaCard.jsx';   // extracted (shared wizard + Measurements tab)
@@ -85,6 +86,11 @@ function NSelect({ value, onChange, options, disabled = false }) {
 export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = 'print', onDone, profile, initialChart = null }) {
   const { t } = useTranslation();
   const loadedPaper = useLoadedPaper();   // live status.paper → default chart format (roll if a roll is loaded)
+  // Built-in spectro scan: Z9 only (the Z9 Pro firmware crashes on it). The backend
+  // refuses it anyway (409 scan_unsupported_model); here we only hide the action
+  // once the family is KNOWN — unknown (null) leaves the decision to the backend.
+  const printerFamily = usePrinterFamily();
+  const scanUnsupported = printerFamily != null && printerFamily !== 'z9';
   const mediaid = paper?.mediaid || paper?.media_id || '';
   const paperName = paper?.name || mediaid;
   const geStr = ge === true || ge === 'FULLPAGE' ? 'FULLPAGE' : 'OFF';
@@ -455,7 +461,9 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
       _pollScan(selected.chart_id);
     } catch (e) {
       const msg = e?.message || '';
-      if (e?.status === 409 && e?.detail?.code === 'session_active_other_chart') {
+      if (e?.status === 409 && e?.detail?.code === 'scan_unsupported_model') {
+        setError(t('scan.unsupported_model'));
+      } else if (e?.status === 409 && e?.detail?.code === 'session_active_other_chart') {
         // Inter-chart lock → offer a DIRECT "finish the blocking session" action
         // (modal below) instead of a dead-end text refusal.
         setSessionBlockedBy(e.detail.chart_id);
@@ -669,6 +677,12 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
           {phase === 'scanready' && selected && (
             <div className="space-y-2.5">
               <ScanReadyView chart={selected}/>
+              {scanUnsupported && (
+                <div className="flex items-start gap-2 text-tiny text-warn bg-icc-warn/10 rounded-md px-3 py-2 leading-snug"
+                     data-testid="scan-unsupported-model">
+                  <AlertTriangle size={14} className="flex-shrink-0 mt-0.5"/> {t('scan.unsupported_model')}
+                </div>
+              )}
               <div className="rounded-md border border-accent/30 bg-accent/5 px-3 py-2 text-tiny leading-snug">
                 <strong>{t('scan.roll.reposition_title')}</strong>{' '}
                 <span className="text-text-muted">{t('scan.roll.reposition_detail')}</span>
@@ -796,7 +810,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
           <div className="px-6 py-4 border-t border-border-soft flex items-center justify-end gap-2">
             <button type="button" onClick={handleClose}
                     className="text-xs2 text-text-muted hover:text-text-strong px-3 py-1.5">{t('common.cancel')}</button>
-            <button type="button" onClick={doScan} disabled={busy || cooldownSec > 0}
+            <button type="button" onClick={doScan} disabled={busy || cooldownSec > 0 || scanUnsupported}
                     className="flex items-center gap-1.5 text-xs2 font-semibold bg-accent text-on-accent px-4 py-1.5 rounded-md hover:bg-accent-press disabled:opacity-50">
               <ScanLine size={14}/>{cooldownSec > 0 ? t('scan.roll.cooldown_btn', { n: cooldownSec }) : (nScans > 0 ? t('scan.roll.scan_again') : t('chart_create.scan_btn'))}
             </button>
@@ -810,7 +824,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
             <button type="button" onClick={handleClose}
                     className="text-xs2 text-text-muted hover:text-text-strong px-3 py-1.5">{t('common.cancel')}</button>
             {!isValidate && (
-              <button type="button" onClick={() => { setError(null); setPhase('scanready'); }} disabled={busy}
+              <button type="button" onClick={() => { setError(null); setPhase('scanready'); }} disabled={busy || scanUnsupported}
                       className="flex items-center gap-1.5 text-xs2 font-medium border border-border-soft text-text-muted px-3 py-1.5 rounded-md hover:text-text-strong hover:bg-sunken disabled:opacity-50">
                 <ScanLine size={14}/>{t('scan.roll.scan_again')}
               </button>

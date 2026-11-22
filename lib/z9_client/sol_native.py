@@ -268,6 +268,27 @@ def measure(host: str, port: int = DEFAULT_PORT,
 
 # ── Milestone CLI (probe) ────────────────────────────────────────────────────
 
+def _require_z9(host: str) -> None:
+    """CLI guard: refuse any SOL dialogue unless the printer at ``host`` is a
+    DesignJet Z9. This channel is proven on the Z9 only; the Z9 Pro firmware
+    crashes on a scan sent this way (cf. ``printer_model.scan_supported``)."""
+    from .client import Z9Client
+    from .exceptions import Z9Error
+    from .printer_model import classify, scan_supported
+
+    client = Z9Client(host=host, timeout=10.0)
+    try:
+        ident = client.identification()
+    except Z9Error as e:
+        raise SystemExit(f"cannot identify the printer at {host}: {e}")
+    finally:
+        client.close()
+    if not scan_supported(classify(ident)):
+        model = ident.get("ModelName") or "not a DesignJet"
+        raise SystemExit(f"{host} is {model}: the native SOL channel is only "
+                         f"supported on the DesignJet Z9")
+
+
 def _cli() -> None:
     import argparse
     from datetime import datetime
@@ -293,6 +314,8 @@ def _cli() -> None:
             args.host = Z9Client.from_env().host
         except Z9Error as e:
             ap.error(f"no IP resolved ({e}) — pass --host <ip>")
+
+    _require_z9(args.host)   # before ANY SOL connection, status probe included
 
     if args.op == "status":
         print(f"[milestone 1] SOL status probe → {args.host}:{DEFAULT_PORT} (harmless)")

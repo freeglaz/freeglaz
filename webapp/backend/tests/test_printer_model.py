@@ -56,3 +56,36 @@ def test_other_designjet(name):
 def test_not_a_designjet(ident):
     assert pm.classify(ident) is None
     assert pm.support_level(None) is None
+
+
+# ─── built-in spectrophotometer scan: allow-list (Z9 only) ─────────────
+
+
+def test_scan_supported_on_the_z9_only():
+    assert pm.scan_supported(pm.FAMILY_Z9) is True
+    assert pm.scan_supported(pm.FAMILY_Z9_PRO) is False
+    assert pm.scan_supported(pm.FAMILY_OTHER) is False
+    assert pm.scan_supported(None) is False
+
+
+class _Client:
+    def __init__(self, ident):
+        self.ident, self.calls = ident, 0
+
+    def identification(self):
+        self.calls += 1
+        return self.ident
+
+
+def test_printer_family_is_memoized_on_the_client():
+    c = _Client({"ModelName": "HP DesignJet Z9 Pro 64in PS"})
+    assert pm.printer_family(c) == pm.FAMILY_Z9_PRO
+    assert pm.printer_family(c) == pm.FAMILY_Z9_PRO
+    assert c.calls == 1
+
+
+def test_printer_family_does_not_memoize_an_unknown_device():
+    c = _Client({})
+    assert pm.printer_family(c) is None
+    assert pm.printer_family(c) is None
+    assert c.calls == 2

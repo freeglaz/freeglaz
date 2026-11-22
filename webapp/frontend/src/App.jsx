@@ -24,6 +24,7 @@ import MesuresPage from './components/Mesures/MesuresPage.jsx';
 import ConvertPage from './components/Convert/ConvertPage.jsx';
 import Splash from './components/Splash/Splash.jsx';
 import { LoadedPaperProvider } from './hooks/useLoadedPaper.js';
+import { PrinterFamilyProvider } from './hooks/usePrinterFamily.js';
 import { deriveUIState, isWorkerActive, UIState } from './lib/state-machine.js';
 import { postPrint, postPrintCancel, wakeZ9, disableDemo } from './api/client.js';
 import { uiGEToBackend } from './api/mappings.js';
@@ -545,6 +546,7 @@ export default function App() {
 
   return (
     <LoadedPaperProvider value={status?.paper || null}>
+    <PrinterFamilyProvider value={status?.family ?? null}>
     <div className="flex flex-col h-screen bg-bg">
       {stale && (
         <div
@@ -774,6 +776,7 @@ export default function App() {
 
       {showSplash && <Splash onDismiss={() => setShowSplash(false)}/>}
     </div>
+    </PrinterFamilyProvider>
     </LoadedPaperProvider>
   );
 }

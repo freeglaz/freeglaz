@@ -69,6 +69,23 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.1.16" date="2026-11-22">
+      <description>
+        <p>
+          The HP DesignJet Z9 Pro is now recognised and flagged as partial
+          support. The measurement with the built-in spectrophotometer is only
+          enabled on the Z9: on the Z9 Pro it crashes the firmware, and it has
+          not been proven on other models.
+        </p>
+        <p>
+          freeglaz prints on the first roll or the manual feed only. Paper
+          loaded on another roll is reported but never printed on, and paper on
+          an unknown source is refused instead of being sent to the manual
+          feed. Printer dimensions are now read with the unit the printer
+          reports.
+        </p>
+      </description>
+    </release>
     <release version="0.1.15" date="2026-11-12">
       <description>
         <p>

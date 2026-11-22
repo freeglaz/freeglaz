@@ -65,7 +65,8 @@ space is flagged before printing.
 ## Hardware
 
 freeglaz drives an HP DesignJet Z9 over its network interfaces. Tested on a
-24-inch model (single roll). Other configurations are untested; see Limitations.
+24-inch model (single roll). The Z9 Pro is recognised, with partial support.
+Other configurations are untested; see Limitations.
 
 ## Profiling
 
@@ -158,11 +159,16 @@ freeglaz does not cover every capability of the printer. Known limitations:
   (`nomargins`) is not covered yet.
 - **Grayscale** — the Z9's native grayscale mode (black and gray inks) is not
   tested. Grayscale-profiled input is rejected; input must be RGB.
-- **Single roll** — freeglaz addresses a single-roll configuration. Dual Roll is
-  not handled.
+- **Single roll** — freeglaz prints on the first roll (or the manual feed) only.
+  Paper loaded on another roll is reported, never printed on.
 - **Tested hardware** — freeglaz has been tested on a 24-inch Z9 (single roll,
   with the Gloss Enhancer kit). The 44-inch model, in either single-roll or Dual
-  Roll configuration, is untested.
+  Roll configuration, is untested. The built-in spectrophotometer measurement is
+  only enabled on the Z9.
+- **Z9 Pro** — recognised and flagged as partial support. The built-in
+  spectrophotometer measurement is disabled on it (it crashes the Z9 Pro
+  firmware), and charts have been reported printed rotated 180° (under
+  investigation). This version has not been tested on a Z9 Pro.
 - **Gloss Enhancer kit** — the Gloss Enhancer is an optional hardware kit
   (firmware-enabled). freeglaz has only been tested on a machine fitted with the
   kit; behaviour on a Z9 without it is not validated. The Gloss Enhancer control

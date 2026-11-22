@@ -110,6 +110,7 @@ function mapStatus(raw) {
     z9_configured: raw.z9_configured === true,
     z9_activity: raw.z9_activity || null,  // {name, progress_pct}
     model:       raw.model,
+    family:      raw.family ?? null,   // 'z9' | 'z9pro' | 'designjet' | null
     serial:      raw.serial,
     firmware:    raw.firmware,
     state_text:  raw.state_text,
@@ -267,7 +268,8 @@ export const getPrinters = () =>
 export const testPrinter = (ip) =>
   USE_MOCKS ? Promise.resolve({ status: 'ok', model: 'HP DesignJet Z9 24in',
                                 serial: 'CN-MOCK-0001', firmware: 'MOCK',
-                                part: 'W3Z71A', model_support: 'validated' })
+                                part: 'W3Z71A', family: 'z9',
+                                model_support: 'validated' })
             : http('/api/printers/test', { method: 'POST', body: JSON.stringify({ ip }) });
 
 export const addPrinter = (body) =>

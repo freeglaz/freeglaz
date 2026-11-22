@@ -1400,8 +1400,8 @@ def add_printer(*, ip: str, serial: str, name: str = "",
                 admin_pwd: Optional[str] = None) -> dict:
     """Add (or update BY serial — upsert, no duplicate) a printer.
     If ``active=True``, deactivates all others. ``model_support``
-    ("validated"|"untested") from the connection test → the UI can show a
-    "not tested" badge. ``admin_pwd`` (optional) is the Z9 admin password,
+    ("validated"|"partial"|"untested") from the connection test → the UI can
+    show a "partial support" or "not tested" badge. ``admin_pwd`` (optional) is the Z9 admin password,
     stored so the web/desktop app can reach protected endpoints (job queue)
     without a .env; the env var ``Z9_ADMIN_PWD`` still takes precedence
     (cf. Z9Client.from_env). Returns the written entry.

@@ -176,6 +176,11 @@ function PrinterRow({ p, busy, onActivate, onEdit, onDelete }) {
                   {t('settings.printers.badge_untested')}
                 </span>
               )}
+              {p.model_support === 'partial' && (
+                <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-warn/15 text-warn">
+                  {t('settings.printers.badge_partial')}
+                </span>
+              )}
             </div>
           )}
           {editing ? (
@@ -354,6 +359,9 @@ function AddPrinter({ hasPrinters, onAdded, onFirstAdded }) {
           </div>
           {result.model_support === 'untested' && (
             <Notice kind="warn" text={t('settings.printers.untested_warning')}/>
+          )}
+          {result.model_support === 'partial' && result.family === 'z9pro' && (
+            <Notice kind="warn" text={t('settings.printers.partial_warning_z9pro')}/>
           )}
           <div>
             <label className="block text-xs text-text-muted mb-1">{t('settings.printers.name_label')}</label>

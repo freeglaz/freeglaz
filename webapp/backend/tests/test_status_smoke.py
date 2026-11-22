@@ -63,6 +63,7 @@ def test_status_no_paper_returns_alerts(client):
     data = r.json()
 
     assert data["model"] == "HP DesignJet Z9 24in"
+    assert data["family"] == "z9"
     assert data["serial"] == "CNXXXXXXXX"
     assert data["firmware"] == "JGR9_09_26_06.1"
     assert data["loaded_paper"] is None

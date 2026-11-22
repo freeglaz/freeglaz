@@ -1,7 +1,8 @@
 """Printer IP connection test (IP configuration, C1).
 
-3 statuses (ok/unreachable/not_a_designjet) + 2 support levels (validated if
-DesignJet Z9, untested otherwise). Mock identification (never a real network).
+4 statuses (ok/unreachable/not_a_designjet/error) + 3 support levels (validated
+for the Z9 family, partial for the Z9 Pro, untested otherwise). Mock
+identification (never a real network).
 """
 import pytest
 from fastapi.testclient import TestClient
@@ -37,6 +38,7 @@ def test_ok_validated_real_z9(monkeypatch):
     assert r["serial"] == "CNXXXXXXXX"
     assert r["firmware"] == "JGR9_09_26"
     assert r["part"] == "W3Z71A"
+    assert r["family"] == "z9"
     assert r["model_support"] == "validated"
 
 
@@ -47,10 +49,23 @@ def test_ok_validated_z9_44in(monkeypatch):
     assert r["status"] == "ok" and r["model_support"] == "validated"
 
 
+def test_ok_partial_z9_pro(monkeypatch):
+    # The Pro's ModelName contains "DesignJet Z9": it used to pass as validated.
+    _ident(monkeypatch, {"ModelName": "HP DesignJet Z9 Pro 64in PS",
+                         "ModelNumber": "Z9 Pro 64in PS", "PartNumber": "2RM82A",
+                         "SerialNumber": "MYXXXXXXXX", "FwReleaseName": "LION_05_25_08.1"})
+    r = printer_probe.test_connection("1.2.3.4")
+    assert r["status"] == "ok"
+    assert r["family"] == "z9pro"
+    assert r["model_support"] == "partial"
+    assert r["firmware"] == "LION_05_25_08.1"
+
+
 def test_ok_untested_other_designjet(monkeypatch):
     _ident(monkeypatch, {"ModelName": "HP DesignJet Z3200ps 44in", "SerialNumber": "Y"})
     r = printer_probe.test_connection("1.2.3.4")
     assert r["status"] == "ok" and r["model_support"] == "untested"
+    assert r["family"] == "designjet"
 
 
 def test_not_a_designjet(monkeypatch):

@@ -21,12 +21,14 @@ DISPOSABLE client — not the global lifespan client. Reads ``/Identification.xm
 (REST PIWS) and classifies the result. **Persists NOTHING** (registration in
 store.json = separate action via ``cache.add_printer``, triggered by the UI).
 
-TWO-level check (decision: open up the DesignJet range honestly):
+TWO-level check (decision: open up the DesignJet range honestly), both from
+``printer_model.classify``:
 - **Acceptance**: ``"DesignJet"`` in ``ModelName`` (casefold) → accepted (Z9,
   Z9 Pro, Z3200…); otherwise ``not_a_designjet``. Never a strict equality (24in/44in).
-- **Reported support**: ``"DesignJet Z9"`` in ``ModelName`` → ``model_support =
-  "validated"`` (tested on the real Z9); otherwise ``"untested"``. The backend SIGNALS,
-  the UI warns (brief 3) — we do not forbid ``untested`` ones.
+- **Family and reported support**: ``z9`` → ``model_support = "validated"`` (tested
+  on the real Z9); ``z9pro`` → ``"partial"`` (known limits, never "validated" even
+  though its ModelName contains "DesignJet Z9"); any other DesignJet → ``"untested"``.
+  The backend SIGNALS, the UI warns — we do not forbid the non-validated ones.
 
 Four statuses: ``ok`` / ``unreachable`` / ``not_a_designjet`` / ``error`` — never
 a crashing exception. ``error`` = a fault on OUR side (e.g. a broken bundle with
@@ -50,12 +52,14 @@ def test_connection(ip: str, *, timeout: float = TEST_TIMEOUT_S) -> dict:
     - ``{"status": "not_a_designjet", "message"|"model": …}`` — responded but not
       a usable DesignJet;
     - ``{"status": "error", "message": …}`` — local fault, not the printer's;
-    - ``{"status": "ok", "model", "serial", "firmware", "part", "model_support"}``.
+    - ``{"status": "ok", "model", "serial", "firmware", "part", "family",
+      "model_support"}``.
     """
     from xml.etree.ElementTree import ParseError
 
     from .client import Z9Client
     from .exceptions import Z9ConnectionError, Z9Error
+    from .printer_model import classify, support_level
 
     ip = (ip or "").strip()
     if not ip:
@@ -82,12 +86,12 @@ def test_connection(ip: str, *, timeout: float = TEST_TIMEOUT_S) -> dict:
             pass
 
     model = (ident.get("ModelName") or "").strip()
-    if "designjet" not in model.casefold():
+    family = classify(ident)
+    if family is None:
         return {"status": "not_a_designjet",
                 "message": f"{ip} responded but is not a DesignJet printer",
                 "model": model or None}
 
-    support = "validated" if "designjet z9" in model.casefold() else "untested"
     firmware = ident.get("FWVersion") or ident.get("FwReleaseName")
     return {
         "status": "ok",
@@ -95,5 +99,6 @@ def test_connection(ip: str, *, timeout: float = TEST_TIMEOUT_S) -> dict:
         "serial": ident.get("SerialNumber"),
         "firmware": firmware,
         "part": ident.get("PartNumber"),
-        "model_support": support,
+        "family": family,
+        "model_support": support_level(family),
     }

@@ -98,6 +98,9 @@ class Status(BaseModel):
     model: str
     serial: str
     firmware: str
+    # Model family from the live identification (lib printer_model.classify):
+    # "z9" | "z9pro" | "designjet"; None when unknown (unreachable).
+    family: Optional[str] = None
 
     ready: bool
     state_text: str

@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, Request
 from sse_starlette.sse import EventSourceResponse
 
 from lib.z9_client import Z9Client, Z9Error
+from lib.z9_client import printer_model
 from lib.z9_client.exceptions import Z9ConnectionError
 
 from webapp.backend.models import (
@@ -218,6 +219,7 @@ def _dashboard_to_status(
     ident = dashboard.get("identification", {})
     return Status(
         model=ident.get("ModelName", "?"),
+        family=printer_model.classify(ident),
         serial=ident.get("SerialNumber", "?"),
         firmware=ident.get("FwReleaseName", "?"),
         ready=ready,

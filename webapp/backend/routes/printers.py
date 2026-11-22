@@ -43,7 +43,7 @@ class AddPrinterBody(BaseModel):
     ip: str = Field(..., min_length=1)
     serial: str = Field(..., min_length=1)
     name: str = ""
-    model_support: Optional[str] = None   # "validated" | "untested" (from the test)
+    model_support: Optional[str] = None   # "validated" | "partial" | "untested" (from the test)
     admin_pwd: Optional[str] = None       # Z9 admin password (protected endpoints / job queue)
 
 

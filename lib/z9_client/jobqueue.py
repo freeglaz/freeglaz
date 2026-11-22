@@ -77,7 +77,7 @@ PIWS_NS = "http://www.hp.com/schemas/piws/v2_0"
 _NS = {"piws": PIWS_NS}
 
 # Inches → millimeters. Page dimensions are read with their ``Unit``
-# (``parsers.dimension_mm``); inches is what both the Z9 and the Z9 Pro report.
+# (``parsers.dimension_mm``); inches is what the job queue reports.
 INCH_TO_MM = 25.4
 
 

@@ -1,8 +1,8 @@
 """PIWS dimensions are read with their Unit (parsers.dimension_mm).
 
-The Z9 reports its loaded media in inches, the Z9 Pro in millimetres (its job
-page sizes stay in inches). Reading the Pro's 609.6 mm roll as inches gave a
-15.5 m wide roll. Synthetic payloads shaped like the two printers' answers.
+The unit is not fixed: inches for a plain request on the Z9, millimetres when
+the Z9 Pro's web interface asks ``?units=metric``. Read as inches, a 609.6 mm
+roll would be 15.5 m wide. Synthetic payloads.
 """
 import json
 import logging
@@ -79,7 +79,7 @@ def test_z9_roll_in_inches():
     assert info["length_mm"] == 0.0
 
 
-def test_z9_pro_roll_in_millimetres():
+def test_roll_in_millimetres():
     info = _device(_media_system({"Unit": "mm", "Value": 609.6},
                                  {"Unit": "mm", "Value": 1500.0})).loaded_media_info()
     assert info["width_mm"] == pytest.approx(609.6)      # not 15 484 mm

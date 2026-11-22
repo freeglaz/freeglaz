@@ -24,6 +24,9 @@ namespaces, which we handle via {namespace}tag in the lookups.
 
 import xml.etree.ElementTree as ET
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # Main PIWS namespace
@@ -185,6 +188,40 @@ def _parse_paper_element(elem):
 def parse_json(text):
     """Parse a JSON response (Calibrations.json, InkSystem.json, etc.)."""
     return json.loads(text)
+
+
+# ─── Dimensions: PIWS Value + Unit pairs ─────────────────────────────
+
+# The unit of a PIWS dimension depends on the endpoint AND the firmware, not
+# on the panel's display unit: the Z9 reports its loaded media in inches, the
+# Z9 Pro in millimetres, while the Z9 Pro's job page sizes stay in inches.
+# Never assume one: read it.
+_MM_PER_UNIT = {"in": 25.4, "inch": 25.4, "inches": 25.4, "mm": 1.0, "cm": 10.0}
+_unknown_units_logged: set = set()
+
+
+def dimension_mm(value, unit, *, default_unit="in"):
+    """Millimetres from a PIWS dimension (``Value`` + ``Unit``), or ``None``.
+
+    - no value / not a number → ``None``;
+    - no unit → ``default_unit`` (inches: the only case before the Unit field
+      was read);
+    - unknown unit → ``None``, logged once per unit — never a guessed size (a
+      millimetre value read as inches gave a 15 m wide roll)."""
+    if value is None:
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    u = str(unit).strip().casefold() if unit is not None else ""
+    factor = _MM_PER_UNIT.get(u or default_unit)
+    if factor is None:
+        if u not in _unknown_units_logged:
+            _unknown_units_logged.add(u)
+            logger.warning("Unknown length unit %r (value %r): dimension ignored", unit, value)
+        return None
+    return v * factor
 
 
 # ─── SOAP getMediumList parser (verbose, full of info) ──────────────

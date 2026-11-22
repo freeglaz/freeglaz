@@ -1820,11 +1820,13 @@ class DeviceOps:
             "source": str             - "ROLL", "MANUAL_FEED", etc.
             "source_label": str       - "Roll", "ManualSheet" (UI)
             "drawer_id": int          - number of the drawer it is in
-            "width_in": float|None    - width in inches if available
             "width_mm": float|None    - width in millimeters
-            "length_in": float|None   - remaining length if available
-            "length_mm": float|None
+            "width_in": float|None    - the same width in inches
+            "length_mm": float|None   - remaining length if available
+            "length_in": float|None
           }
+        Dimensions are converted from the ``Unit`` the printer reports (inches
+        on the Z9, millimetres on the Z9 Pro); an unknown unit gives ``None``.
         or None if no paper loaded.
 
         Searches in all sources: Roll, Sheet (manual feed), etc.
@@ -1850,20 +1852,16 @@ class DeviceOps:
                     if not loaded or not loaded.get("MediaTypeID"):
                         continue
 
-                    # Extract dimensions if available
-                    width_in = None
-                    width_mm = None
-                    w = loaded.get("Width")
-                    if isinstance(w, dict) and w.get("Value") is not None:
-                        width_in = float(w["Value"])
-                        width_mm = width_in * 25.4
+                    # Dimensions, in the unit the printer reports
+                    def _mm(dim):
+                        if not isinstance(dim, dict):
+                            return None
+                        return parsers.dimension_mm(dim.get("Value"), dim.get("Unit"))
 
-                    length_in = None
-                    length_mm = None
-                    rl = loaded.get("RemainingLength")
-                    if isinstance(rl, dict) and rl.get("Value") is not None:
-                        length_in = float(rl["Value"])
-                        length_mm = length_in * 25.4
+                    width_mm = _mm(loaded.get("Width"))
+                    length_mm = _mm(loaded.get("RemainingLength"))
+                    width_in = width_mm / 25.4 if width_mm is not None else None
+                    length_in = length_mm / 25.4 if length_mm is not None else None
 
                     return {
                         "media_id": loaded["MediaTypeID"],

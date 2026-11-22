@@ -66,6 +66,7 @@ from typing import Optional
 
 from lxml import etree
 
+from . import parsers
 from .exceptions import Z9Error, Z9RESTError
 
 logger = logging.getLogger(__name__)
@@ -75,8 +76,8 @@ logger = logging.getLogger(__name__)
 PIWS_NS = "http://www.hp.com/schemas/piws/v2_0"
 _NS = {"piws": PIWS_NS}
 
-# Inches → millimeters conversion for Page dimensions (the XML exposes
-# them as ``Unit="in"`` but the rest of freeglaz reasons in mm).
+# Inches → millimeters. Page dimensions are read with their ``Unit``
+# (``parsers.dimension_mm``); inches is what both the Z9 and the Z9 Pro report.
 INCH_TO_MM = 25.4
 
 
@@ -338,19 +339,19 @@ class JobQueueOps:
         # we only read the first one.
         page1 = pages.find("piws:Page", _NS) if pages is not None else None
 
-        # Dimensions (in inches in the XML → mm)
+        # Dimensions (Value + Unit in the XML → mm)
         page_size = None
         if page1 is not None:
             page_settings = page1.find("piws:Settings", _NS)
             if page_settings is not None:
                 page_size_node = page_settings.find("piws:PageSize", _NS)
                 if page_size_node is not None:
-                    w_in = cls._read_value_unit(page_size_node.find("piws:Width", _NS))
-                    h_in = cls._read_value_unit(page_size_node.find("piws:Height", _NS))
-                    if w_in is not None and h_in is not None:
+                    w_mm = cls._read_mm(page_size_node.find("piws:Width", _NS))
+                    h_mm = cls._read_mm(page_size_node.find("piws:Height", _NS))
+                    if w_mm is not None and h_mm is not None:
                         page_size = {
-                            "width":  round(w_in * INCH_TO_MM, 2),
-                            "height": round(h_in * INCH_TO_MM, 2),
+                            "width":  round(w_mm, 2),
+                            "height": round(h_mm, 2),
                         }
 
         page_settings = page1.find("piws:Settings", _NS) if page1 is not None else None
@@ -393,19 +394,16 @@ class JobQueueOps:
         return (node.findtext(xpath, default=default, namespaces=_NS) or "").strip()
 
     @classmethod
-    def _read_value_unit(cls, node) -> Optional[float]:
+    def _read_mm(cls, node) -> Optional[float]:
         """Read ``<piws:Value>X</piws:Value><piws:Unit>in</piws:Unit>`` into
-        a float. Assumes ``in`` (inches) — this is the only case
-        observed empirically on Z9 jobs."""
+        millimetres, honouring the unit (inches when absent; ``None`` when
+        unknown — cf. ``parsers.dimension_mm``)."""
         if node is None:
             return None
         val_str = cls._findtext(node, "piws:Value")
         if not val_str:
             return None
-        try:
-            return float(val_str)
-        except ValueError:
-            return None
+        return parsers.dimension_mm(val_str, cls._findtext(node, "piws:Unit"))
 
     # ─── Control operations ─────────────────────────────────────────────
 

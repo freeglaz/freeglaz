@@ -28,6 +28,8 @@ Routes :
   POST /api/charts/targen-presets        saves a user preset
   GET  /api/charts/precondition-profiles ordered -c menu (live residents + customs)
   POST /api/charts                       creates a chart (targen OR .ti1) → orchestrate
+                                         (honeycomb for the built-in spectro, or
+                                         printtarg for an external instrument)
   GET  /api/charts                       library (list_charts)
 """
 from __future__ import annotations
@@ -46,6 +48,7 @@ from lib.z9_client import Z9Error
 from lib.z9_client import cache as _cache
 from lib.z9_client import chart_geometry_refonte as G
 from lib.z9_client import printer_model
+from lib.z9_client import printtarg_chart as _ptc
 from lib.z9_client import sol_chart as _sc
 from lib.z9_client import store as _store
 from lib.z9_client import targen_strategies as _tg
@@ -215,6 +218,10 @@ class CreateChartBody(BaseModel):
     c_profile: Optional[str] = None                     # resident:OFF|resident:FULLPAGE|path:…|none
     source: Optional[str] = None
     purpose: str = "profiling"                          # profiling | validation (profcheck b)
+    # Chart layout: "honeycomb" (built-in spectrophotometer, SOL) or "printtarg"
+    # (ArgyllCMS printtarg strips for an external instrument read by chartread).
+    layout: str = "honeycomb"
+    instrument: Optional[str] = None                    # printtarg only (whitelist)
 
 
 def _resolve_precond(z9, c_profile, paper_mediaid, print_ge, workdir, warnings):
@@ -245,6 +252,38 @@ def _resolve_precond(z9, c_profile, paper_mediaid, print_ge, workdir, warnings):
     raise HTTPException(422, detail=f"invalid c_profile: {c_profile}")
 
 
+# printtarg error codes caused by the request (the .ti1, the page) vs by the install
+# (no printtarg). Anything else is a failed self-check of the generated files.
+_PRINTTARG_INPUT_PREFIXES = ("ti1_", "cgats_", "printtarg_failed", "page_too_wide",
+                             "unsupported_", "too_many_strips")
+
+
+def _create_printtarg_chart(body, ti1: Path, tag: Path, serial: str):
+    """printtarg layout (external instrument): same inputs as the honeycomb path (the
+    .ti1, the LIVE resident tag, the serial), a different layout engine. No scanLayout
+    is ever produced, so the built-in spectrophotometer cannot be pointed at it."""
+    try:
+        return _ptc.orchestrate_printtarg_chart(
+            ti1, instrument=body.instrument, media_key=body.media_key,
+            reference_icc_path=tag, gloss_enhancer=body.gloss_enhancer,
+            source=body.source or (f"targen {body.targen_flags}"
+                                   if body.targen_flags else "ti1 provided"),
+            paper={"name": body.paper_name or body.paper_mediaid,
+                   "media_id": body.paper_mediaid,
+                   "gloss_enhancer": body.gloss_enhancer,
+                   "serial": serial},
+        )
+    except _ptc.PrinttargChartError as e:
+        if e.code == "printtarg_not_found":
+            status = 503
+        elif e.code.startswith(_PRINTTARG_INPUT_PREFIXES):
+            status = 422
+        else:
+            status = 500
+        logger.warning("printtarg chart refused: %s", e)
+        raise HTTPException(status, detail={"code": e.code, "message": str(e)})
+
+
 @router.post("")
 def create_chart(request: Request, body: CreateChartBody,
                  z9=Depends(get_chart_z9)) -> dict:
@@ -256,6 +295,17 @@ def create_chart(request: Request, body: CreateChartBody,
         raise HTTPException(422, detail="Provide 'targen_flags' OR 'ti1_text'.")
     if body.purpose not in ("profiling", "validation"):
         raise HTTPException(422, detail="purpose must be 'profiling' or 'validation'")
+    printtarg = body.layout == _ptc.LAYOUT
+    if body.layout not in ("honeycomb", _ptc.LAYOUT):
+        raise HTTPException(422, detail="layout must be 'honeycomb' or 'printtarg'")
+    if printtarg:
+        if body.instrument not in _ptc.INSTRUMENTS:
+            raise HTTPException(422, detail=f"instrument must be one of {list(_ptc.INSTRUMENTS)}")
+        if body.media_key not in _ptc.SUPPORTED_MEDIA:
+            raise HTTPException(422, detail=(f"printtarg charts support {list(_ptc.SUPPORTED_MEDIA)} "
+                                             f"only, not {body.media_key}"))
+    elif body.instrument is not None:
+        raise HTTPException(422, detail="instrument applies to the printtarg layout only")
 
     cap = _sc.format_capacity(body.media_key)
     warnings: list[str] = []
@@ -267,9 +317,10 @@ def create_chart(request: Request, body: CreateChartBody,
             ti1 = workdir / "chart.ti1"
             ti1.write_text(body.ti1_text, encoding="utf-8")
         else:
-            # UNIQUE safeguard : -f ≤ max(format) UPSTREAM
+            # UNIQUE safeguard : -f ≤ max(format) UPSTREAM (honeycomb capacity; printtarg
+            # lays out what it is given and has its own failure modes, reported below)
             n = _tg.extract_f_count(body.targen_flags)
-            if n is not None and cap["max_patches"] and n > cap["max_patches"]:
+            if not printtarg and n is not None and cap["max_patches"] and n > cap["max_patches"]:
                 raise HTTPException(
                     422, detail=(f"-f {n} > max {cap['max_patches']} patches on "
                                  f"{G.MEDIA[body.media_key].name} — reduce -f or "
@@ -310,19 +361,22 @@ def create_chart(request: Request, body: CreateChartBody,
             raise HTTPException(502, detail=f"cannot read Z9 serial number: {e}")
 
         # 3. core (orchestrate) — reused as-is
-        try:
-            res = _sc.orchestrate_free_chart(
-                ti1, body.media_key, body.columns,
-                reference_icc_path=tag, gloss_enhancer=body.gloss_enhancer,
-                source=body.source or (f"targen {body.targen_flags}"
-                                       if body.targen_flags else "ti1 provided"),
-                paper={"name": body.paper_name or body.paper_mediaid,
-                       "media_id": body.paper_mediaid,
-                       "gloss_enhancer": body.gloss_enhancer,
-                       "serial": serial},
-            )
-        except (ValueError, FileNotFoundError) as e:
-            raise HTTPException(422, detail=str(e))
+        if printtarg:
+            res = _create_printtarg_chart(body, ti1, tag, serial)
+        else:
+            try:
+                res = _sc.orchestrate_free_chart(
+                    ti1, body.media_key, body.columns,
+                    reference_icc_path=tag, gloss_enhancer=body.gloss_enhancer,
+                    source=body.source or (f"targen {body.targen_flags}"
+                                           if body.targen_flags else "ti1 provided"),
+                    paper={"name": body.paper_name or body.paper_mediaid,
+                           "media_id": body.paper_mediaid,
+                           "gloss_enhancer": body.gloss_enhancer,
+                           "serial": serial},
+                )
+            except (ValueError, FileNotFoundError) as e:
+                raise HTTPException(422, detail=str(e))
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
@@ -341,6 +395,18 @@ def create_chart(request: Request, body: CreateChartBody,
     except (OSError, ValueError):
         pass
 
+    if printtarg:
+        return {
+            "chart_id": res.chart_id, "chart_dir": res.chart_dir,
+            "n_patches": res.n_patches, "layout": _ptc.LAYOUT, "instrument": body.instrument,
+            "roll_layout": res.roll_layout,
+            "n_pages": res.n_pages, "steps_in_pass": res.steps_in_pass,
+            "total_strips": res.total_strips,
+            "tiff_w_mm": round(res.tiff_w_mm, 1), "tiff_h_mm": round(res.tiff_h_mm, 1),
+            "purpose": body.purpose,
+            "tag": {"icc_name": cm.get("icc_name"), "gloss_enhancer": cm.get("gloss_enhancer")},
+            "warnings": warnings + list(res.warnings),
+        }
     return {
         "chart_id": res.chart_id, "chart_dir": res.chart_dir,
         "n_patches": res.n_patches, "cols": res.cols, "nrows": res.nrows,
@@ -570,21 +636,30 @@ def print_chart(chart_id: str, body: PrintChartBody, request: Request,
     except Exception as e:  # noqa: BLE001 (geometry/preflight/send → clear message)
         raise HTTPException(422, detail=f"Print refused: {e}")
 
-    # ── CRITICAL scan consistency : the scanLayout MUST reflect the EFFECTIVE placement
-    # (centered, on the measured sheet) — otherwise the scan looks for the patches at the
-    # wrong place. We recompute from the SAME geometry as the print (single source).
-    media = G.MEDIA[desc["media"]["format_key"]]
-    layout = G.compute_layout(media, patch_count=desc["geometry"]["patch_count"],
-                              columns=desc["geometry"]["cols"])
-    scan_fields = build_scan_fields_refonte(
-        layout, offset_x_mm=geometry.image_x_mm, offset_y_mm=geometry.image_y_mm)
-    desc["scanLayout"]["fields"] = dict(scan_fields)
-    desc["scanLayout"]["placement"] = {
-        "offset_x_mm": geometry.image_x_mm, "offset_y_mm": geometry.image_y_mm,
-        "mode": "print_pipeline",
-        "note": "EFFECTIVE placement of the print pipeline (compute_geometry); "
-                "scanLayout recomputed consistently with this real placement",
-    }
+    if desc.get("layout") == _ptc.LAYOUT:
+        # External-instrument chart: chartread reads it from its .ti2, the built-in
+        # spectrophotometer never does → there is no scanLayout to recompute. Record
+        # where the pipeline put it, for the record only.
+        desc["print_placement"] = {
+            "offset_x_mm": geometry.image_x_mm, "offset_y_mm": geometry.image_y_mm,
+            "media_source": geometry.media_source, "mode": "print_pipeline",
+        }
+    else:
+        # ── CRITICAL scan consistency : the scanLayout MUST reflect the EFFECTIVE placement
+        # (centered, on the measured sheet) — otherwise the scan looks for the patches at the
+        # wrong place. We recompute from the SAME geometry as the print (single source).
+        media = G.MEDIA[desc["media"]["format_key"]]
+        layout = G.compute_layout(media, patch_count=desc["geometry"]["patch_count"],
+                                  columns=desc["geometry"]["cols"])
+        scan_fields = build_scan_fields_refonte(
+            layout, offset_x_mm=geometry.image_x_mm, offset_y_mm=geometry.image_y_mm)
+        desc["scanLayout"]["fields"] = dict(scan_fields)
+        desc["scanLayout"]["placement"] = {
+            "offset_x_mm": geometry.image_x_mm, "offset_y_mm": geometry.image_y_mm,
+            "mode": "print_pipeline",
+            "note": "EFFECTIVE placement of the print pipeline (compute_geometry); "
+                    "scanLayout recomputed consistently with this real placement",
+        }
 
     # printed_at : the chart enters the library (printed only)
     from datetime import datetime
@@ -631,6 +706,15 @@ def scan_chart(chart_id: str, body: ScanChartBody, z9=Depends(get_chart_z9)) -> 
 
     d = _chart_dir(chart_id)
     desc = json.loads((d / "chart.json").read_text(encoding="utf-8"))
+    # An external-instrument chart has no scanLayout by design: refuse it explicitly,
+    # before any other guard and before any session or SOL act.
+    if desc.get("layout") == _ptc.LAYOUT:
+        raise HTTPException(409, detail={
+            "code": "chart_for_external_instrument",
+            "layout": _ptc.LAYOUT,
+            "message": ("This chart is laid out for an external spectrophotometer "
+                        "(read with chartread), not for the built-in one."),
+        })
     fields = list((desc.get("scanLayout") or {}).get("fields", {}).items())
     if not fields:
         raise HTTPException(422, detail="scanLayout missing from descriptor")

@@ -74,11 +74,12 @@ __all__ = [
 REQUIRED_BINARIES = ("targen", "colprof", "spec2cie", "profcheck")
 
 # Binaries used by OPTIONAL tooling: the Convert module (collink = build a
-# DeviceLink, cctiff = apply it, tiffgamut = image-aware gamut extraction) and
-# the diagnostic gamut bench (xicclu = look colours up through a profile/link).
+# DeviceLink, cctiff = apply it, tiffgamut = image-aware gamut extraction), the
+# diagnostic gamut bench (xicclu = look colours up through a profile/link) and the
+# external-instrument charts (printtarg = strip layout read by chartread).
 # Resolved ON DEMAND via find_argyll_binary and NEVER gate check_argyll's ``ok``
 # — a freeglaz install without them prints and profiles perfectly.
-OPTIONAL_BINARIES = ("collink", "cctiff", "tiffgamut", "xicclu")
+OPTIONAL_BINARIES = ("collink", "cctiff", "tiffgamut", "xicclu", "printtarg")
 
 
 class ArgyllNotFound(RuntimeError):

@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 from lib.z9_client import Z9Client, Z9Error
+from lib.z9_client.client import PRINTABLE_MEDIA_SOURCES
 from lib.z9_client.printing import MECHANICAL_MARGINS_MM, _get_icc_profile_description
 from webapp.backend.services.icc_identity import icc_color_hash
 
@@ -47,12 +48,46 @@ ROLL_ECON_BOTTOM_PAD_MM = 10.0
 ROLL_ECON_MARGIN_MM = 5.0
 
 
+class UnsupportedMediaSource(ValueError):
+    """The loaded paper sits on a source freeglaz does not print on (the Z9
+    Pro's ROLL2, or an unknown one). Raised by ``compute_geometry`` so that no
+    print path can go on with a guessed source."""
+
+
+def print_source_issue(loaded: LoadedPaper) -> Optional[str]:
+    """Blocking message when the loaded paper's source is not printable, else
+    ``None``. No fallback: a source we have not observed printing on is
+    refused, never mapped to another one."""
+    src = (loaded.media_source or "").upper()
+    if src in PRINTABLE_MEDIA_SOURCES:
+        return None
+    return (f"Paper loaded on {loaded.media_source or 'an unknown source'}: freeglaz "
+            f"only prints on the first roll (ROLL) or the manual feed (MANUAL_FEED)")
+
+
+def other_sources_warning(loaded: LoadedPaper) -> Optional[str]:
+    """Non-blocking notice when paper also sits on a source freeglaz does not
+    print on (the Z9 Pro's ROLL2): the print goes to ``loaded.media_source``."""
+    others = [s for s in loaded.other_loaded_sources
+              if (s or "").upper() not in PRINTABLE_MEDIA_SOURCES]
+    if not others:
+        return None
+    return (f"Paper is also loaded on {', '.join(others)}: freeglaz prints on "
+            f"{loaded.media_source} only")
+
+
 def _resolve_media_source_api(loaded: LoadedPaper, override: Optional[str]) -> str:
-    """Return the media_source for the API ('MANUAL_FEED' | 'ROLL' | 'SHEET')."""
+    """Return the media_source for the API ('MANUAL_FEED' | 'ROLL' | 'SHEET').
+
+    Raises ``UnsupportedMediaSource`` when the loaded paper is on a source we
+    do not print on — checked BEFORE the override, which must never redirect
+    a job to another source than the paper's."""
+    issue = print_source_issue(loaded)
+    if issue:
+        raise UnsupportedMediaSource(issue)
     if override and override != "AUTO":
         return "MANUAL_FEED" if override == "MANUALFEED" else override
-    src = (loaded.media_source or "").upper()
-    return src if src in ("MANUAL_FEED", "ROLL", "SHEET") else "MANUAL_FEED"
+    return (loaded.media_source or "").upper()
 
 
 def _lib_margin_key(media_source_api: str) -> str:
@@ -93,6 +128,9 @@ def compute_geometry(
     The printable area is computed from the lib ``MECHANICAL_MARGINS_MM``.
     The directional overflows are computed from the image bounding box
     (at its absolute position) vs this printable area.
+
+    Raises ``UnsupportedMediaSource`` when the paper is on a source freeglaz
+    does not print on (see ``print_source_issue``).
     """
     media_source = _resolve_media_source_api(loaded, params.media_source_override)
     is_roll = media_source == "ROLL"

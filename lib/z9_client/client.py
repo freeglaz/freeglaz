@@ -1779,6 +1779,13 @@ def _xml_escape(text):
             .replace("'", "&apos;"))
 
 
+# Input sources (``IdForPrinting``) freeglaz prints on: the Z9's roll and manual
+# feed ("SHEET" was already accepted, never observed). The Z9 Pro's second roll
+# (ROLL2) is deliberately absent: neither its PJL token nor the paper/profile
+# chain on it has been observed. Paper on it is reported, never printed on.
+PRINTABLE_MEDIA_SOURCES = ("ROLL", "MANUAL_FEED", "SHEET")
+
+
 class DeviceOps:
     """Machine state: inks, loaded paper, alerts, counters."""
 
@@ -1814,25 +1821,44 @@ class DeviceOps:
 
     def loaded_media_info(self):
         """
-        Returns a dict describing the currently loaded paper:
+        Returns a dict describing the loaded paper freeglaz works with:
           {
             "media_id": str           - MediumId hex or short
-            "source": str             - "ROLL", "MANUAL_FEED", etc.
+            "source": str             - "ROLL", "MANUAL_FEED", "ROLL2"...
             "source_label": str       - "Roll", "ManualSheet" (UI)
             "drawer_id": int          - number of the drawer it is in
             "width_mm": float|None    - width in millimeters
             "width_in": float|None    - the same width in inches
             "length_mm": float|None   - remaining length if available
             "length_in": float|None
+            "other_loaded_sources": [str] - the other sources holding paper
           }
-        Dimensions are converted from the ``Unit`` the printer reports (inches
-        on the Z9, millimetres on the Z9 Pro); an unknown unit gives ``None``.
         or None if no paper loaded.
 
-        Searches in all sources: Roll, Sheet (manual feed), etc.
-        Returns the first source with a loaded paper.
+        The FIRST printable source holding paper, in the printer's order
+        (``PRINTABLE_MEDIA_SOURCES``; on the Z9 every source is printable, so
+        this is the first loaded one, as before). When only non-printable
+        sources hold paper (the Z9 Pro's ROLL2), the first of them is returned
+        so the paper is still reported — printing on it is refused downstream.
+        Dimensions are converted from the ``Unit`` the printer reports.
         """
+        sources = self.loaded_media_sources()
+        if not sources:
+            return None
+        chosen = next((s for s in sources
+                       if str(s["source"]).upper() in PRINTABLE_MEDIA_SOURCES),
+                      sources[0])
+        info = dict(chosen)
+        info["other_loaded_sources"] = [s["source"] for s in sources if s is not chosen]
+        return info
+
+    def loaded_media_sources(self):
+        """Every input source holding paper, in the printer's order (drawers,
+        then sources within a drawer), each described like
+        ``loaded_media_info`` (without ``other_loaded_sources``). ``[]`` when
+        nothing is loaded or the payload is not understood."""
         ms = self.media_system()
+        found = []
         try:
             drawers = ms.get("DrawerCollection", {}).get("Drawer", [])
             if not isinstance(drawers, list):
@@ -1860,22 +1886,19 @@ class DeviceOps:
 
                     width_mm = _mm(loaded.get("Width"))
                     length_mm = _mm(loaded.get("RemainingLength"))
-                    width_in = width_mm / 25.4 if width_mm is not None else None
-                    length_in = length_mm / 25.4 if length_mm is not None else None
-
-                    return {
+                    found.append({
                         "media_id": loaded["MediaTypeID"],
                         "source": source.get("IdForPrinting", source_key.upper()),
                         "source_label": source.get("IdForUI", source_key),
                         "drawer_id": drawer_id,
-                        "width_in": width_in,
+                        "width_in": width_mm / 25.4 if width_mm is not None else None,
                         "width_mm": width_mm,
-                        "length_in": length_in,
+                        "length_in": length_mm / 25.4 if length_mm is not None else None,
                         "length_mm": length_mm,
-                    }
+                    })
         except (AttributeError, KeyError, TypeError):
             pass
-        return None
+        return found
 
     def status(self):
         """
@@ -1890,6 +1913,7 @@ class DeviceOps:
             "loaded_paper_source_label": str|None - "Roll", "ManualSheet"
             "loaded_paper_width_mm": float|None
             "loaded_paper_length_mm": float|None
+            "loaded_paper_other_sources": [str] - other sources holding paper
             "ink_levels": {color: percent},
             "ink_warnings": [...],
             "global_status": "Ready"|"WithAlerts"|...,
@@ -1935,6 +1959,8 @@ class DeviceOps:
             "loaded_paper_source_label": media_info["source_label"] if media_info else None,
             "loaded_paper_width_mm": media_info["width_mm"] if media_info else None,
             "loaded_paper_length_mm": media_info["length_mm"] if media_info else None,
+            "loaded_paper_other_sources": (media_info.get("other_loaded_sources") or []
+                                           if media_info else []),
             "ink_levels": ink_levels,
             "ink_warnings": ink_warnings,
             "global_status": global_status,

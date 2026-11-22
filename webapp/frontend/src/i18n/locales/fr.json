@@ -843,7 +843,7 @@
       "result_error": "freeglaz n'a pas pu traiter la réponse de l'imprimante (erreur interne).",
       "serial": "N° de série",
       "untested_warning": "Modèle non testé. freeglaz est validé sur DesignJet Z9. Ce modèle peut fonctionner mais n'est pas garanti — vos retours sont bienvenus.",
-      "partial_warning_z9pro": "Z9 Pro : prise en charge partielle, en cours d'adaptation. La mesure avec le spectrophotomètre intégré est désactivée : elle fait planter la Z9 Pro. Autres limites connues : second rouleau non géré, chartes imprimées tournées de 180°. Vos retours sont bienvenus.",
+      "partial_warning_z9pro": "Z9 Pro : prise en charge partielle, en cours d'adaptation. La mesure avec le spectrophotomètre intégré est désactivée : elle fait planter la Z9 Pro. Autres limites connues : impression sur le second rouleau désactivée, chartes imprimées tournées de 180°. Vos retours sont bienvenus.",
       "name_label": "Nom (optionnel)",
       "name_placeholder": "ex. Z9 atelier",
       "save": "Enregistrer",

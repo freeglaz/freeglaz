@@ -98,6 +98,7 @@ def _extract_loaded_paper(
             "loaded_paper_source_label": None,
             "loaded_paper_width_mm": None,
             "loaded_paper_length_mm": None,
+            "loaded_paper_other_sources": [],
         }
     loaded_id = media_info.get("media_id")
     paper = paper_lookup(loaded_id) if (paper_lookup and loaded_id) else None
@@ -108,6 +109,7 @@ def _extract_loaded_paper(
         "loaded_paper_source_label": media_info.get("source_label"),
         "loaded_paper_width_mm": media_info.get("width_mm"),
         "loaded_paper_length_mm": media_info.get("length_mm"),
+        "loaded_paper_other_sources": list(media_info.get("other_loaded_sources") or []),
     }
 
 

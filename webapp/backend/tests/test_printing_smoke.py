@@ -283,6 +283,38 @@ def test_preview_roll_economy_mode(client, tmp_path):
     assert data["can_print"] is True
 
 
+def test_preview_paper_on_roll2_blocks(client, tmp_path):
+    """Z9 Pro second roll: never printed on (unobserved) — blocked, no
+    fallback to MANUAL_FEED, no geometry computed for it."""
+    app.dependency_overrides[get_z9] = lambda: _fake_z9({
+        "loaded_paper_id": "P3", "loaded_paper_name": "FakeRoll2",
+        "loaded_paper_source": "ROLL2",
+        "loaded_paper_width_mm": 1117.6, "loaded_paper_length_mm": 0.0,
+    })
+    fid = _upload(client, _make_tiff(tmp_path, 200.0, 300.0))
+    data = client.post("/api/print/preview", json={"file_id": fid, "params": {}}).json()
+    assert data["can_print"] is False
+    assert any("ROLL2" in b for b in data["blocking_issues"])
+    assert data["geometry"]["sheet_width_mm"] == 0.0          # inert geometry
+
+
+def test_preview_roll1_with_roll2_loaded_prints_on_roll1(client, tmp_path):
+    app.state.paper_icc_cache[("P2", "FULLPAGE", "PRINTER_RGB")] = PaperIccInfo(
+        name="RollProfile", md5=None,
+    )
+    app.dependency_overrides[get_z9] = lambda: _fake_z9({
+        "loaded_paper_id": "P2", "loaded_paper_name": "FakeRoll",
+        "loaded_paper_source": "ROLL",
+        "loaded_paper_width_mm": 609.6, "loaded_paper_length_mm": None,
+        "loaded_paper_other_sources": ["ROLL2"],
+    })
+    fid = _upload(client, _make_tiff(tmp_path, 200.0, 300.0))
+    data = client.post("/api/print/preview", json={"file_id": fid, "params": {}}).json()
+    assert data["can_print"] is True
+    assert data["geometry"]["media_source"] == "ROLL"
+    assert any("ROLL2" in w for w in data["warnings"])
+
+
 def test_preview_unknown_file_id_returns_404(client):
     app.dependency_overrides[get_z9] = lambda: _fake_z9(loaded=None)
     fake = "00000000-0000-4000-8000-000000000000"

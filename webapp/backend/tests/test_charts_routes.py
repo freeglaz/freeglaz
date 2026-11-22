@@ -20,7 +20,7 @@ MID = "9E489F02AE027F9DD93191D872728C1D"
 SERIAL = "CNXXXXXXXX"
 
 
-def _fake_z9(only_ge=None, loaded=True, model="HP DesignJet Z9 24in"):
+def _fake_z9(only_ge=None, loaded=True, model="HP DesignJet Z9 24in", source="MANUAL_FEED"):
     """Z9 mock: export_icc writes an ICC from the assets. only_ge=set -> only those GE
     exist. loaded=False -> device.status() with no paper loaded (-> 409). ``model`` =
     the ModelName the identification reports (the scan is allowed on a Z9 only)."""
@@ -38,7 +38,7 @@ def _fake_z9(only_ge=None, loaded=True, model="HP DesignJet Z9 24in"):
     paper.capabilities.return_value = {}
     device = MagicMock()
     device.status.return_value = ({
-        "loaded_paper_id": MID, "loaded_paper_source": "MANUAL_FEED",
+        "loaded_paper_id": MID, "loaded_paper_source": source,
         "loaded_paper_width_mm": 297.0, "loaded_paper_length_mm": 420.0,
         "loaded_paper_name": "Baryta test",
         "identification": {"SerialNumber": SERIAL},
@@ -268,6 +268,19 @@ def test_print_no_paper_loaded(client):
     app.dependency_overrides[charts_routes.get_chart_z9] = lambda: _fake_z9(loaded=False)
     r = client.post(f"/api/charts/{cid}/print", json={})
     assert r.status_code == 409
+
+
+def test_print_chart_refused_on_roll2(client, monkeypatch):
+    """Z9 Pro second roll: the chart is not printed (no fallback source)."""
+    cid = _create_a3(client)
+    app.dependency_overrides[charts_routes.get_chart_z9] = lambda: _fake_z9(source="ROLL2")
+
+    def _boom(self, job, **kw):
+        raise AssertionError("nothing must be sent")
+    monkeypatch.setattr("lib.z9_client.printing.PrintOps.send", _boom)
+    r = client.post(f"/api/charts/{cid}/print", json={"quality": "HIGH"})
+    assert r.status_code == 409
+    assert "ROLL2" in r.json()["detail"]
 
 
 def test_print_happy(client, monkeypatch):

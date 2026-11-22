@@ -110,16 +110,24 @@ def print_preview(
     eff_w_mm, eff_h_mm = print_geometry.oriented_dims(
         params.orientation, file_info.width_mm, file_info.height_mm,
     )
+    geometry = None
     if loaded is not None:
-        geometry = print_geometry.compute_geometry(
-            loaded, params, eff_w_mm, eff_h_mm,
-        )
-        g_blocking, g_warnings = print_geometry.detect_geometry_issues(
-            geometry, geometry.media_source,
-        )
-        blocking.extend(g_blocking)
-        warnings.extend(g_warnings)
-    else:
+        other = print_geometry.other_sources_warning(loaded)
+        if other:
+            warnings.append(other)
+        try:
+            geometry = print_geometry.compute_geometry(
+                loaded, params, eff_w_mm, eff_h_mm,
+            )
+        except print_geometry.UnsupportedMediaSource as e:
+            blocking.append(str(e))
+        else:
+            g_blocking, g_warnings = print_geometry.detect_geometry_issues(
+                geometry, geometry.media_source,
+            )
+            blocking.extend(g_blocking)
+            warnings.extend(g_warnings)
+    if geometry is None:
         geometry = _empty_geometry(eff_w_mm, eff_h_mm)
 
     # ICC actif (firmware-authoritative via SOAP get_profile, cached)

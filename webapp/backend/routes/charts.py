@@ -545,7 +545,10 @@ def print_chart(chart_id: str, body: PrintChartBody, request: Request,
     gloss = "FULLPAGE" if (cm.get("gloss_enhancer") == "FULLPAGE") else "OFF"
     params = PrintParams(gloss_enhancer=gloss, quality=body.quality, rendermode="COLOR",
                          offset_x_mm=body.offset_x_mm, offset_y_mm=body.offset_y_mm)
-    geometry = print_geometry.compute_geometry(loaded, params, info.width_mm, info.height_mm)
+    try:
+        geometry = print_geometry.compute_geometry(loaded, params, info.width_mm, info.height_mm)
+    except print_geometry.UnsupportedMediaSource as e:
+        raise HTTPException(409, detail=str(e))
     g_blocking, _ = print_geometry.detect_geometry_issues(geometry, geometry.media_source)
     if g_blocking:
         raise HTTPException(422, detail="Chart outside printable area: " + " ; ".join(g_blocking))

@@ -71,6 +71,7 @@ def _assembled_status() -> dict:
         "loaded_paper_source_label": "Roll",
         "loaded_paper_width_mm": _DEMO_ROLL_WIDTH_MM,
         "loaded_paper_length_mm": None,  # a roll has no fixed length
+        "loaded_paper_other_sources": [],
         "ink_levels": {c: lvl for c, lvl in _DEMO_INKS},
         "ink_warnings": [],
         "global_status": "Ready",

@@ -625,3 +625,39 @@ def test_http_use_mock_print_flag_forces_mock_worker(tmp_path, monkeypatch):
         assert sorted(seen_send_progress) == [50, 75, 95]
 
     app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_run_real_job_refuses_paper_on_roll2(tmp_path, monkeypatch):
+    """Z9 Pro second roll: setup fails before anything is sent (no fallback)."""
+    monkeypatch.setattr(
+        "webapp.backend.services.file_storage.ROOT", tmp_path / "storage",
+    )
+    fid, dir_path = file_storage.new_storage()
+    _make_tiff_16bit(dir_path / "source.tif")
+
+    store = JobStore()
+    state = store.create("J-ROLL2", fid, PrintParams())
+    fake_z9 = _fake_z9_for_real(loaded={
+        "loaded_paper_id": "P", "loaded_paper_name": "FakePaper",
+        "loaded_paper_source": "ROLL2",
+        "loaded_paper_width_mm": 1117.6, "loaded_paper_length_mm": 0.0,
+    })
+    send_called = {"flag": False}
+
+    def _spy(*a, **kw):
+        send_called["flag"] = True
+    fake_z9.print.send = _spy
+
+    await run_real_job(
+        fid, state.params,
+        sink=lambda e: store.publish("J-ROLL2", e),
+        z9=fake_z9, capabilities_cache={},
+    )
+
+    final = store.get("J-ROLL2")
+    assert final.status == JobStage.ERROR
+    # The refusal itself, not any error that happens to mention ROLL2.
+    assert any("ROLL2" in e.message and "only prints on the first roll" in e.message
+               for e in final.events)
+    assert send_called["flag"] is False

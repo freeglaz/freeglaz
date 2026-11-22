@@ -24,6 +24,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from lib.z9_client import Z9Client, Z9Error
 from lib.z9_client import printer_model
+from lib.z9_client.client import PRINTABLE_MEDIA_SOURCES
 from lib.z9_client.exceptions import Z9ConnectionError
 
 from webapp.backend.models import (
@@ -130,6 +131,10 @@ def build_loaded_paper(
     width_mm = dashboard.get("loaded_paper_width_mm")
     length_mm = dashboard.get("loaded_paper_length_mm")
     is_roll = media_source.upper() == "ROLL"
+    if media_source.upper() not in PRINTABLE_MEDIA_SOURCES:
+        # A source freeglaz does not print on (the Z9 Pro's ROLL2): report the
+        # paper, but no dimensions — never present it as a sheet of its width.
+        width_mm = length_mm = None
 
     # capabilities() is expensive (SOAP getMediumList) — we cache per paper_id
     caps = caps_cache.get(loaded_id)
@@ -151,6 +156,7 @@ def build_loaded_paper(
         sheet_width_mm=None if is_roll else width_mm,
         sheet_height_mm=None if is_roll else length_mm,
         roll_width_mm=width_mm if is_roll else None,
+        other_loaded_sources=list(dashboard.get("loaded_paper_other_sources") or []),
         # Default-False for GE: unknown capability ⇒ not offered (aligned with
         # the pipeline guard). max_detail/profiling keep the permissive default.
         gloss_enhancer_supported=_bool_default(

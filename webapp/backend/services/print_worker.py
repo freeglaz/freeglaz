@@ -250,9 +250,12 @@ async def run_real_job(
         eff_w_mm, eff_h_mm = print_geometry.oriented_dims(
             params.orientation, file_info.width_mm, file_info.height_mm,
         )
-        geometry = print_geometry.compute_geometry(
-            loaded, params, eff_w_mm, eff_h_mm,
-        )
+        try:
+            geometry = print_geometry.compute_geometry(
+                loaded, params, eff_w_mm, eff_h_mm,
+            )
+        except print_geometry.UnsupportedMediaSource as e:
+            raise Z9PrintError(str(e)) from e
         g_blocking, _ = print_geometry.detect_geometry_issues(
             geometry, geometry.media_source,
         )

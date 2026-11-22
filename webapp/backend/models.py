@@ -52,6 +52,9 @@ class LoadedPaper(BaseModel):
     sheet_width_mm: Optional[float] = None
     sheet_height_mm: Optional[float] = None
     roll_width_mm: Optional[float] = None
+    # Other input sources holding paper (IdForPrinting, e.g. ["ROLL2"]). freeglaz
+    # prints on ``media_source`` only; reported so the UI can say so.
+    other_loaded_sources: list[str] = []
 
     gloss_enhancer_supported: bool = False  # default-False: unknown ⇒ GE not offered
     max_detail_supported: bool = True

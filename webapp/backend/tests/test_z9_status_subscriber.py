@@ -356,7 +356,7 @@ def test_partial_fetch_matches_full_fetch_format(reference_fixture):
         k: v for k, v in full_status.items() if k.startswith("loaded_paper_")
     }
     assert extracted_paper == expected_paper_sub, (
-        "_extract_loaded_paper doit produire les 6 clés loaded_paper_* "
+        "_extract_loaded_paper doit produire les 7 clés loaded_paper_* "
         "au format strictement identique à device.status()"
     )
 
@@ -366,8 +366,9 @@ def test_partial_fetch_matches_full_fetch_format(reference_fixture):
 
 
 def test_extract_loaded_paper_handles_no_paper():
-    """media_info=None (no paper loaded) → 6 keys set to None."""
+    """media_info=None (no paper loaded) → 6 keys set to None, no other source."""
     out = _extract_loaded_paper(None, lambda _: None)
+    assert out.pop("loaded_paper_other_sources") == []
     assert all(v is None for v in out.values())
     assert set(out.keys()) == {
         "loaded_paper_id", "loaded_paper_name",

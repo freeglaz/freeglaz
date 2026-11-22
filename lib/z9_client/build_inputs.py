@@ -37,6 +37,15 @@ recoverable from the manifest (ranges per source + raw sha256 + applied rejectio
 Policies: ``legacy`` reproduces the historical behaviour exactly (base ``last``
 ignores the current chart's rejections — now REPORTED as not applied); ``apply_all``
 applies them in every mode (defined, not enabled yet).
+
+Measurement identity (``measurement_identity``): readings are combined (``average`` of
+the current chart's scans, scans of additional charts) only when every USED scan has a
+compatible identity — same method, instrument model, condition, spectral grid and
+calibration standard. :func:`plan_inputs` refuses otherwise (MeasurementIdentityError)
+and :func:`materialize` checks again before writing. Scans excluded by their role, or
+not used by base ``last``, are never checked: alternatives may stay in a chart. Source
+profiles are not tracked: their extracted measurements are relabelled by the
+extraction (``profiling.build_cti3``), so their header is no provenance.
 """
 from __future__ import annotations
 
@@ -52,6 +61,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Mapping, Optional, Sequence
 
+from . import measurement_identity as mi
 from .multipass import concat_ti3, filter_ti3_text, parse_ti3
 
 BUILD_INPUTS_VERSION = 1
@@ -72,6 +82,28 @@ class BuildInputsError(ValueError):
 class SourceChangedError(BuildInputsError):
     """A source file changed between planning and materialization: the build is aborted
     rather than built from data that is not the planned one."""
+
+
+class MeasurementIdentityError(BuildInputsError):
+    """The used scans cannot be combined, or one of them has an invalid measurement record.
+    ``code``: measurement_identity_incompatible | measurement_identity_insufficient |
+    measurement_record_invalid. :meth:`to_detail` is the stable API payload."""
+
+    def __init__(self, code: str, message: str, *, decision: Optional[mi.CombinationDecision] = None,
+                 scans: Sequence[dict] = (), record_error: Optional[dict] = None,
+                 remedies: Sequence[str] = ()):
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.message = message
+        self.decision = decision
+        self.scans = list(scans)
+        self.record_error = record_error
+        self.remedies = list(remedies)
+
+    def to_detail(self) -> dict:
+        return {"code": self.code, "message": self.message, "scans": self.scans,
+                "decision": self.decision.to_dict() if self.decision else None,
+                "record_error": self.record_error, "remedies": self.remedies}
 
 
 # ── snapshot & request ──────────────────────────────────────────────────────
@@ -109,10 +141,16 @@ class PlannedScan:
     path: Path
     sha256: str
     rejections_applied: tuple[str, ...]
+    identity: Optional[mi.MeasurementIdentity] = field(default=None, compare=False)
+    record_sha256: Optional[str] = None           # sha256 of measurements/<stem>.json, if any
 
     @property
     def filtered(self) -> bool:
         return bool(self.rejections_applied)
+
+    @property
+    def label(self) -> str:
+        return f"{self.chart_id}/{self.scan}"
 
 
 @dataclass(frozen=True)
@@ -145,6 +183,7 @@ class InputPlan:
     colprof_flags: tuple[str, ...]
     flag_files: tuple[tuple[str, str], ...]       # (path, sha256) of files named by the flags
     build_inputs_version: int = BUILD_INPUTS_VERSION
+    identity_decision: Optional[mi.CombinationDecision] = field(default=None, compare=False)
 
     @property
     def scans(self) -> tuple[PlannedScan, ...]:
@@ -159,23 +198,31 @@ class InputPlan:
             "profiles": [[str(p.path), p.sha256] for p in self.profiles],
             "flags": list(self.colprof_flags), "flag_files": [list(x) for x in self.flag_files],
         }
+        records = [[s.chart_id, s.scan, s.record_sha256] for s in self.scans if s.record_sha256]
+        if records:              # only when a record exists: fingerprints of SOL builds unchanged
+            core["records"] = records
         return "sha256:" + hashlib.sha256(json.dumps(core, sort_keys=True).encode()).hexdigest()
 
     def to_dict(self) -> dict:
         scan = lambda s: {"chart_id": s.chart_id, "role": s.role, "scan": s.scan, "sha256": s.sha256,  # noqa: E731
-                          "rejections_applied": list(s.rejections_applied)}
+                          "rejections_applied": list(s.rejections_applied),
+                          "measurement_identity": s.identity.to_dict() if s.identity else None,
+                          "measurement_record_sha256": s.record_sha256}
         note = lambda n: {"chart_id": n.chart_id, "scan": n.scan, "sids": list(n.sids), "reason": n.reason}  # noqa: E731
         return {
             "build_inputs_version": self.build_inputs_version, "policy": self.policy, "chart_id": self.chart_id,
             "base_requested": self.base_requested, "base_effective": self.base_effective,
             "current_scans": [scan(s) for s in self.current], "extra_scans": [scan(s) for s in self.extras],
-            "source_profiles": [{"index": p.index, "path": str(p.path), "name": p.name, "sha256": p.sha256}
+            "source_profiles": [{"index": p.index, "path": str(p.path), "name": p.name, "sha256": p.sha256,
+                                 "measurement_identity": None, "identity_tracked": False}
                                 for p in self.profiles],
             "rejections_not_applied": [note(n) for n in self.rejections_not_applied],
             "rejections_unmatched": [note(n) for n in self.rejections_unmatched],
             "colprof_flags": list(self.colprof_flags),
             "colprof_flag_files": [{"path": p, "sha256": h} for p, h in self.flag_files],
             "inputs_fingerprint": self.fingerprint,
+            "measurement_compatibility": (self.identity_decision.to_dict()
+                                          if self.identity_decision else None),
         }
 
 
@@ -200,6 +247,30 @@ def _scan_sample_ids(path: Path, chart_id: str, scan: str) -> set[str]:
     return {r[i] for r in rows if i < len(r)}
 
 
+def _scan_identity(snap: ChartSnapshot, scan: str, path: Path, data: bytes, role: str):
+    """(identity, record sha256) of a used scan, from the bytes that were hashed."""
+    rec = mi.record_path(path)
+    rec_bytes = rec.read_bytes() if rec.is_file() else None
+    try:
+        ident = mi.identity_from_bytes(data, rec_bytes, chart_id=snap.chart_id)
+    except mi.MeasurementRecordError as e:
+        raise MeasurementIdentityError(
+            "measurement_record_invalid", f"measurement record of {snap.chart_id}/{scan}: {e.message}",
+            scans=[{"chart_id": snap.chart_id, "scan": scan, "role": role}],
+            record_error={"code": e.code, "message": e.message},
+            remedies=["remove_or_fix_the_record", "exclude_scan"]) from None
+    except ValueError as e:
+        try:
+            parse_ti3(data.decode("ascii", errors="replace"))
+        except (ValueError, IndexError):
+            # unreadable by every reader: no identity, and the historical path refuses it
+            # (copy row count or concatenation) with its usual message — it can never be
+            # combined with anything
+            return None, (_sha256_bytes(rec_bytes) if rec_bytes is not None else None)
+        raise BuildInputsError(f"unreadable ti3 {snap.chart_id}/{scan}: {e}") from None
+    return ident, (_sha256_bytes(rec_bytes) if rec_bytes is not None else None)
+
+
 def _plan_chart(snap: ChartSnapshot, role: str, used: Sequence[str], apply: bool,
                 not_applied_reason_for_used: Optional[str],
                 notes: list, unmatched: list) -> list[PlannedScan]:
@@ -209,7 +280,9 @@ def _plan_chart(snap: ChartSnapshot, role: str, used: Sequence[str], apply: bool
     out: list[PlannedScan] = []
     for scan in used:
         path = snap.scan_path(scan)
-        sha = _sha256_file(path)
+        data = Path(path).read_bytes()
+        sha = _sha256_bytes(data)
+        ident, rec_sha = _scan_identity(snap, scan, path, data, role)
         reg = tuple(sorted({str(x) for x in snap.rejected.get(scan, ())}, key=_natural_key))
         applied: tuple[str, ...] = ()
         if reg and apply:
@@ -220,7 +293,7 @@ def _plan_chart(snap: ChartSnapshot, role: str, used: Sequence[str], apply: bool
                 unmatched.append(RejectionNote(snap.chart_id, scan, missing, "unmatched"))
         elif reg:
             notes.append(RejectionNote(snap.chart_id, scan, reg, not_applied_reason_for_used))
-        out.append(PlannedScan(snap.chart_id, role, scan, path, sha, applied))
+        out.append(PlannedScan(snap.chart_id, role, scan, path, sha, applied, ident, rec_sha))
     used_set = set(used)
     for scan in sorted(snap.rejected, key=_natural_key):
         reg = tuple(sorted({str(x) for x in snap.rejected[scan]}, key=_natural_key))
@@ -253,6 +326,7 @@ def plan_inputs(current: ChartSnapshot, extras: Sequence[ChartSnapshot],
             raise BuildInputsError(f"source chart {snap.chart_id}: no included scan")
         # additional charts contribute ALL their included scans with THEIR rejections (both policies)
         ext.extend(_plan_chart(snap, "extra", list(xinc), True, None, notes, unmatched))
+    decision = check_identities(cur + ext)
     profiles = tuple(PlannedProfile(i, Path(p), Path(p).name, _sha256_file(Path(p)))
                      for i, p in enumerate(request.source_profiles))
     flag_files = tuple((tok, _sha256_file(Path(tok))) for tok in request.colprof_flags
@@ -260,7 +334,36 @@ def plan_inputs(current: ChartSnapshot, extras: Sequence[ChartSnapshot],
     return InputPlan(chart_id=current.chart_id, policy=request.policy, base_requested=request.base,
                      base_effective=base_eff, current=tuple(cur), extras=tuple(ext), profiles=profiles,
                      rejections_not_applied=tuple(notes), rejections_unmatched=tuple(unmatched),
-                     colprof_flags=tuple(request.colprof_flags), flag_files=flag_files)
+                     colprof_flags=tuple(request.colprof_flags), flag_files=flag_files,
+                     identity_decision=decision)
+
+
+def check_identities(scans: Sequence[PlannedScan]) -> mi.CombinationDecision:
+    """Combination decision of the USED scans; raises MeasurementIdentityError when they
+    would be combined (two or more) without being compatible. One scan alone is never
+    refused here (nothing is averaged)."""
+    # A scan without identity is unreadable: it never reaches colprof (see _scan_identity).
+    decision = mi.check_combination([(s.label, s.identity) for s in scans if s.identity is not None])
+    if decision.combined and not decision.compatible:
+        incompatible = decision.status == mi.INCOMPATIBLE
+        involved = {lbl for la, lb, _ in decision.conflicts for lbl in (la, lb)}
+        roles = {s.role for s in scans if s.label in involved}
+        remedies = (["exclude_scan", "use_base_last"] if "current" in roles and
+                    sum(1 for s in scans if s.role == "current") > 1 else [])
+        if "extra" in roles:
+            remedies.append("remove_extra_chart")
+        what = ", ".join(f"{la} vs {lb}: " + ", ".join(d.code for d in c.differences)
+                         for la, lb, c in decision.conflicts)
+        raise MeasurementIdentityError(
+            "measurement_identity_incompatible" if incompatible else "measurement_identity_insufficient",
+            ("these measurements were not taken in the same conditions and cannot be combined"
+             if incompatible else "the identity of these measurements is not known well enough "
+             "to combine them") + f" ({what})",
+            decision=decision,
+            scans=[{"chart_id": s.chart_id, "scan": s.scan, "role": s.role,
+                    "identity": s.identity.to_dict() if s.identity else None} for s in scans],
+            remedies=remedies)
+    return decision
 
 
 # ── materialization ─────────────────────────────────────────────────────────
@@ -310,8 +413,19 @@ def materialize(plan: InputPlan, workdir: Path,
     ``src_profile_<i>.ti3``, ``<chart>_multisource.ti3``."""
     workdir = Path(workdir)
     scan_files: dict[tuple[str, str], Path] = {}
+    checked: list[PlannedScan] = []
     for s in plan.scans:
         data = _frozen_bytes(s.path, s.sha256, f"scan {s.chart_id}/{s.scan}")
+        if s.identity is not None:             # planned by plan_inputs: the record is frozen too
+            rec = mi.record_path(s.path)
+            if (_sha256_file(rec) if rec.is_file() else None) != s.record_sha256:
+                raise SourceChangedError(f"measurement record of {s.chart_id}/{s.scan} changed "
+                                         "since the build started")
+        else:                                  # a plan built by hand: identity from the frozen bytes
+            snap = ChartSnapshot(s.chart_id, Path(s.path).parent.parent, (s.scan,))
+            ident, rec_sha = _scan_identity(snap, s.scan, s.path, data, s.role)
+            s = PlannedScan(s.chart_id, s.role, s.scan, s.path, s.sha256, s.rejections_applied, ident, rec_sha)
+        checked.append(s)
         d = workdir / "charts" / s.chart_id
         d.mkdir(parents=True, exist_ok=True)
         stem = Path(s.scan).stem
@@ -323,6 +437,7 @@ def materialize(plan: InputPlan, workdir: Path,
             dst = d / f"{stem}.ti3"
             dst.write_bytes(data)
         scan_files[(s.chart_id, s.scan)] = dst
+    check_identities(checked)                 # never combine what the plan would refuse
 
     layout: list[dict] = []
     cur_files = [scan_files[(s.chart_id, s.scan)] for s in plan.current]

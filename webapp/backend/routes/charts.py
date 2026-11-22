@@ -45,8 +45,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from lib.z9_client import Z9Error
+from lib.z9_client.build_inputs import MeasurementIdentityError
 from lib.z9_client import cache as _cache
 from lib.z9_client import chart_geometry_refonte as G
+from lib.z9_client import measurement_identity as _mi
 from lib.z9_client import printer_model
 from lib.z9_client import printtarg_chart as _ptc
 from lib.z9_client import sol_chart as _sc
@@ -85,6 +87,26 @@ def get_formats() -> dict:
             "rows_per_m": cap.get("rows_per_m"),
         })
     return {"formats": out}
+
+
+# ─── GET printtarg options (external instrument charts) ──────────────────────
+@router.get("/printtarg-options")
+def get_printtarg_options() -> dict:
+    """What a printtarg chart can be created with: instruments, printtarg selectors,
+    media, presets and roll composition, all derived from lib.z9_client.printtarg_chart
+    (no copy here), plus whether printtarg and chartread are installed (path resolution
+    only: no binary is run, no printer and no instrument is contacted)."""
+    from lib.z9_client.argyll import find_argyll_binary
+    opts = _ptc.supported_options()
+    models = _mi.INSTRUMENT_MODELS
+    for inst in opts["instruments"]:
+        m = models.get(inst["key"])
+        inst["measurement"] = ({"method": m.method, "conditions": list(m.conditions),
+                                "filter_selectable": m.filter_selectable} if m else None)
+    return {**opts,
+            "binaries": {name: {"available": find_argyll_binary(name) is not None}
+                         for name in ("printtarg", "chartread")},
+            "requires_printer_for_measurement": False}
 
 
 # ─── targen : help + user presets ────────────────────────────────────────────
@@ -527,6 +549,34 @@ def _included_ti3_paths(chart_dir: Path) -> list[Path]:
     return [p for p in _raw_ti3_paths(chart_dir) if _scan_role(st, p.name) == "included"]
 
 
+def _scans_comparability(paths: list) -> Optional[dict]:
+    """Can these scans be compared as REPEATED readings (concordance ΔE, QC matrix)?
+    Same measurement identity required: 409 ``scans_not_comparable`` when a known field
+    differs (another instrument, another condition…), 409 ``measurement_record_invalid``
+    for a bad record. An identity that is only insufficient (hand-dropped ti3) is
+    compared, the returned decision says so: this view is a diagnostic, it produces no
+    data. None when a ti3 is unreadable (the comparison reports it as before)."""
+    members = []
+    for p in paths:
+        try:
+            members.append((p.name, _mi.read_identity(p)))
+        except _mi.MeasurementRecordError as e:
+            raise HTTPException(409, detail={
+                "code": "measurement_record_invalid", "scan": p.name,
+                "message": f"measurement record of {p.name}: {e.message}",
+                "record_error": {"code": e.code, "message": e.message}})
+        except (OSError, ValueError):
+            return None
+    decision = _mi.check_combination(members)
+    if decision.status == _mi.INCOMPATIBLE:
+        raise HTTPException(409, detail={
+            "code": "scans_not_comparable",
+            "message": "these scans were not measured the same way (instrument or condition): "
+                       "they are not repeated readings of one measurement",
+            "decision": decision.to_dict(), "remedies": ["exclude_scan"]})
+    return decision.to_dict()
+
+
 def _build_request_record(body, flags: list, policy: str) -> dict:
     """The build REQUEST as recorded in the manifest (what a rebuild would replay)."""
     return {"base": body.profile_base, "extra_chart_ids": list(body.extra_chart_ids),
@@ -841,10 +891,13 @@ def scan_chart_delta(chart_id: str) -> dict:
     paths = _included_ti3_paths(d)
     if len(paths) < 2:
         raise HTTPException(409, detail="at least 2 included scans required to compare")
+    compat = _scans_comparability(paths)          # same measurement identity, or 409
     try:
-        return scan_delta.compute_scan_delta(paths)
+        out = scan_delta.compute_scan_delta(paths)
     except (ValueError, OSError) as e:
         raise HTTPException(422, detail=f"ΔE comparison failed: {e}")
+    out["measurement_compatibility"] = compat
+    return out
 
 
 class ScanRoleBody(BaseModel):
@@ -958,8 +1011,13 @@ def _exclusion_impact(chart_id: str, d: Path, state: dict, ti3: str, sid: str,
         extras.append(_chart_snapshot(x, _chart_dir(x), _read_scan_state(_chart_dir(x))))
     snap_after = _chart_snapshot(chart_id, d, {**state, "rejected_readings": after})
     bases = {}
+    unavailable = {}
     for base in ("last", "average"):
-        plan = bi.plan_inputs(snap_after, extras, bi.BuildRequest(base=base, policy="apply_all"))
+        try:
+            plan = bi.plan_inputs(snap_after, extras, bi.BuildRequest(base=base, policy="apply_all"))
+        except bi.MeasurementIdentityError as e:
+            unavailable[base] = e.code             # this base cannot be built at all: no impact
+            continue
         if base == "average" and plan.base_effective != "average":
             continue                                          # fewer than 2 included scans
         used = any(s.chart_id == chart_id and s.scan == ti3 for s in plan.current)
@@ -975,7 +1033,7 @@ def _exclusion_impact(chart_id: str, d: Path, state: dict, ti3: str, sid: str,
     return {"reading": {"chart_id": chart_id, "scan": ti3, "sid": sid, "rgb": list(rgb), "position": pos,
                         "corner": corner},
             "other_compatible_readings_in_chart": others, "chart_level_refusal": refusal,
-            "level": level, "bases": bases}
+            "level": level, "bases": bases, "bases_unavailable": unavailable}
 
 
 @router.post("/{chart_id}/scans/{ti3}/readings/{sample_id}/exclusion")
@@ -1039,11 +1097,14 @@ def scan_qc(chart_id: str) -> dict:
     paths = _included_ti3_paths(d)
     if len(paths) < 2:
         raise HTTPException(409, detail="at least 2 included scans required for the QC view")
+    compat = _scans_comparability(paths)          # same measurement identity, or 409
     rmap = _rejected_map(_read_scan_state(d))
     try:
-        return scan_delta.compute_scan_qc(paths, rmap)
+        out = scan_delta.compute_scan_qc(paths, rmap)
     except (ValueError, OSError) as e:
         raise HTTPException(422, detail=f"QC view unavailable: {e}")
+    out["measurement_compatibility"] = compat
+    return out
 
 
 @router.get("/{chart_id}/scans/{ti3}/patches")
@@ -1137,7 +1198,7 @@ def scan_measure_qc(chart_id: str, ti3: str) -> dict:
 
 @router.delete("/{chart_id}/scans/{ti3}")
 def delete_scan(chart_id: str, ti3: str) -> dict:
-    """PERMANENTLY deletes a measurement set (ti3 + cgats) — DESTRUCTIVE sibling of "exclude"
+    """PERMANENTLY deletes a measurement set (ti3 + cgats + measurement record) — DESTRUCTIVE sibling of "exclude"
     (exclude KEEPS the ti3, reversible ; delete ERASES it, IRREVERSIBLE). UI-side confirmation.
     Cleans the role + rejections of the sidecar for this ti3 (no dangling reference). The ICC profile
     (SEPARATE file, embedded measurements) is NOT touched, but becomes "stale" if it was built
@@ -1151,6 +1212,7 @@ def delete_scan(chart_id: str, ti3: str) -> dict:
     qc_service.purge(meas / ti3)                                  # derived QC cache of this scan
     (meas / ti3).unlink(missing_ok=True)
     (meas / f"{Path(ti3).stem}.cgats").unlink(missing_ok=True)   # twin cgats (best-effort)
+    _mi.record_path(meas / ti3).unlink(missing_ok=True)          # twin measurement record
     st = _read_scan_state(d)
     st["roles"].pop(ti3, None)
     st["rejected_readings"].pop(ti3, None)
@@ -1280,6 +1342,8 @@ def profile_chart(chart_id: str, body: ProfileChartBody) -> dict:
     if body.expected_fingerprint:
         try:
             ctx = _prepare_build(chart_id, body)
+        except MeasurementIdentityError as e:
+            raise _identity_refusal(e)
         except ValueError as e:
             raise HTTPException(422, detail=str(e))
         if ctx.plan.fingerprint != body.expected_fingerprint:
@@ -1291,6 +1355,8 @@ def profile_chart(chart_id: str, body: ProfileChartBody) -> dict:
             if refusals:
                 raise HTTPException(409, detail={"error": "coverage_refused", "refusals": refusals,
                                                  "message": "a structural point (white/black) would have no reading left"})
+    else:
+        _assert_build_identity(chart_id, body)   # incompatible readings: refused before the job
     if oc in (None, "cancel"):
         coll = _build_profile_conflict(chart_id, body)
         if coll:
@@ -1309,6 +1375,24 @@ def profile_chart(chart_id: str, body: ProfileChartBody) -> dict:
     if snap.get("state") == "done" and snap.get("result"):
         resp.update(snap["result"])          # backward-compat : result fields flattened
     return resp
+
+
+def _identity_refusal(e: MeasurementIdentityError) -> HTTPException:
+    """409 with the stable payload of build_inputs.MeasurementIdentityError (code, scans
+    and their identities, conflicts, remedies). The backend is the authority: the build
+    job refuses the same inputs again if this route is bypassed."""
+    return HTTPException(409, detail=e.to_detail())
+
+
+def _assert_build_identity(chart_id: str, body: "ProfileChartBody") -> None:
+    """Same planning as the build, only to refuse incompatible readings synchronously.
+    Any other planning error is left to the build job, unchanged."""
+    try:
+        _prepare_build(chart_id, body)
+    except MeasurementIdentityError as e:
+        raise _identity_refusal(e)
+    except (ValueError, HTTPException, OSError):
+        pass
 
 
 def _selection_key(request: dict) -> tuple:
@@ -1343,6 +1427,8 @@ def profile_preview(chart_id: str, body: ProfileChartBody) -> dict:
     try:
         ctx = _prepare_build(chart_id, body)
         cov = _coverage_for(ctx)
+    except MeasurementIdentityError as e:
+        raise _identity_refusal(e)
     except ValueError as e:
         raise HTTPException(422, detail=str(e))
     req = _build_request_record(body, ctx.flags, ctx.plan.policy)
@@ -1389,6 +1475,8 @@ def profile_preview(chart_id: str, body: ProfileChartBody) -> dict:
             "current_inputs_fingerprint": (ptr.get("plan") or {}).get("inputs_fingerprint"),
             "differs_from_current_build": (None if not cur_req else _selection_key(cur_req) != _selection_key(req)),
             "newly_applied_vs_legacy": newly, "qc_strong_included": strong,
+            # identities of the used scans and the decision that allowed combining them
+            "measurement_compatibility": plan.get("measurement_compatibility"),
             # decides how the UI words newly_applied_vs_legacy: a historical notice only when the
             # current build really used the legacy rule, a neutral one without a reliable manifest
             "current_build_policy": _current_build_policy(chart_id, d, ptr)}
@@ -1430,7 +1518,8 @@ def _profile_status(chart_id: str, d: Path) -> dict:
         now_fp = _prepare_build(chart_id, replay).plan.fingerprint
     except (ValueError, HTTPException) as e:
         return {**base, "state": "missing_input", "stale": True, "toolchain_changed": toolchain,
-                "missing_input": [{"kind": "replan_failed", "detail": str(getattr(e, "detail", e))}]}
+                "missing_input": [{"kind": "replan_failed", "detail": str(getattr(e, "detail", e)),
+                                   "code": getattr(e, "code", None)}]}
     stale = now_fp != fp
     return {**base, "state": "stale" if stale else "up_to_date", "stale": stale, "toolchain_changed": toolchain}
 
@@ -1940,7 +2029,101 @@ def validate_chart(chart_id: str, body: ValidateChartBody) -> dict:
     report["label"] = meta.get("label") or prof.stem
     report["paper_name"] = meta.get("paper_name") or paper.get("name")
     report["chart_id"] = chart_id
+    # Validating with another instrument (or condition) than the build is ALLOWED: it is
+    # not an average. Both identities are reported, with a warning when they differ (the
+    # result then also contains the gap between instruments).
+    try:
+        report["measurement_identity"] = _validation_identity_report(prof, ti3)
+    except (OSError, ValueError) as e:
+        logger.warning("validation identity report failed (%s): %s", chart_id, e)
+        report["measurement_identity"] = {"error": str(e)}
     return report
+
+
+def _profile_build_identities(prof: Path) -> dict:
+    """Identities of the scans a profile was built from, read from its build manifest
+    (the repo copy's sidecar ``build``, or the pointer of the chart folder when the file is
+    the chart's current profile). ``recorded`` in the manifest; ``reconstructed`` from the
+    raw scan when it is unchanged (same sha256, manifests written before identities were
+    recorded); ``unknown`` otherwise. Source profiles are not tracked."""
+    from lib.z9_client import profile_versions
+    manifest, source = None, None
+    meta = _cache.read_repo_z9_profile_meta(prof) or {}
+    if isinstance(meta.get("build"), dict):
+        manifest, source = meta["build"], "repo_z9_sidecar"
+    elif prof.stem == prof.parent.name and (prof.parent / "chart.json").is_file():
+        ptr = profile_versions.read_pointer(prof.parent) or {}
+        if (ptr.get("pointer") or {}).get("icc_sha256") == hashlib_sha256(prof.read_bytes()):
+            manifest, source = ptr, "chart_profile_pointer"
+    if not manifest:
+        return {"status": "unknown", "manifest": None, "build_id": None, "scans": [],
+                "source_profiles_not_tracked": 0}
+    plan = manifest.get("plan") or {}
+    scans = []
+    for x in (plan.get("current_scans") or []) + (plan.get("extra_scans") or []):
+        ident, how = x.get("measurement_identity"), "recorded"
+        if not ident:
+            ident, how = None, "unknown"
+            name, cid = str(x.get("scan") or ""), str(x.get("chart_id") or "")
+            cd = _cache.locate_chart_dir(cid) if cid else None
+            p = cd / "measurements" / name if (cd and name and Path(name).name == name) else None
+            if p is not None and p.is_file() and hashlib_sha256(p.read_bytes()) == x.get("sha256"):
+                ident = _mi.describe_identity(p)
+                how = "unknown" if "error" in ident else "reconstructed"
+        scans.append({"chart_id": x.get("chart_id"), "scan": x.get("scan"), "role": x.get("role"),
+                      "identity": ident, "identity_source": how})
+    how_all = {sc["identity_source"] for sc in scans}
+    status = ("unknown" if not scans or "unknown" in how_all else
+              "reconstructed" if "reconstructed" in how_all else "recorded")
+    return {"status": status, "manifest": source, "build_id": manifest.get("build_id"), "scans": scans,
+            "source_profiles_not_tracked": len(plan.get("source_profiles") or [])}
+
+
+def _validation_identity_report(prof: Path, ti3: Path) -> dict:
+    """Identity of the validation scan vs the identities the profile was built from:
+    ``same`` | ``differs`` (another instrument, condition…: warning, never a refusal) |
+    ``unverified`` (an identity is unknown on either side)."""
+    build = _profile_build_identities(prof)
+    validation = _mi.describe_identity(ti3)
+    try:
+        v_ident = _mi.read_identity(ti3)
+    except (OSError, ValueError):
+        v_ident = None
+    differences, unverified = [], not build["scans"] or v_ident is None
+    for sc in build["scans"]:
+        ident = sc["identity"]
+        try:
+            b_ident = _mi.identity_from_dict(ident) if ident and "error" not in ident else None
+        except ValueError:
+            b_ident = None
+        if b_ident is None or v_ident is None:
+            unverified = True
+            continue
+        c = _mi.compare_identities(b_ident, v_ident)
+        if c.status == _mi.INCOMPATIBLE:
+            differences.append({"chart_id": sc["chart_id"], "scan": sc["scan"],
+                                "differences": [d.to_dict() for d in c.differences]})
+        elif c.status == _mi.INSUFFICIENT:
+            unverified = True
+    warnings = []
+    if differences:
+        status = "differs"
+        warnings.append({"code": "validation_identity_differs",
+                         "message": "the validation scan was not measured like the build's scans: "
+                                    "the result also contains the gap between them"})
+    elif unverified:
+        status = "unverified"
+        warnings.append({"code": "validation_identity_unverified",
+                         "message": "the measurement identity of the build or of the validation "
+                                    "scan is not known: they may differ"})
+    else:
+        status = "same"
+    if build["source_profiles_not_tracked"]:
+        warnings.append({"code": "build_source_profiles_not_tracked",
+                         "message": "the profile also used measurements extracted from other "
+                                    "profiles, whose instrument is not known"})
+    return {"validation": {"scan": ti3.name, "identity": validation}, "build": build,
+            "comparison": {"status": status, "differences": differences}, "warnings": warnings}
 
 
 # ─── GET list (library : paper filter + printed) ─────────────────────────────
@@ -1985,6 +2168,13 @@ def list_build_sources(chart_id: str) -> dict:
     to the build guards (the front will only send chart_id / path). Offline (no Z9).
     """
     ref_media, ref_ge = _chart_paper_ge(chart_id)   # 404/422 if unknown/invalid chart
+    # Reference identity for the measurement check: the current chart's last included scan
+    # (used by both bases). Informative here — the build plan is the authority.
+    try:
+        _cur_incl = _included_ti3_paths(_chart_dir(chart_id))
+        ref_ident = _mi.read_identity(_cur_incl[-1]) if _cur_incl else None
+    except (OSError, ValueError):
+        ref_ident = None
 
     # (b) other charts of the same paper + GE, with real measurements.
     extra_charts = []
@@ -2008,7 +2198,17 @@ def list_build_sources(chart_id: str) -> dict:
         # display WHAT the source brings (included scans × kept patches), not the raw ti3.
         _rej = _rejected_map(_read_scan_state(cd))
         n_rejected = sum(len(_rej.get(p.name) or ()) for p in incl)
+        try:
+            compat = (_mi.check_combination([("current", ref_ident)] + [
+                (f"{cid}/{p.name}", _mi.read_identity(p)) for p in incl]).status
+                if ref_ident is not None else None)
+        except (OSError, ValueError):
+            compat = "record_invalid"
         extra_charts.append({
+            # would its included scans combine with this chart's? (compatible | incompatible |
+            # insufficient | record_invalid | None = not computable)
+            "measurement_compatibility": compat,
+            "layout": _mi.chart_layout(c), "instrument": c.get("instrument"),
             "chart_id": cid, "n_scans": len(incl), "n_rejected": n_rejected,
             "patch_count": (c.get("geometry") or {}).get("patch_count") or c.get("patch_count"),
             "paper_name": c.get("paper"), "created_at": c.get("created_at"),
@@ -2104,6 +2304,10 @@ def chart_detail(chart_id: str) -> dict:
         "created_at": desc.get("created_at"), "printed_at": desc.get("printed_at"),
         "purpose": desc.get("purpose") or "profiling",
         "source": desc.get("source"), "lightened": bool(desc.get("lightened")),
+        # how this chart is measured (layout absent = honeycomb → built-in scan)
+        "layout": _mi.chart_layout(desc),
+        "instrument": (desc.get("instrument") or {}).get("key"),
+        "measurement": _mi.expected_measurement(desc),
     }
 
     # Scans (A3) : RAW ti3 of measurements/ (derivatives _avg/_qcfilt/_multisource excluded). The ROLE (included/excluded)
@@ -2139,6 +2343,8 @@ def chart_detail(chart_id: str) -> dict:
             "size_bytes": p.stat().st_size,
             # intrinsic QC summary ONLY if a valid cached report exists (never computed here)
             "qc_summary": qc_service.cached_summary(p),
+            # measurement identity (historical SOL scans: from the ti3 header, no record)
+            "measurement_identity": _mi.describe_identity(p),
         })
 
     # Chart profile (A4) : the ICC in the chart folder (charts/<id>/<id>.icc).
@@ -2164,4 +2370,22 @@ def chart_detail(chart_id: str) -> dict:
             "status": _profile_status(chart_id, d),
         }
 
-    return {"identity": identity, "scans": scans, "profile": profile}
+    return {"identity": identity, "scans": scans, "profile": profile,
+            "included_scans_compatibility": _included_compatibility(d, state)}
+
+
+def _included_compatibility(d: Path, state: dict) -> Optional[dict]:
+    """Could the INCLUDED scans be averaged together? None below two included scans;
+    {"status": "record_invalid", …} when a record cannot be read."""
+    paths = [p for p in _raw_ti3_paths(d) if _scan_role(state, p.name) == "included"]
+    if len(paths) < 2:
+        return None
+    members = []
+    for p in paths:
+        try:
+            members.append((p.name, _mi.read_identity(p)))
+        except _mi.MeasurementRecordError as e:
+            return {"status": "record_invalid", "scan": p.name, "code": e.code, "message": e.message}
+        except (OSError, ValueError) as e:
+            return {"status": "unreadable", "scan": p.name, "message": str(e)}
+    return _mi.check_combination(members).to_dict()

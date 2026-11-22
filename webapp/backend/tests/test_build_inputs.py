@@ -30,7 +30,11 @@ def ti3_text(rows, extra_cols=True):
         x, y, z = 5 + r * 0.4, 5 + g * 0.5, 5 + b * 0.6
         lines.append(f"{sid} {r:.4f} {g:.4f} {b:.4f} {x:.5f} {y:.5f} {z:.5f}"
                      + (f" {0.1 + b / 200:.5f} {0.1 + g / 200:.5f} {0.1 + r / 200:.5f}" if extra_cols else ""))
-    head = ['CTI3', '', 'DESCRIPTOR "synthetic"', 'ORIGINATOR "test"', 'KEYWORD "SPECTRAL_BANDS"',
+    # Every real SOL scan carries this TARGET_INSTRUMENT (profiling.build_cti3); since the
+    # measurement identity check, scans are combined only when their instrument is known.
+    head = ['CTI3', '', 'DESCRIPTOR "synthetic"', 'ORIGINATOR "test"',
+            'KEYWORD "TARGET_INSTRUMENT"', 'TARGET_INSTRUMENT "HP DesignJet Z9 embedded spectro"',
+            'KEYWORD "SPECTRAL_BANDS"',
             'SPECTRAL_BANDS "3"', 'SPECTRAL_START_NM "400.0"', 'SPECTRAL_END_NM "700.0"',
             f"NUMBER_OF_FIELDS {len(fmt.split())}", "BEGIN_DATA_FORMAT", fmt, "END_DATA_FORMAT",
             f"NUMBER_OF_SETS {len(rows)}", "BEGIN_DATA", *lines, "END_DATA"]

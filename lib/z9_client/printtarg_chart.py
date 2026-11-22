@@ -149,6 +149,30 @@ PRESETS: dict[tuple[str, str], LayoutPreset] = {
 SUPPORTED_MEDIA = ("roll24",)
 
 
+def supported_options() -> dict:
+    """What the generator accepts, derived from INSTRUMENTS, PRESETS and SUPPORTED_MEDIA
+    (the single source: routes and UI never keep their own copy). Static: no binary is
+    run, no device is touched."""
+    return {
+        "layout": LAYOUT,
+        "media": list(SUPPORTED_MEDIA),
+        "instruments": [
+            {"key": spec.key, "name": spec.name, "printtarg_selector": spec.selector,
+             "ti2_target_instrument": spec.ti2_target_instrument,
+             "presets": [{"media_key": media, "page_w_mm": p.page_w_mm, "page_h_mm": p.page_h_mm,
+                          "unlimited_strip": p.unlimited_strip}
+                         for (inst, media), p in PRESETS.items()
+                         if inst == spec.key and media in SUPPORTED_MEDIA]}
+            for spec in INSTRUMENTS.values()],
+        # The API always composes with the default; "pages" stays a library option.
+        "roll_layout": {"default": ROLL_LAYOUT_TRANSVERSE, "selectable": False,
+                        "library_modes": list(ROLL_LAYOUTS)},
+        "rotation": DEFAULT_ROTATION,
+        "dpi": DEFAULT_DPI,
+        "max_page_length_mm": MAX_PAGE_LENGTH_MM,
+    }
+
+
 class PrinttargChartError(Exception):
     """Generation refused or failed. ``code`` is stable; ``detail`` is for logs."""
 

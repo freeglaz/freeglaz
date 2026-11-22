@@ -590,12 +590,17 @@ def test_pre_session_chart_anchored_in_measurements(client):
     assert r.status_code == 200 and r.json()["n_scans"] == 2
 
 
+# Every real SOL scan carries this header (profiling.build_cti3); since the measurement
+# identity check, scans are averaged only when their instrument is known.
+_SOL_HEADER = 'TARGET_INSTRUMENT "HP DesignJet Z9 embedded spectro"\n'
+
+
 def _write_ti3(meas, name, shift=0.0):
     """Minimal ti3 (LAB) directly in measurements/ — simulates an out-of-session scan."""
     meas.mkdir(parents=True, exist_ok=True)
     rows = "\n".join(f"{i} 50 50 50 {50.0 + shift} 1 -2" for i in range(20))
     (meas / name).write_text(
-        "CTI3\nNUMBER_OF_FIELDS 7\nBEGIN_DATA_FORMAT\n"
+        "CTI3\n" + _SOL_HEADER + "NUMBER_OF_FIELDS 7\nBEGIN_DATA_FORMAT\n"
         "SAMPLE_ID RGB_R RGB_G RGB_B LAB_L LAB_A LAB_B\nEND_DATA_FORMAT\n"
         f"NUMBER_OF_SETS 20\nBEGIN_DATA\n{rows}\nEND_DATA\n")
 
@@ -699,7 +704,7 @@ def _write_ti3_rows(meas, name, rows):
     meas.mkdir(parents=True, exist_ok=True)
     body = "\n".join(f"{sid} {r} {g} {b} {L} {a} {bb}" for (sid, r, g, b, L, a, bb) in rows)
     (meas / name).write_text(
-        "CTI3\nNUMBER_OF_FIELDS 7\nBEGIN_DATA_FORMAT\n"
+        "CTI3\n" + _SOL_HEADER + "NUMBER_OF_FIELDS 7\nBEGIN_DATA_FORMAT\n"
         "SAMPLE_ID RGB_R RGB_G RGB_B LAB_L LAB_A LAB_B\nEND_DATA_FORMAT\n"
         f"NUMBER_OF_SETS {len(rows)}\nBEGIN_DATA\n{body}\nEND_DATA\n")
 

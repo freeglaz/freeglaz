@@ -169,7 +169,8 @@ def test_list_build_sources_same_paper_ge_only(tmp_path, monkeypatch):
 
 
 # ─── P1 — patch rejections from SOURCE charts (included scans × kept patches) ──
-_TI3 = ("CTI3\nNUMBER_OF_SETS 3\n"
+# TARGET_INSTRUMENT as every real SOL scan has it: combining scans requires a known instrument.
+_TI3 = ("CTI3\nTARGET_INSTRUMENT \"HP DesignJet Z9 embedded spectro\"\nNUMBER_OF_SETS 3\n"
         "BEGIN_DATA_FORMAT\nSAMPLE_ID RGB_R RGB_G RGB_B XYZ_X XYZ_Y XYZ_Z\nEND_DATA_FORMAT\n"
         "BEGIN_DATA\n"
         "1 0 0 0 1.1 1.2 1.3\n"

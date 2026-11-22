@@ -51,6 +51,7 @@ from pathlib import Path
 from . import cache
 from .chart import read_ti1
 from . import chart_geometry_refonte as G
+from . import measurement_identity
 from .chart_render_refonte import (
     generate_refonte, mark_delta_mm, mark_width_mm,
 )
@@ -576,7 +577,14 @@ def list_charts(charts_root: str | Path | None = None) -> list[dict]:
             continue
         meas = d / "measurements"
         scanned = meas.is_dir() and any(meas.glob("*.ti3"))
+        # measurement contract (layout absent = honeycomb, measured by the built-in scan)
+        expected = measurement_identity.expected_measurement(desc)
         out.append({
+            "layout": expected["layout"],
+            "measurement_method": expected["method"],
+            "instrument": (desc.get("instrument") or {}).get("key"),
+            "roll_layout": expected["roll_layout"],
+            "n_strips": expected["n_strips"],
             "chart_id": desc.get("chart_id"),
             "created_at": desc.get("created_at"),
             "paper": (desc.get("paper") or {}).get("name"),

@@ -66,6 +66,7 @@ __all__ = [
     "find_argyll_ref_dir",
     "resolve_argyll_ref_dir",
     "check_argyll",
+    "instrument_env",
 ]
 
 # The Argyll executables the profiling pipeline actually needs. targen (chart
@@ -76,10 +77,16 @@ REQUIRED_BINARIES = ("targen", "colprof", "spec2cie", "profcheck")
 # Binaries used by OPTIONAL tooling: the Convert module (collink = build a
 # DeviceLink, cctiff = apply it, tiffgamut = image-aware gamut extraction), the
 # diagnostic gamut bench (xicclu = look colours up through a profile/link) and the
-# external-instrument charts (printtarg = strip layout read by chartread).
-# Resolved ON DEMAND via find_argyll_binary and NEVER gate check_argyll's ``ok``
-# — a freeglaz install without them prints and profiles perfectly.
-OPTIONAL_BINARIES = ("collink", "cctiff", "tiffgamut", "xicclu", "printtarg")
+# external-instrument path (printtarg = strip layout, chartread = reading it with a
+# USB spectrophotometer). Resolved ON DEMAND via find_argyll_binary and NEVER gate
+# check_argyll's ``ok`` — a freeglaz install without them prints and profiles perfectly.
+# Resolving a path never runs the binary.
+OPTIONAL_BINARIES = ("collink", "cctiff", "tiffgamut", "xicclu", "printtarg", "chartread")
+
+# macOS: before looking for an instrument, Argyll opens every serial port whose name
+# contains "Bluetooth" in blocking mode; this one never answers and the tool hangs in
+# open(), unkillable. Argyll's own remedy is to exclude it (";"-separated list).
+MACOS_STUCK_SERIAL_PORTS = ("/dev/cu.Bluetooth-Incoming-Port",)
 
 
 class ArgyllNotFound(RuntimeError):
@@ -304,6 +311,22 @@ def check_argyll() -> dict:
         "missing": missing,
         "install_hint": _install_hint(),
     }
+
+
+def instrument_env(base: dict | None = None, platform: str | None = None) -> dict:
+    """Environment for an Argyll process that talks to an instrument (chartread). A copy
+    of ``base`` (default ``os.environ``); on macOS ``ARGYLL_EXCLUDE_SERIAL_SCAN`` gains
+    the ports listed in MACOS_STUCK_SERIAL_PORTS, appended to any value already set,
+    without duplicates. Other platforms: unchanged copy. Never mutates os.environ."""
+    env = dict(os.environ if base is None else base)
+    if (platform or sys.platform) != "darwin":
+        return env
+    current = [p for p in env.get("ARGYLL_EXCLUDE_SERIAL_SCAN", "").split(";") if p]
+    for port in MACOS_STUCK_SERIAL_PORTS:
+        if port not in current:
+            current.append(port)
+    env["ARGYLL_EXCLUDE_SERIAL_SCAN"] = ";".join(current)
+    return env
 
 
 def _install_hint() -> str:

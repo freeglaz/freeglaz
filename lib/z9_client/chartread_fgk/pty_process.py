@@ -197,6 +197,15 @@ class PtyProcess:
                 self._returncode = os.waitstatus_to_exitcode(status)
         return self._returncode
 
+    def wait(self, timeout: float) -> Optional[int]:
+        """:meth:`poll` until the process is gone or ``timeout`` expires. The end of file on
+        the terminal comes when the process closes it, which can be an instant before the
+        kernel has finished it."""
+        end = time.monotonic() + timeout
+        while self.poll() is None and time.monotonic() < end:
+            time.sleep(0.005)
+        return self._returncode
+
     @property
     def alive(self) -> bool:
         return self.poll() is None

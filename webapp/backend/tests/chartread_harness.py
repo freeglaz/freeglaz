@@ -79,6 +79,7 @@ class Pump:
             now = time.monotonic()
             if data is None:
                 self.exited = True
+                self.proc.wait(2.0)                         # end of file can precede the exit
                 return None
             if data:
                 self.gate.on_output(now)

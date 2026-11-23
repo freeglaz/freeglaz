@@ -45,6 +45,7 @@ def _drain(proc: P.PtyProcess, timeout: float = 5.0) -> str:
     while time.monotonic() < end:
         d = proc.read(0.05)
         if d is None:
+            proc.wait(2.0)                          # end of file can precede the exit
             break
         out += d
     return out.decode("latin-1")

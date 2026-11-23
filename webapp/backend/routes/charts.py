@@ -2306,7 +2306,12 @@ def delete_chart(chart_id: str) -> dict:
     chart is a SEPARATE file (repo/z9) and carries ITS OWN embedded measurements — it
     is NOT affected."""
     import shutil as _sh
+    from webapp.backend.services import external_measure
     d = _chart_dir(chart_id)
+    if external_measure.get_service().is_running(chart_id):
+        raise HTTPException(409, detail={
+            "code": "external_measure_running",
+            "message": "A measurement of this chart is running: pause it before deleting the chart."})
     _sh.rmtree(d, ignore_errors=True)
     return {"ok": True, "chart_id": chart_id, "deleted": "all"}
 
@@ -2361,6 +2366,16 @@ def chart_detail(chart_id: str) -> dict:
         "instrument": (desc.get("instrument") or {}).get("key"),
         "measurement": _mi.expected_measurement(desc),
     }
+    # External measurement (chartread-fgK): session and live run, as the snapshot shows them
+    external = None
+    if identity["layout"] == _mi.LAYOUT_PRINTTARG:
+        from webapp.backend.services import external_measure
+        try:
+            snap = external_measure.get_service().snapshot(chart_id)
+            external = {k: snap.get(k) for k in ("state", "running", "session", "publishable", "seq")}
+        except external_measure.ExternalMeasureError:
+            external = None
+    identity["external_measure"] = external
 
     # Scans (A3) : RAW ti3 of measurements/ (derivatives _avg/_qcfilt/_multisource excluded). The ROLE (included/excluded)
     # comes from the durable SIDECAR. scanned_at = TIMESTAMP from the filename (the ti3 IS

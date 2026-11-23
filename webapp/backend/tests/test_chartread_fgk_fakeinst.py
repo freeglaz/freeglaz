@@ -10,6 +10,7 @@ import time
 
 import pytest
 
+from lib.z9_client.chartread_fgk import run as R
 from lib.z9_client.chartread_fgk import session as S
 from webapp.backend.tests.session_harness import FAKEINST, data_rows, drive, fakeinst_engine, kinds, make_chart
 
@@ -25,7 +26,7 @@ def setup(tmp, n=2000, **eng_kw):
 
 
 def run(s, eng, env, tmp, **kw):
-    r = S.Run.start(S.Session.open(s.dir), eng, lock=S.InstrumentLock(tmp / "lock"), env=env)
+    r = R.Run.start(S.Session.open(s.dir), eng, lock=S.InstrumentLock(tmp / "lock"), env=env)
 
     def on(n, rr):
         if n["kind"] == "misread":

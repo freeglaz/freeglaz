@@ -164,6 +164,37 @@ def python_engine(tmp: Path, chart: Chart, name: str = "engine", **measure) -> t
     return exe, {"PATH": "/usr/bin:/bin", "LANG": "C", "HOME": str(tmp)}
 
 
+def approved_engine(tmp: Path, chart: Chart, monkeypatch, **measure) -> Path:
+    """A "shipped" engine: an executable named chartread-fgK carrying the v3 patch's text and a
+    valid manifest, in the place engine.py looks for the copy shipped with freeglaz (the
+    Flatpak's, monkeypatched to a temporary folder). The production code then establishes
+    its origin as approved by itself. It runs the Python fake in measure mode. Call again
+    with other ``measure`` options to change the behaviour: the file and its sha256 stay."""
+    from lib.z9_client.chartread_fgk import engine as E
+    scen = tmp / "shipped.scenario.json"
+    scen.write_text(json.dumps({"max_seconds": measure.pop("max_seconds", 120),
+                                "steps": [{"measure": {"values": str(chart.values_path), **measure}}]}))
+    d = tmp / "app" / "chartread-fgK"
+    exe = d / E.ENGINE_NAME
+    if not exe.exists():
+        d.mkdir(parents=True)
+        body = ("#!/bin/sh\n" + "".join(f"# {m.decode()}\n" for m in E.MARKERS)
+                + f'exec "{sys.executable}" -I "{FAKE}" "{scen}" "$@"\n').encode()
+        exe.write_bytes(body)
+        exe.chmod(0o755)
+        (d / E.MANIFEST_NAME).write_text(json.dumps({
+            "schema": E.MANIFEST_SCHEMA, "schema_version": 1, "binary": E.ENGINE_NAME,
+            "sha256": hashlib.sha256(body).hexdigest(), "argyll_version": "3.5.0",
+            "patch": {"name": "fg-chartread-checkpoint", "version": "3", "sha256": next(iter(E.ACCEPTED_PATCHES))},
+            "build": {"platform": E._platform(), "arch": E._arch(), "usb_only": True}}))
+    info = tmp / ".flatpak-info"
+    info.write_text("[Application]\n")
+    monkeypatch.setattr(E, "FLATPAK_INFO", info)
+    monkeypatch.setattr(E, "FLATPAK_DIR", d)
+    monkeypatch.delenv(E.ENV_PATH, raising=False)
+    return exe
+
+
 FAKEINST = os.environ.get("FREEGLAZ_TEST_CHARTREAD_FAKEINST")
 
 

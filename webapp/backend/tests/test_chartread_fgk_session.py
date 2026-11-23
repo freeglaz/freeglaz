@@ -11,6 +11,7 @@ import time
 
 import pytest
 
+from lib.z9_client.chartread_fgk import run as R
 from lib.z9_client.chartread_fgk import session as S
 from lib.z9_client.chartread_fgk.engine import EngineStatus
 from lib.z9_client.chartread_fgk.usb_presence import Presence
@@ -33,7 +34,7 @@ def setup(tmp, *, n=260, steps=26, model="colormunki", filt=None, **fake):
 
 
 def start(s, eng, env, tmp, **kw):
-    return S.Run.start(s, eng, lock=S.InstrumentLock(tmp / "lock"), env=env, **kw)
+    return R.Run.start(s, eng, lock=S.InstrumentLock(tmp / "lock"), env=env, **kw)
 
 
 def full(s, eng, env, tmp, **drive_kw):
@@ -473,7 +474,7 @@ def test_one_run_at_a_time_across_processes(tmp_path):
 
 def test_waiting_at_a_strip_has_no_time_limit(tmp_path):
     chart, s, eng, env = setup(tmp_path)
-    run = S.Run.start(s, eng, lock=S.InstrumentLock(tmp_path / "lock"), env=env,
+    run = R.Run.start(s, eng, lock=S.InstrumentLock(tmp_path / "lock"), env=env,
                       phase_limits={"starting": 1, "calibrating": 1, "saving": 1, "finishing": 1})
     drive(run, press=lambda n: False, until=lambda n: n["kind"] == "ready")
     end = time.monotonic() + 3
@@ -492,7 +493,7 @@ def test_a_silent_start_is_a_timeout(tmp_path):
     mute.chmod(0o755)
     s.data["engine"] = S.EngineSpec.for_test(str(mute)).to_dict()
     s._save()
-    run = S.Run.start(s, S.EngineSpec.for_test(str(mute)), lock=S.InstrumentLock(tmp_path / "lock"),
+    run = R.Run.start(s, S.EngineSpec.for_test(str(mute)), lock=S.InstrumentLock(tmp_path / "lock"),
                       env=env, phase_limits={"starting": 1.0})
     drive(run, timeout=10)
     assert run.ended["end"] == "error:engine_timeout" and not run.proc.alive
@@ -518,7 +519,7 @@ def test_losing_the_instrument_stops_and_keeps_the_saved_strips(tmp_path):
     def on(n, run):
         if n["kind"] == "checkpoint" and n["passes_saved"] == 3:
             state["present"] = False
-    run = S.Run.start(s, eng, lock=S.InstrumentLock(tmp_path / "lock"), env=env, presence=presence)
+    run = R.Run.start(s, eng, lock=S.InstrumentLock(tmp_path / "lock"), env=env, presence=presence)
     drive(run, on_notice=on, press=lambda n: state["present"], timeout=20)
     assert run.ended["end"] == "error:instrument_lost" and not run.proc.alive
     assert reopen(s).summary()["passes_saved"] == 3

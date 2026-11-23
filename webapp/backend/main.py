@@ -33,6 +33,7 @@ from webapp.backend.version import __version__
 from webapp.backend.routes import charts as charts_routes
 from webapp.backend.routes import convert as convert_routes
 from webapp.backend.routes import desktop as desktop_routes
+from webapp.backend.routes import external_measure as external_measure_routes
 from webapp.backend.routes import files as files_routes
 from webapp.backend.routes import gamut as gamut_routes
 from webapp.backend.routes import jobs as jobs_routes
@@ -214,6 +215,14 @@ async def lifespan(app: FastAPI):
     except Exception:  # noqa: BLE001 — never block startup on a cleanup failure
         logger.exception("scan session boot cleanup failed")
 
+    # External measurement sessions (chartread-fgK): reconcile the open ones and close the
+    # runs a previous process left behind. No engine is started: the instrument stays closed.
+    try:
+        from webapp.backend.services import external_measure
+        external_measure.get_service().boot_reconcile()
+    except Exception:  # noqa: BLE001 — never block startup on it
+        logger.exception("external measurement boot reconciliation failed")
+
     # Status + jobs subscribers (shared helper with the demo hot swap). Must
     # FINISH the initial fetch (await start()) before the yield, otherwise the
     # first HTTP requests could get an empty snapshot. In tests, app.state.z9 is
@@ -221,6 +230,14 @@ async def lifespan(app: FastAPI):
     await start_z9_subscribers(app)
 
     yield
+
+    # A live external measurement first: prompt-aware pause, then the graduated stop, within
+    # the window desktop.py gives the backend to stop (5 s). Its last checkpoint is on disk.
+    try:
+        from webapp.backend.services import external_measure
+        external_measure.get_service().shutdown(budget=4.0)
+    except Exception:  # noqa: BLE001
+        logger.exception("external measurement shutdown failed")
 
     # Shutdown: stop the subscribers BEFORE cancel_all of the jobs (the
     # subscribers don't touch files, but we keep a consistent order
@@ -261,6 +278,7 @@ app.include_router(gamut_routes.router)
 app.include_router(charts_routes.router)
 app.include_router(convert_routes.router)
 app.include_router(desktop_routes.router)
+app.include_router(external_measure_routes.router)
 
 
 @app.get("/api/health")

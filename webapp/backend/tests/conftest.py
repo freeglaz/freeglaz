@@ -89,3 +89,23 @@ def _no_z9_subscribers(monkeypatch):
     poll the real `192.168.1.50` via the lifespan -> HERMETIC tests (no more stray
     poller, and end of the desktop test flakiness that depended on real network state)."""
     monkeypatch.setenv("FREEGLAZ_DISABLE_Z9_SUBSCRIBERS", "1")
+
+
+@pytest.fixture(autouse=True)
+def _external_measure_isolated(tmp_path, monkeypatch):
+    """External measurement service per test: temporary locks (never the user's real lock),
+    presence unknown, and the start-up reconciliation only on an isolated store
+    (FREEGLAZ_STORE_ROOT set by the test): a test never touches the production store."""
+    import os
+    from lib.z9_client.chartread_fgk.session import InstrumentLock, LockSet
+    from lib.z9_client.chartread_fgk.usb_presence import Presence
+    from webapp.backend.services import external_measure as em
+    svc = em.ExternalMeasureService(
+        locks_provider=lambda: LockSet([("store", InstrumentLock(tmp_path / "external_instrument.lock"))]),
+        presence_provider=lambda model: Presence("error", model, detail="no USB listing in tests"),
+        lock_scope=lambda: "store")
+    real_boot = svc.boot_reconcile
+    svc.boot_reconcile = lambda: real_boot() if os.environ.get("FREEGLAZ_STORE_ROOT") else []
+    em.set_service(svc)
+    yield svc
+    em.set_service(None)

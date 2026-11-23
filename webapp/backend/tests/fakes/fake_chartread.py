@@ -249,7 +249,10 @@ def measure(cfg):
     trig = nck = 0
     while True:
         lab, all_done = labels[cur], not any(unread(x) for x in labels)
-        key = ready({"pass": lab, "all_read": all_done, "read_before": not unread(lab)})
+        step = {"pass": lab, "all_read": all_done, "read_before": not unread(lab)}
+        if "button_ms" in cfg and not all_done and trig < cfg.get("button_limit", 10 ** 6):
+            step["button_ms"] = cfg["button_ms"]        # the user presses the instrument's button
+        key = ready(step)
         if key and key[0] in COMMAND_KEYS:
             c = key.lower()
             if c == b"f":

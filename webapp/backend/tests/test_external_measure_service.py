@@ -37,6 +37,11 @@ def lab(tmp_path, monkeypatch):
     """An isolated store with one chart, a shipped engine, a service with temporary locks."""
     store = tmp_path / "store"
     monkeypatch.setenv("FREEGLAZ_STORE_ROOT", str(store))
+    # no engine but the lab's: not the developer's (environment, ~/.freeglazrc.toml), not the
+    # one a Flatpak ships in /app (these tests also run inside the sandbox, note 143)
+    monkeypatch.delenv(E.ENV_PATH, raising=False)
+    monkeypatch.setattr(E, "_config_path", lambda: None)
+    monkeypatch.setattr(E, "FLATPAK_INFO", tmp_path / "no-flatpak-info")
     chart = make_chart(store, n_useful=130, steps=26)
 
     class Lab:
@@ -526,10 +531,43 @@ def test_user_lock_scope_is_never_overstated(tmp_path):
     assert S.user_lock_path("linux", {}, info) == (None, "no_runtime_dir")
     assert S.user_lock_path("linux", {"XDG_RUNTIME_DIR": str(run)}, info) == \
         (run / "freeglaz" / S.USER_LOCK_NAME, "user")
-    info.write_text("[Application]\n")                                 # inside a Flatpak…
+    env = {"XDG_RUNTIME_DIR": str(run)}
+    info.write_text("[Application]\nname=io.github.freeglaz.freeglaz\n")   # inside a Flatpak…
+    assert S.user_lock_path("linux", env, info) == (None, "sandbox")
+    (run / "freeglaz").mkdir()        # …a directory of that name, not the permission
+    assert S.user_lock_path("linux", env, info) == (None, "sandbox")
+
+
+@pytest.mark.parametrize("filesystems,scope", [
+    ("xdg-documents;xdg-run/freeglaz:create;", "user"),
+    ("xdg-run/freeglaz;", "user"),
+    ("xdg-run/freeglaz:rw;", "user"),
+    ("xdg-run/freeglaz:ro;", "sandbox"),                  # cannot create or hold the lock file
+    ("xdg-run/freeglaz:create;!xdg-run/freeglaz;", "sandbox"),   # revoked by an override
+    ("xdg-run/freeglazX:create;xdg-run;", "sandbox"),
+    ("", "sandbox"),
+])
+def test_user_lock_scope_follows_the_granted_flatpak_permission(tmp_path, filesystems, scope):
+    """Found in the real sandbox (note 143): after one run WITH xdg-run/freeglaz, the per-app
+    $XDG_RUNTIME_DIR keeps an empty freeglaz/ mountpoint; a later run WITHOUT the permission
+    saw it, claimed the user scope, and took a private lock while the host held the shared
+    one. The scope now comes from the permissions Flatpak wrote in /.flatpak-info."""
+    run = tmp_path / "run"
+    (run / "freeglaz").mkdir(parents=True)
+    info = tmp_path / ".flatpak-info"
+    info.write_text("[Application]\nname=io.github.freeglaz.freeglaz\nruntime=runtime/org.gnome.Platform/x86_64/50\n\n"
+                    f"[Context]\nshared=network;ipc;\nfilesystems={filesystems}\n\n"
+                    "[Session Bus Policy]\norg.freedesktop.portal.*=talk\n")
+    path, got = S.user_lock_path("linux", {"XDG_RUNTIME_DIR": str(run)}, info)
+    assert got == scope and (path is not None) == (scope == "user")
+
+
+def test_user_lock_scope_with_an_unreadable_flatpak_info(tmp_path):
+    run = tmp_path / "run"
+    (run / "freeglaz").mkdir(parents=True)
+    info = tmp_path / ".flatpak-info"
+    info.write_bytes(b"\xff\xfe not a key file")
     assert S.user_lock_path("linux", {"XDG_RUNTIME_DIR": str(run)}, info) == (None, "sandbox")
-    (run / "freeglaz").mkdir()                                        # …granted xdg-run/freeglaz
-    assert S.user_lock_path("linux", {"XDG_RUNTIME_DIR": str(run)}, info)[1] == "user"
 
 
 def test_lock_set_is_all_or_nothing(tmp_path):

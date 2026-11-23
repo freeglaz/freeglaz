@@ -76,8 +76,11 @@ FLATPAK_DIR = Path("/app/chartread-fgK")
 
 # Checkpoint patches freeglaz knows (sha256 of the .patch file → version). v1 and v2 are
 # NOT accepted: v1 hides a failed directory flush, neither knows EOPNOTSUPP (notes 138-139).
+# v3.1 is v3 plus the dated notice of modification (AGPL v3 §5a) in a comment: same C
+# tokens, same binary with the same toolchain (note 143).
 ACCEPTED_PATCHES = {
     "f38d53cadb0b9bb49d5ae0a2d82e0f852f2033eb6cdca81dabf13246a2b68cd8": "3",
+    "7c3dcdc6676f5ad1c7613cf1be9bb929845eaba39ff153f628aca748dba6b5c4": "3.1",
 }
 SUPPORTED_ARGYLL = ("3.5.0",)
 SUPPORTED_PLATFORMS = ("linux", "darwin")

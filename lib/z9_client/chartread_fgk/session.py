@@ -61,6 +61,7 @@ in the store, not a proof).
 """
 from __future__ import annotations
 
+import configparser
 import errno
 import fcntl
 import hashlib
@@ -219,6 +220,29 @@ class InstrumentLock:
 
 
 USER_LOCK_NAME = "external_instrument.lock"
+USER_LOCK_GRANT = "xdg-run/freeglaz"              # the Flatpak permission that shares the dir
+
+
+def _flatpak_grants_lock_dir(flatpak_info: Path) -> bool:
+    """Was ``xdg-run/freeglaz`` granted read-write to THIS sandbox? Read from
+    ``/.flatpak-info``, where Flatpak writes the instance's effective permissions (manifest,
+    overrides, command line). A ``freeglaz`` directory inside the sandbox proves nothing:
+    the sandbox's ``$XDG_RUNTIME_DIR`` is a per-app directory that outlives the instance, and
+    keeps the empty mountpoint of an earlier run that had the permission (note 143)."""
+    cp = configparser.ConfigParser(interpolation=None, strict=False)
+    try:
+        cp.read_string(flatpak_info.read_text(encoding="utf-8"))
+        items = cp.get("Context", "filesystems", fallback="")
+    except (OSError, UnicodeDecodeError, configparser.Error):
+        return False
+    granted = False
+    for item in items.split(";"):
+        name, _, mode = item.strip().partition(":")
+        if name == USER_LOCK_GRANT:
+            granted = mode in ("", "rw", "create")    # :ro cannot hold the lock file
+        elif name == "!" + USER_LOCK_GRANT:
+            granted = False
+    return granted
 
 
 def user_lock_path(platform: Optional[str] = None, env: Optional[dict] = None,
@@ -228,8 +252,9 @@ def user_lock_path(platform: Optional[str] = None, env: Optional[dict] = None,
 
     - macOS: ``~/Library/Caches/freeglaz/`` (no sandbox for the app or a source install);
     - Linux: ``$XDG_RUNTIME_DIR/freeglaz/``. Inside a Flatpak that directory is private to
-      the sandbox unless the manifest grants ``--filesystem=xdg-run/freeglaz:create``: if it
-      is not there, the scope is ``sandbox`` and nothing is claimed beyond the store.
+      the sandbox unless ``--filesystem=xdg-run/freeglaz:create`` is granted, as
+      ``/.flatpak-info`` says (not whether the directory exists): otherwise the scope is
+      ``sandbox`` and nothing is claimed beyond the store.
 
     It does not reach other users, nor programs other than freeglaz. The operating system
     adds its own exclusivity when chartread opens the instrument (Linux: one usbfs claim per
@@ -243,7 +268,7 @@ def user_lock_path(platform: Optional[str] = None, env: Optional[dict] = None,
     if not run or not Path(run).is_dir():
         return None, "no_runtime_dir"
     d = Path(run) / "freeglaz"
-    if flatpak_info.is_file() and not d.is_dir():
+    if flatpak_info.is_file() and not (_flatpak_grants_lock_dir(flatpak_info) and d.is_dir()):
         return None, "sandbox"
     return d / USER_LOCK_NAME, "user"
 

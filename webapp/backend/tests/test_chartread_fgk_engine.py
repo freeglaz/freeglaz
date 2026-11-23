@@ -20,6 +20,7 @@ from webapp.backend.routes import charts as charts_routes
 from webapp.backend.tests.test_measurement_identity import colormunki_ti3, i1pro3_ti3, ident, record
 
 V3 = "f38d53cadb0b9bb49d5ae0a2d82e0f852f2033eb6cdca81dabf13246a2b68cd8"
+V31 = "7c3dcdc6676f5ad1c7613cf1be9bb929845eaba39ff153f628aca748dba6b5c4"   # v3 + dated AGPL notice
 V2 = "9229df03207dc46a0cc4fb65974e58865882c5bf6f341282d3ae81a80b17e2d6"
 V1 = "21c8f45feda3ddea9a4963495f6fdbfa6a1b130c9fc694f0e78105413bd74510"
 
@@ -165,6 +166,8 @@ def _status(monkeypatch, p):
     ({"patch": {"sha256": V1, "version": "1"}}, "engine_patch_unknown"),
     ({"patch": {"sha256": V2, "version": "2"}}, "engine_patch_unknown"),
     ({"patch": {"version": "2"}}, "engine_patch_unknown"),           # v3 hash, wrong version
+    ({"patch": {"version": "3.1"}}, "engine_patch_unknown"),         # v3 hash labelled v3.1
+    ({"patch": {"sha256": V31}}, "engine_patch_unknown"),            # v3.1 hash labelled v3
     ({"argyll_version": "3.4.1"}, "engine_argyll_unsupported"),
     ({"build": {"usb_only": False}}, "engine_build_unsupported"),     # serial code inside
     ({"markers": E.MARKERS[:4]}, "engine_markers_missing"),           # a v1 build labelled v3
@@ -173,6 +176,14 @@ def _status(monkeypatch, p):
 def test_every_check_refuses_with_a_stable_code(monkeypatch, tmp_path, kw, code):
     st = _status(monkeypatch, make_engine(tmp_path / "eng", **kw))
     assert (st.ok, st.code) == (False, code), st.message
+
+
+def test_patch_v31_is_accepted_as_itself(monkeypatch, tmp_path):
+    """v3.1 = v3 + the dated notice of modification: accepted, and reported as v3.1."""
+    st = _status(monkeypatch, make_engine(tmp_path / "eng", patch={"sha256": V31, "version": "3.1"}))
+    assert st.ok, st.message
+    assert (st.patch_version, st.patch_sha256, st.trusted) == ("3.1", V31, False)
+    assert E.ACCEPTED_PATCHES == {V3: "3", V31: "3.1"}
 
 
 def test_unreadable_manifest(monkeypatch, tmp_path):

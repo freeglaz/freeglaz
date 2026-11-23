@@ -149,6 +149,28 @@ BOTTOMMARGIN_PJL_BY_SOURCE = {
 # Right margin PJL = 142 (5mm) in both modes (constant)
 RIGHTMARGIN_PJL = 142
 
+# How the PDF page is laid out relative to the PJL page (PrintJob.page_layout).
+# - "paperwidth" (default, every printer but the case below): MediaBox width =
+#   PAPERWIDTH, image at x = offset_x. The Z9 places the MediaBox and the PJL
+#   window (PAPERWIDTH reduced by the margins, which also carries the Gloss
+#   Enhancer) on the same edge, so they coincide.
+# - "z9pro_roll" (Z9 Pro, roll only): the Z9 Pro was observed placing a MediaBox
+#   narrower than the roll against the other edge than the PJL window, which it
+#   centres on the roll (image cut on one side, GE off the image). The MediaBox is
+#   then the measured roll width, so its placement no longer depends on the
+#   firmware's alignment rule, and the image is drawn where the centred window
+#   falls: x = (roll width - PAPERWIDTH) / 2 + LEFTMARGIN. The PJL is unchanged.
+#   Model built from two observed prints (August, 2026-11-23), not yet confirmed
+#   by a print made with this layout.
+# The webapp sets the layout from the printer family (print_geometry). A PrintJob
+# built directly through the Python API keeps "paperwidth" unless the caller sets
+# "z9pro_roll": such a job printed on a Z9 Pro roll is NOT corrected. A ready-made
+# PDF (pdf_path) is sent with its own MediaBox and is never re-laid out; it is
+# refused with "z9pro_roll" (see PrintJob.validate).
+PAGE_LAYOUT_PAPERWIDTH = "paperwidth"
+PAGE_LAYOUT_Z9PRO_ROLL = "z9pro_roll"
+ALLOWED_PAGE_LAYOUT = (PAGE_LAYOUT_PAPERWIDTH, PAGE_LAYOUT_Z9PRO_ROLL)
+
 # Default rendering intent (ignored when COLORSPACE=DEVICECALIBRATED)
 RENDERINTENT_DEFAULT = "PERCEPTUAL"
 
@@ -185,6 +207,24 @@ def mm_to_pt(mm: float) -> float:
 
 def mm_to_pjl(mm: float) -> int:
     return round(mm * PJL_PER_MM)
+
+
+def paperwidth_pjl(offset_x_mm: float, image_w_mm: float) -> int:
+    """PAPERWIDTH as ``build_prn`` emits it, in PJL units (LEFTMARGIN + image +
+    RIGHTMARGIN, each rounded the way build_prn rounds them)."""
+    return mm_to_pjl(offset_x_mm) + mm_to_pjl(image_w_mm) + RIGHTMARGIN_PJL
+
+
+def z9pro_roll_image_x_mm(roll_w_mm: float, offset_x_mm: float, image_w_mm: float) -> float:
+    """Where the image lands on a Z9 Pro roll with ``PAGE_LAYOUT_Z9PRO_ROLL``, in mm
+    from the left edge of the roll (image read upright): inside the PJL window,
+    which the firmware centres on the roll. PAPERWIDTH is taken from its rounded
+    PJL value, and so is LEFTMARGIN, so the PDF and the PJL agree to the PJL unit.
+    With LEFTMARGIN = 5 mm this is the centre of the roll, to a few hundredths of
+    a mm."""
+    page_mm = paperwidth_pjl(offset_x_mm, image_w_mm) / PJL_PER_MM
+    left_mm = mm_to_pjl(offset_x_mm) / PJL_PER_MM
+    return (roll_w_mm - page_mm) / 2 + left_mm
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -347,6 +387,13 @@ class PrintJob:
     # /Rotate, GE FULLPAGE undisturbed). 0 = no rotation (default, charts).
     orientation: int = 0
 
+    # PDF page layout relative to the PJL page (see PAGE_LAYOUT_* above).
+    # "paperwidth" = historical behaviour, unchanged; "z9pro_roll" only for a
+    # Z9 Pro printing on a roll (the PJL header is the same in both cases).
+    # Not chosen automatically here: a Python API caller printing a TIFF on a
+    # Z9 Pro roll must set "z9pro_roll" itself to get the corrected placement.
+    page_layout: str = PAGE_LAYOUT_PAPERWIDTH
+
     # Job
     copies: int = 1
     username: str = ""                   # PJL JobAttribute JobAcct1
@@ -433,6 +480,21 @@ class PrintJob:
             errors.append(f"invalid cutter '{self.cutter}' (expected: {ALLOWED_CUTTER})")
         if self.orientation not in ALLOWED_ORIENTATION:
             errors.append(f"invalid orientation '{self.orientation}' (expected: {ALLOWED_ORIENTATION})")
+        if self.page_layout not in ALLOWED_PAGE_LAYOUT:
+            errors.append(f"invalid page_layout '{self.page_layout}' (expected: {ALLOWED_PAGE_LAYOUT})")
+        elif self.page_layout == PAGE_LAYOUT_Z9PRO_ROLL:
+            # The MediaBox is the roll: it must be the real roll and hold the PJL page.
+            if self.media_source != "ROLL":
+                errors.append(f"page_layout '{self.page_layout}' is for a roll (media_source={self.media_source})")
+            if self.pdf_path:
+                # Only a TIFF gets its page built here; a ready-made PDF is sent
+                # with its own MediaBox, which this layout would not change.
+                errors.append(f"page_layout '{self.page_layout}' lays out a TIFF; a ready-made PDF "
+                              "keeps its own page")
+            page_mm = paperwidth_pjl(self.offset_x_mm, self.image_w_mm) / PJL_PER_MM
+            if self.sheet_w_mm < page_mm - 0.01:
+                errors.append(f"Roll narrower than the page: roll {self.sheet_w_mm:.1f} mm "
+                              f"< PAPERWIDTH {page_mm:.1f} mm")
 
         # Dimensions
         if self.sheet_w_mm <= 0 or self.sheet_h_mm <= 0:
@@ -599,7 +661,9 @@ class PrintOps:
           - 16-bit RGB image placed according to the freeglaz formula
           - Embedded ICC profile (identical to the image's and the OutputIntent's)
           - MediaBox = TrimBox = PAPERWIDTH x sheet height (width = content +
-            margins, matching the PJL PAPERWIDTH; height = sheet dimension)
+            margins, matching the PJL PAPERWIDTH; height = sheet dimension),
+            or roll width x sheet height for ``page_layout == "z9pro_roll"``
+            (see _build_pdf)
           - XMP with GTS_PDFXVersion = PDF/X-4
 
         :param job: PrintJob (must be validated beforehand via job.validate())
@@ -987,7 +1051,9 @@ class PrintOps:
           - The offset_y is encoded in TOPMARGIN PJL only (the firmware
             applies this translation to position the image in the page).
           - The offset_x IS encoded directly in the X position of the PDF
-            (no horizontal flip).
+            (no horizontal flip), except for ``page_layout == "z9pro_roll"``
+            where the image goes under the PJL window the Z9 Pro centres on the
+            roll (see PAGE_LAYOUT_Z9PRO_ROLL).
 
         Consequence: the firmware does a vertical translation of the PDF, so
         the bottom of the PDF (y=margin_bottom) corresponds to the TOP edge of
@@ -996,21 +1062,30 @@ class PrintOps:
         """
         margin_bottom_mm = MECHANICAL_MARGINS_MM[job.media_source]["bottom"]
 
-        # MediaBox width = PAPERWIDTH (content + margins), NOT the media width.
-        # This mirrors build_prn's PAPERWIDTH (offset_x + image_w + right margin),
-        # so the PDF page box and the PJL PAPERWIDTH describe the same width. When
-        # the media is narrower than the platen (e.g. a 24" roll on a Z9 Pro 64"
-        # platen) a media-width MediaBox disagreed with the PJL PAPERWIDTH, which
-        # shifted the image relative to the (correctly placed) Gloss Enhancer.
-        right_margin_mm = MECHANICAL_MARGINS_MM[job.media_source]["right"]
-        paperwidth_mm = job.offset_x_mm + job.image_w_mm + right_margin_mm
+        if job.page_layout == PAGE_LAYOUT_Z9PRO_ROLL:
+            # Z9 Pro on a roll: MediaBox = the measured roll width, so where the
+            # firmware puts it no longer depends on its alignment rule; the image
+            # is drawn inside the PJL window, which the Pro centres on the roll.
+            # The PJL (PAPERWIDTH, margins, GE) is exactly the "paperwidth" one.
+            page_w_mm = job.sheet_w_mm
+            x_mm = z9pro_roll_image_x_mm(job.sheet_w_mm, job.offset_x_mm, job.image_w_mm)
+        else:
+            # MediaBox width = PAPERWIDTH (content + margins), NOT the media width.
+            # This mirrors build_prn's PAPERWIDTH (offset_x + image_w + right
+            # margin), so the PDF page box and the PJL PAPERWIDTH describe the same
+            # width; the Z9 places both on the same edge. (On a Z9 Pro roll the
+            # two are placed differently, the window being centred: equal widths
+            # did not make them coincide there, hence the "z9pro_roll" layout.)
+            right_margin_mm = MECHANICAL_MARGINS_MM[job.media_source]["right"]
+            page_w_mm = job.offset_x_mm + job.image_w_mm + right_margin_mm
+            x_mm = job.offset_x_mm
 
-        page_w_pt = mm_to_pt(paperwidth_mm)
+        page_w_pt = mm_to_pt(page_w_mm)
         page_h_pt = mm_to_pt(job.sheet_h_mm)
         img_w_pt = mm_to_pt(job.image_w_mm)
         img_h_pt = mm_to_pt(job.image_h_mm)
 
-        x_pt = mm_to_pt(job.offset_x_mm)
+        x_pt = mm_to_pt(x_mm)
         y_pt = mm_to_pt(margin_bottom_mm)         # per media_source
 
         pdf = pikepdf.Pdf.new()

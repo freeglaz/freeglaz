@@ -14,12 +14,14 @@
  */
 import { useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { printerLabel } from '../../lib/printerLabel.js';
 import { UIState } from '../../lib/state-machine.js';
 import ZMonogram from '../ui/ZMonogram.jsx';
 import EasterEgg from '../EasterEgg/EasterEgg.jsx';
 
-export default function TopNav({ path, onNavigate, state, showConvert = false }) {
+export default function TopNav({ path, onNavigate, state, showConvert = false, printerModel, printerFamily }) {
   const { t } = useTranslation();
+  const label = printerLabel(printerModel, printerFamily);
   const [eggOpen, setEggOpen] = useState(false);   // easter egg — loaded on demand
   // Hidden trigger: 5 quick clicks on the logo within 1.5s (a single click does
   // nothing — no visible affordance). Keeps recent click timestamps in a ref.
@@ -110,7 +112,14 @@ export default function TopNav({ path, onNavigate, state, showConvert = false })
         aria-label={t('status_bar.z9_state_aria', { state: z9Label })}
         className="flex items-center gap-2 text-xs2 text-text-muted flex-shrink-0 ml-2">
         <span className={`w-1.5 h-1.5 rounded-full ${z9Dot}`} aria-hidden="true"/>
-        <span className="font-medium text-text-strong">HP DesignJet Z9</span>
+        <span className="font-medium text-text-strong truncate max-w-[240px]" title={label.name}
+              data-testid="printer-name">{label.name}</span>
+        {label.badge && (
+          <span data-testid="printer-support-badge"
+                className="px-1.5 py-0.5 rounded border border-warn text-text-strong font-semibold text-tiny uppercase tracking-wide whitespace-nowrap">
+            {t(`settings.printers.badge_${label.badge}`)}
+          </span>
+        )}
         <span>· {z9Label}</span>
       </div>
     </header>

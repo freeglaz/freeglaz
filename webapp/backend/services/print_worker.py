@@ -156,9 +156,11 @@ def _build_lib_job(
 ) -> LibPrintJob:
     """Convert (webapp PrintParams + geometry) → lib ``LibPrintJob``.
 
-    - ``offset_x/y_mm``: we pass the **absolute** values (``geometry.image_x_mm``),
-      not the user deltas. The delta→absolute conversion was done by
-      ``print_geometry.compute_geometry``.
+    - ``offset_x/y_mm``: the PJL LEFTMARGIN / TOPMARGIN computed by
+      ``print_geometry.compute_geometry`` (``geometry.pjl_left/top_margin_mm``,
+      absolute values, not the user deltas). They equal the displayed position
+      ``image_x/y_mm`` except on a Z9 Pro roll, where LEFTMARGIN stays 5 mm and
+      ``page_layout = "z9pro_roll"`` draws the image under the centred window.
     - ``media_source`` API "MANUAL_FEED" → lib "MANUALFEED" (drop underscore).
     - ``gloss_enhancer`` webapp → ``gloss`` lib (rename only).
     - ``original_filename``: file name uploaded as-is by the user, read
@@ -181,8 +183,9 @@ def _build_lib_job(
         sheet_h_mm=geometry.sheet_height_mm,
         image_w_mm=geometry.image_width_mm,
         image_h_mm=geometry.image_height_mm,
-        offset_x_mm=geometry.image_x_mm,
-        offset_y_mm=geometry.image_y_mm,
+        offset_x_mm=geometry.pjl_left_margin_mm,
+        offset_y_mm=geometry.pjl_top_margin_mm,
+        page_layout=geometry.page_layout,
         gloss=params.gloss_enhancer,
         quality=params.quality,
         rendermode=params.rendermode,
@@ -215,6 +218,7 @@ async def run_real_job(
     """
     # Lazy import to avoid a services↔routes cycle at initial load.
     from webapp.backend.routes.status import build_loaded_paper
+    from lib.z9_client import printer_model
     from webapp.backend.services import file_storage, print_geometry
     from webapp.backend.services.file_inspector import to_file_info
 
@@ -250,11 +254,12 @@ async def run_real_job(
         eff_w_mm, eff_h_mm = print_geometry.oriented_dims(
             params.orientation, file_info.width_mm, file_info.height_mm,
         )
+        family = printer_model.classify(dashboard.get("identification"))
         try:
             geometry = print_geometry.compute_geometry(
-                loaded, params, eff_w_mm, eff_h_mm,
+                loaded, params, eff_w_mm, eff_h_mm, family=family,
             )
-        except print_geometry.UnsupportedMediaSource as e:
+        except print_geometry.GeometryRefusal as e:
             raise Z9PrintError(str(e)) from e
         g_blocking, _ = print_geometry.detect_geometry_issues(
             geometry, geometry.media_source,

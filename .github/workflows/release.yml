@@ -52,7 +52,13 @@ jobs:
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" "$TARBALL" --generate-notes
+        # A release candidate tag (v0.1.17-rc.1) is published as a pre-release that
+        # never becomes "Latest". Stable tags keep the exact command they always had.
+        run: |
+          case "$GITHUB_REF_NAME" in
+            v*-rc.*) gh release create "$GITHUB_REF_NAME" "$TARBALL" --generate-notes --prerelease --latest=false ;;
+            *)       gh release create "$GITHUB_REF_NAME" "$TARBALL" --generate-notes ;;
+          esac
 
   # Standalone macOS app (Apple Silicon), attached to the same Release so Mac
   # users can download a .dmg and skip the Homebrew/uv/Terminal setup. Runs

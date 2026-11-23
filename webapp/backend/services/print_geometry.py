@@ -29,7 +29,11 @@ from typing import Optional, Tuple
 
 from lib.z9_client import Z9Client, Z9Error
 from lib.z9_client.client import PRINTABLE_MEDIA_SOURCES
-from lib.z9_client.printing import MECHANICAL_MARGINS_MM, _get_icc_profile_description
+from lib.z9_client.printer_model import FAMILY_Z9_PRO
+from lib.z9_client.printing import (
+    MECHANICAL_MARGINS_MM, PAGE_LAYOUT_PAPERWIDTH, PAGE_LAYOUT_Z9PRO_ROLL,
+    _get_icc_profile_description, z9pro_roll_image_x_mm,
+)
 from webapp.backend.services.icc_identity import icc_color_hash
 
 from webapp.backend.models import GeometryResult, LoadedPaper, PrintParams
@@ -48,10 +52,20 @@ ROLL_ECON_BOTTOM_PAD_MM = 10.0
 ROLL_ECON_MARGIN_MM = 5.0
 
 
-class UnsupportedMediaSource(ValueError):
+class GeometryRefusal(ValueError):
+    """``compute_geometry`` refuses the request: no print path may go on."""
+
+
+class UnsupportedMediaSource(GeometryRefusal):
     """The loaded paper sits on a source freeglaz does not print on (the Z9
     Pro's ROLL2, or an unknown one). Raised by ``compute_geometry`` so that no
     print path can go on with a guessed source."""
+
+
+class UnsupportedPlacement(GeometryRefusal):
+    """A placement the target printer's layout cannot honour without changing
+    the PJL margins (Z9 Pro on a roll: the horizontal position is fixed, the
+    page must be the measured roll). Refused rather than guessed."""
 
 
 def print_source_issue(loaded: LoadedPaper) -> Optional[str]:
@@ -112,6 +126,7 @@ def compute_geometry(
     params: PrintParams,
     image_w_mm: float,
     image_h_mm: float,
+    family: Optional[str] = None,
 ) -> GeometryResult:
     """Image position + printable area + directional overflows.
 
@@ -129,11 +144,23 @@ def compute_geometry(
     The directional overflows are computed from the image bounding box
     (at its absolute position) vs this printable area.
 
+    ``family`` (``printer_model``: z9 / z9pro / designjet / None) selects the
+    **Z9 Pro roll** layout: same PJL as the economical roll (LEFTMARGIN 5 mm,
+    TOPMARGIN 5 mm + delta), but the image lands where the Pro centres the PJL
+    window, i.e. centred on the roll (``page_layout = "z9pro_roll"``). The
+    displayed position (``image_x_mm``) and the PJL margins
+    (``pjl_left_margin_mm``) then differ. Only the vertical delta is accepted
+    there; every other family keeps the historical placement.
+
     Raises ``UnsupportedMediaSource`` when the paper is on a source freeglaz
-    does not print on (see ``print_source_issue``).
+    does not print on (see ``print_source_issue``), ``UnsupportedPlacement``
+    for a Z9 Pro roll request that would need other PJL margins.
     """
     media_source = _resolve_media_source_api(loaded, params.media_source_override)
     is_roll = media_source == "ROLL"
+    z9pro_roll = is_roll and family == FAMILY_Z9_PRO
+    if z9pro_roll:
+        _check_z9pro_roll(loaded, params)
 
     if is_roll:
         sheet_w = params.sheet_width_mm_override or loaded.roll_width_mm or 0.0
@@ -172,6 +199,15 @@ def compute_geometry(
 
     image_x = auto_x + params.offset_x_mm
     image_y = auto_y + params.offset_y_mm
+    # What goes into PJL (LEFTMARGIN / TOPMARGIN): the position itself, except on
+    # a Z9 Pro roll where it stays the economical 5 mm while the image lands in
+    # the window the Pro centres on the roll.
+    pjl_left, pjl_top = image_x, image_y
+    page_layout = PAGE_LAYOUT_PAPERWIDTH
+    if z9pro_roll:
+        page_layout = PAGE_LAYOUT_Z9PRO_ROLL
+        auto_x = image_x = z9pro_roll_image_x_mm(sheet_w, pjl_left, image_w_mm)
+        centered_x = True
 
     # Printable area from the mechanical margins
     margins = MECHANICAL_MARGINS_MM.get(
@@ -208,11 +244,30 @@ def compute_geometry(
         media_source=media_source,
         centered_x=(centered_x and params.offset_x_mm == 0.0),
         centered_y=(centered_y and params.offset_y_mm == 0.0),
+        pjl_left_margin_mm=pjl_left, pjl_top_margin_mm=pjl_top,
+        page_layout=page_layout,
         printable_x_mm=printable_x, printable_y_mm=printable_y,
         printable_w_mm=printable_w, printable_h_mm=printable_h,
         overflow_left_mm=overflow_left, overflow_top_mm=overflow_top,
         overflow_right_mm=overflow_right, overflow_bottom_mm=overflow_bottom,
     )
+
+
+def _check_z9pro_roll(loaded: LoadedPaper, params: PrintParams) -> None:
+    """Z9 Pro on a roll: refuse what would need other PJL margins than the
+    economical roll's, or a page that is not the measured roll."""
+    if not loaded.roll_width_mm or loaded.roll_width_mm <= 0:
+        raise UnsupportedPlacement(
+            "Z9 Pro on a roll: the roll width is unknown, the image cannot be placed")
+    if params.sheet_width_mm_override is not None:
+        raise UnsupportedPlacement(
+            "Z9 Pro on a roll: the page is the measured roll width (no width override)")
+    if params.sheet_height_mm_override is not None:
+        raise UnsupportedPlacement(
+            "Z9 Pro on a roll: the virtual document mode is not available (economical roll only)")
+    if params.offset_x_mm != 0.0:
+        raise UnsupportedPlacement(
+            "Z9 Pro on a roll: the image is centred on the roll, the horizontal position cannot be moved")
 
 
 def detect_geometry_issues(

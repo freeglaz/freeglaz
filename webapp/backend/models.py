@@ -176,6 +176,12 @@ class GeometryResult(BaseModel):
       (margin_left_mm == image_x_mm). Informative for the UI.
     - ``centered_x`` / ``centered_y``: true only if the user delta
       is 0 AND the mode auto-positions at the center.
+    - ``pjl_left_margin_mm`` / ``pjl_top_margin_mm``: the LEFTMARGIN /
+      TOPMARGIN the print sends in PJL (``PrintJob.offset_x/y_mm``). Equal to
+      ``image_x_mm`` / ``image_y_mm`` except on a Z9 Pro roll
+      (``page_layout == "z9pro_roll"``), where the image lands inside the PJL
+      window the printer centres on the roll while LEFTMARGIN stays 5 mm: the
+      displayed position and the PJL margins are then two different values.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -190,8 +196,9 @@ class GeometryResult(BaseModel):
 
     # AUTO placement anchor in X (mm), BEFORE the user delta
     # (offset_x_mm): centered (SHEET) or stuck to the left + margin (economy
-    # ROLL). This is EXACTLY the value used for the PDF/PRN —
-    # ``image_x_mm == auto_x_mm + offset_x_mm`` user. Exposed so the
+    # ROLL), or centred under the PJL window (Z9 Pro roll). This is EXACTLY
+    # where the image is drawn — ``image_x_mm == auto_x_mm + offset_x_mm`` user;
+    # the PJL LEFTMARGIN is ``pjl_left_margin_mm``. Exposed so the
     # front consumes a SINGLE source of truth instead of recomputing it (and
     # diverging in ROLL: it centered on the total width → misleading field).
     auto_x_mm: float
@@ -209,6 +216,14 @@ class GeometryResult(BaseModel):
     media_source: Literal["SHEET", "ROLL", "MANUAL_FEED"]
     centered_x: bool
     centered_y: bool
+
+    # What the print job sends in PJL (LEFTMARGIN / TOPMARGIN), see above.
+    pjl_left_margin_mm: float
+    pjl_top_margin_mm: float
+    # PrintJob.page_layout: "paperwidth" (every printer, historical layout) or
+    # "z9pro_roll" (Z9 Pro on a roll: MediaBox = roll, image under the centred
+    # PJL window, horizontal position fixed).
+    page_layout: Literal["paperwidth", "z9pro_roll"] = "paperwidth"
 
     # Printable area (sheet minus mechanical margins). Origin = top-left
     # corner of the sheet. The frontend draws it dashed to signal to the

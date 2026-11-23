@@ -19,6 +19,13 @@
 ``chartread-fgK`` is ArgyllCMS's official ``chartread`` with the freeglaz checkpoint
 patch (``-K``: the .ti3 is rewritten atomically after each strip pass, resumed with
 ``-r``), built for USB instruments only. It is a separate program, distributed with its
-own source (AGPL); freeglaz only runs it. Nothing here runs it yet: :mod:`.engine`
-finds the binary, checks it without executing it and builds its command line.
+own source (AGPL); freeglaz only runs it.
+
+- :mod:`.engine`: find the binary, check it without executing it, build its command line;
+- :mod:`.pty_process`: run it on a PTY that is its controlling terminal, stop it step by step;
+- :mod:`.transcript`: bounded, de-duplicated log of what it prints; flood, spin and silence;
+- :mod:`.prompts`: its prompts as events, and the only keys that may answer them;
+- :mod:`.usb_presence`: is the instrument plugged in, without opening anything.
+
+The session that ties them together (persistence, resume, publication) comes later.
 """

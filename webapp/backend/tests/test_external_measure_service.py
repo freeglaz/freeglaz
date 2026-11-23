@@ -319,6 +319,42 @@ def test_a_development_engine_cannot_publish(lab):
     assert not (lab.chart.dir / "measurements").exists()
 
 
+def test_a_valid_engine_in_the_shipped_place_is_not_approved_unless_trusted(lab):
+    """A binary with the patch's text and a matching manifest, in the very place freeglaz ships
+    its engine, but not a trusted build: it runs and saves the session (development), it is
+    never published."""
+    lab.engine(button_ms=20, trust=False)
+    s = lab.client.post(lab.base, json={}).json()
+    assert s["publishable"] is False and s["context"]["engine"]["origin"] == "development"
+    sess = S.Session.find_open(lab.chart.dir)
+    assert (sess.data["engine"]["source"], sess.data["engine"]["origin"]) == ("bundle", "development")
+    assert post(lab, "/start", s).status_code == 200
+    calibrate(lab)
+    s = run_to_end(lab)
+    assert s["state"] == "complete"
+    r = post(lab, "/finalize", s)
+    assert (r.status_code, code(r)) == (409, "engine_not_approved")
+    assert not (lab.chart.dir / "measurements").exists()
+
+
+def test_an_origin_written_in_session_json_is_not_a_proof(lab):
+    """session.json is a file of the store. Claiming "approved" there (origin, source) for an
+    untrusted binary does not publish: the trusted list is checked again at finalize."""
+    lab.engine(button_ms=20, trust=False)
+    s = lab.client.post(lab.base, json={}).json()
+    assert post(lab, "/start", s).status_code == 200
+    calibrate(lab)
+    run_to_end(lab)
+    sess = S.Session.find_open(lab.chart.dir)
+    sess.data["engine"].update(origin="approved", source="bundle")
+    sess._save()
+    s = snap(lab)
+    assert s["state"] == "complete" and s["publishable"] is False
+    r = post(lab, "/finalize", s)
+    assert (r.status_code, code(r)) == (409, "engine_not_approved")
+    assert not (lab.chart.dir / "measurements").exists()
+
+
 def test_the_system_chartread_is_never_used(lab, tmp_path):
     bindir = tmp_path / "bin"
     bindir.mkdir()
@@ -328,6 +364,23 @@ def test_the_system_chartread_is_never_used(lab, tmp_path):
     lab.mp.setattr(E, "FLATPAK_INFO", tmp_path / "none")             # no shipped engine
     r = lab.client.post(lab.base, json={})
     assert (r.status_code, code(r)) == (409, "engine_missing")
+
+
+def test_seq_keeps_growing_across_a_backend_restart(lab):
+    """A window keeps the snapshot with the highest seq. The snapshots of a restarted backend
+    must therefore come after those of the backend that died, and a command decided on the
+    dead backend's state must be refused as stale, never applied."""
+    lab.engine(button_ms=20)
+    s_old = lab.client.post(lab.base, json={}).json()
+    for _ in range(50):
+        lab.svc.broadcast.bump(lab.chart.chart_id)
+    old_seq = snap(lab)["seq"]
+    lab.svc = lab.service()                                          # the backend restarted
+    s_new = snap(lab)
+    assert s_new["seq"] > old_seq and s_new["state_seq"] > s_old["state_seq"]
+    assert s_new["seq"] < 2 ** 53
+    r = post(lab, "/start", {**s_old, "state_seq": s_old["state_seq"]})
+    assert (r.status_code, code(r)) == (409, "stale_command")
 
 
 # ─── races between HTTP commands ────────────────────────────────────────────
@@ -387,6 +440,7 @@ def test_pause_against_finalize_and_double_commands(lab):
 # ─── events ─────────────────────────────────────────────────────────────────
 def test_broadcast_never_waits_for_readers():
     b = em.Broadcast()
+    base = b.seq
     stop = threading.Event()
 
     def reader():
@@ -399,7 +453,7 @@ def test_broadcast_never_waits_for_readers():
     t0 = time.monotonic()
     for _ in range(20000):
         b.bump("C", [{"kind": "x"}])
-    assert time.monotonic() - t0 < 2.0 and b.rev("C") == 20000 and len(b.notices) == em.NOTICES_KEPT
+    assert time.monotonic() - t0 < 2.0 and b.rev("C") == base + 20000 and len(b.notices) == em.NOTICES_KEPT
     stop.set()
 
 

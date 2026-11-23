@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -123,11 +124,12 @@ def test_creation_refusals(tmp_path):
 
 
 def test_engine_origin_is_established_not_declared(tmp_path):
-    def st(source):
+    def st(source, trusted=True):
         return EngineStatus(True, None, "", source=source, path="/x/chartread-fgK", binary_sha256="a" * 64,
-                            argyll_version="3.5.0", patch_version="3")
+                            argyll_version="3.5.0", patch_version="3", trusted=trusted)
     assert S.EngineSpec.from_status(st("bundle")).origin == "approved"
-    assert S.EngineSpec.from_status(st("env")).origin == "development"
+    assert S.EngineSpec.from_status(st("bundle", trusted=False)).origin == "development"   # just a folder
+    assert S.EngineSpec.from_status(st("env")).origin == "development"     # even a trusted build, pinned
     assert S.EngineSpec.from_status(st("config")).origin == "development"
     with pytest.raises(S.SessionError):
         S.EngineSpec.from_status(EngineStatus(False, "engine_missing", "no"))
@@ -535,3 +537,58 @@ def test_abandon_keeps_the_files(tmp_path):
         start(reopen(s), eng, env, tmp_path)
     assert e.value.code == "session_closed"
     assert S.Session.find_open(chart.dir) is None
+
+
+def test_an_engine_swapped_right_before_it_starts_is_refused(tmp_path):
+    """The engine file is hashed again after session.json is written, just before execve:
+    a substitution between the check and the start is refused, recorded, nothing started."""
+    chart, s, eng, env = setup(tmp_path)
+    exe = Path(eng.path)
+
+    def swap(point):
+        if point == "after_save_json" and exe.read_bytes().startswith(b"#!/bin/sh"):
+            exe.write_bytes(exe.read_bytes().replace(b"#!/bin/sh", b"#!/bin/sh\n# swapped", 1))
+    s._hook = swap
+    with pytest.raises(S.SessionError) as e:
+        start(s, eng, env, tmp_path)
+    assert e.value.code == "engine_changed"
+    s2 = S.Session.open(s.dir)
+    assert s2.data["runs"][-1]["end"] == "not_started" and s2.data["runs"][-1]["error"] == "engine_changed"
+    assert not S.InstrumentLock(tmp_path / "lock").held
+    lk = S.InstrumentLock(tmp_path / "lock")
+    lk.acquire({"op": "probe"})                               # the run released it
+    lk.release()
+
+
+_CREATE_SCRIPT = """
+import sys, time
+from pathlib import Path
+from lib.z9_client.chartread_fgk import session as S
+chart_dir, exe, go = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
+eng = S.EngineSpec.for_test(exe)
+while not go.exists():
+    time.sleep(0.001)
+try:
+    S.Session.create(chart_dir, model="colormunki", filter_option=None, engine=eng)
+    print("ok")
+except S.SessionError as e:
+    print(e.code)
+"""
+
+
+def test_two_processes_never_create_two_open_sessions(tmp_path):
+    """Two freeglaz processes on the same store, the same chart, the same instant: one session
+    is created, the other process is told one exists (before the fix: two, 20 times in 20)."""
+    repo = Path(__file__).resolve().parents[3]
+    for trial in range(6):
+        root = tmp_path / f"t{trial}"
+        chart = make_chart(root, n_useful=52, steps=26)
+        exe, _ = python_engine(root, chart)
+        go = root / "go"
+        procs = [subprocess.Popen([sys.executable, "-c", _CREATE_SCRIPT, str(chart.dir), str(exe), str(go)],
+                                  cwd=repo, stdout=subprocess.PIPE, text=True) for _ in range(2)]
+        time.sleep(0.3)
+        go.touch()
+        outs = sorted(p.communicate(timeout=30)[0].strip() for p in procs)
+        assert outs == ["ok", "session_exists"], outs
+        assert len([s for s in S.Session.sessions(chart.dir) if s.data["status"] == "open"]) == 1

@@ -153,14 +153,15 @@ def test_three_million_lines_through_the_pty(tmp_path):
         {"say": "Press 'f' to move forward, 'b' to move back, 'n' for next unread,\n"
                 " 'd' when done, Esc or 'q' to quit (passes read so far are saved).\n"},
         {"say": "Trigger instrument switch or any other key to start:"},
-        {"flood": {"line": USB, "count": 1_500_000, "stderr": True}},
+        {"flood": {"line": USB, "seconds": 20, "stderr": True}},      # unplugged: no end
         {"sleep": 30}], max_seconds=60)
     pump = Pump(proc, log_path=tmp_path / "flood.log")
     c0, t0 = time.process_time(), time.monotonic()
     ready = pump.run(timeout=60, until=lambda e: e.kind == "ready")
     assert ready.data["pass"] == "C"
+    t_ready = time.monotonic()
     pump.run(timeout=60, stop_on=("flooding",))
-    assert pump.verdicts[-1][1].status == "flooding" and time.monotonic() - t0 < 30
+    assert pump.verdicts[-1][1].status == "flooding" and time.monotonic() - t_ready < 2.5
     rep = proc.terminate(on_output=lambda b: pump.transcript.feed(b, time.monotonic()))
     st = pump.transcript.close(time.monotonic())
     assert rep.group_empty and rep.elapsed < 2.8
@@ -178,6 +179,17 @@ def test_monitor_flooding_needs_duration_without_progress():
     assert m.verdict(11, flood2).status == "flooding"
     m.on_progress(10.5)
     assert m.verdict(11, flood2).status == "ok"              # something useful happened meanwhile
+
+
+def test_monitor_flooding_is_seen_whatever_the_instant_of_the_last_progress():
+    """A progress late in a second (10.999), then a flood that never ends: flagged once one
+    whole second after the progress was flooded, and for as long as the flood lasts (the
+    earlier rule only answered in the last 1 ms of each second)."""
+    m = ActivityMonitor(flood_seconds=1)
+    m.on_progress(10.999)
+    assert m.verdict(11.5, FloodState(True, 1, 90000, 0)).status == "ok"      # bucket 10 began before it
+    for now, secs in ((12.0, 2), (12.5, 2), (12.99, 2), (13.4, 3), (20.7, 10)):
+        assert m.verdict(now, FloodState(True, secs, 90000, 0)).status == "flooding", now
 
 
 def test_monitor_spinning_and_silence():

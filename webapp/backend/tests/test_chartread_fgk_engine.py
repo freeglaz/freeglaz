@@ -44,12 +44,13 @@ def _isolated(monkeypatch, tmp_path):
     assert not list(tmp_path.rglob("*.ran")), "an engine was executed"
 
 
-def make_engine(d, *, markers=E.MARKERS, name=E.ENGINE_NAME, mode=0o755, manifest=True,
+def make_engine(d, *, markers=None, name=E.ENGINE_NAME, mode=0o755, manifest=True,
                 patch=None, build=None, **top):
     """A fake engine file + its manifest. The body is a shell script that would leave a
     ``.ran`` file if run, followed by the marker text."""
     d.mkdir(parents=True, exist_ok=True)
     p = d / name
+    markers = E.required_markers() if markers is None else markers
     body = b'#!/bin/sh\ntouch "$0.ran"\nexit 0\n# ' + b"\n# ".join(markers) + b"\n"
     p.write_bytes(body)
     p.chmod(mode)
@@ -178,6 +179,46 @@ def test_unreadable_manifest(monkeypatch, tmp_path):
     p = make_engine(tmp_path / "eng")
     (p.parent / E.MANIFEST_NAME).write_text("{not json")
     assert _status(monkeypatch, p).code == "engine_manifest_invalid"
+
+
+@pytest.mark.parametrize("plat,arch", [("linux", "x86_64"), ("darwin", "arm64")])
+def test_reduced_durability_text_is_required_only_where_it_can_exist(monkeypatch, tmp_path, plat, arch):
+    """The v3 patch prints "Checkpoint durability reduced" only after F_FULLFSYNC refused:
+    macOS. A genuine Linux build (official 3.5.0 + v3, gcc -O2) does not contain the text at
+    all (note 142): it must be accepted on Linux, and still required on macOS."""
+    monkeypatch.setattr(E, "_platform", lambda: plat)
+    monkeypatch.setattr(E, "_arch", lambda: arch)
+    linux_build = make_engine(tmp_path / "eng", markers=E.MARKERS)
+    st = _status(monkeypatch, linux_build)
+    if plat == "linux":
+        assert st.ok, st.message
+    else:
+        assert (st.ok, st.code) == (False, "engine_markers_missing")
+        assert _status(monkeypatch, make_engine(tmp_path / "mac", markers=E.required_markers())).ok
+
+
+def test_a_valid_manifest_is_not_trust(monkeypatch, tmp_path):
+    """Integrity is not authenticity: a binary and its manifest written together pass every
+    file check, in the shipped place too, and are still not a trusted build. Only the list in
+    freeglaz's code makes one; no environment variable or configuration reaches it."""
+    p = make_engine(tmp_path / "app" / "chartread-fgK")
+    info = tmp_path / ".flatpak-info"
+    info.write_text("[Application]\n")
+    monkeypatch.setattr(E, "FLATPAK_INFO", info)
+    monkeypatch.setattr(E, "FLATPAK_DIR", p.parent)
+    st = E.engine_status()
+    assert (st.ok, st.source, st.trusted) == (True, "bundle", False)
+    for var in ("FREEGLAZ_TRUSTED_ENGINE", "FREEGLAZ_CHARTREAD_FGK_SHA256", "FREEGLAZ_DEV"):
+        monkeypatch.setenv(var, st.binary_sha256)
+    monkeypatch.setattr(argyll, "_argyll_config", lambda: {"chartread_fgk_trusted": st.binary_sha256})
+    assert E.engine_status().trusted is False
+    assert E.trusted_build(st.binary_sha256) is False
+
+
+def test_no_build_is_trusted_before_one_is_approved():
+    """Guard: nothing is approved until a reproducible build is (distribution, D1). Adding an
+    entry is a reviewed change of this list, with the build's provenance."""
+    assert E.TRUSTED_BUILDS == {}
 
 
 def test_binary_changed_after_its_manifest(monkeypatch, tmp_path):

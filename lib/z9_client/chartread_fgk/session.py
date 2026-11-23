@@ -53,8 +53,11 @@ agree again, deterministically:
 once chartread prints it, the instrument's serial number when one was recorded.
 
 **Engine origin**, established here from what the backend checked, never read from a
-record: ``approved`` (the copy shipped with freeglaz), ``development`` (a path pinned in
-the environment or the config), ``test`` (a fake). Only ``approved`` will be publishable.
+record: ``approved`` (a trusted build, :data:`~.engine.TRUSTED_BUILDS`, found where freeglaz
+ships its copy), ``development`` (a path pinned in the environment or the config, or a
+shipped-place binary that is not a trusted build), ``test`` (a fake). Only ``approved`` is
+publishable, and the publication checks the trusted list again (``session.json`` is a file
+in the store, not a proof).
 """
 from __future__ import annotations
 
@@ -66,6 +69,7 @@ import os
 import secrets
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -152,7 +156,9 @@ class EngineSpec:
     def from_status(cls, st: EngineStatus) -> "EngineSpec":
         if not st.ok:
             raise SessionError(st.code or "engine_unavailable", st.message)
-        origin = ORIGIN_APPROVED if st.source == "bundle" else ORIGIN_DEVELOPMENT
+        # Both: a trusted build pinned by hand is still a development set-up, and the shipped
+        # place proves nothing about what was put there.
+        origin = ORIGIN_APPROVED if st.source == "bundle" and st.trusted else ORIGIN_DEVELOPMENT
         return cls(st.path, st.binary_sha256, origin, st.source, st.argyll_version,
                    st.patch_version, st.patch_sha256)
 
@@ -283,6 +289,35 @@ class LockSet:
             lk.release()
 
 
+CREATION_LOCK_NAME = ".create.lock"
+CREATION_LOCK_WAIT_S = 5.0
+
+
+@contextmanager
+def _creation_lock(chart_dir: Path):
+    """Exclusive flock on ``<chart>/external/.create.lock`` while a session is created: the
+    "never a second open session" check and the creation are one step for every process on
+    this machine (the in-process lock of the backend does not reach another process)."""
+    d = Path(chart_dir) / EXTERNAL_DIR
+    d.mkdir(exist_ok=True)
+    fd = os.open(d / CREATION_LOCK_NAME, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        end = time.monotonic() + CREATION_LOCK_WAIT_S
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as e:
+                if e.errno not in (errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES):
+                    raise
+                if time.monotonic() > end:
+                    raise LockBusy("session_busy", "another process is creating a session on this chart") from None
+                time.sleep(0.02)
+        yield
+    finally:
+        os.close(fd)                                     # releases the flock
+
+
 # ─── the persistent session ─────────────────────────────────────────────────
 class Session:
     def __init__(self, directory: Path, data: dict):
@@ -348,6 +383,13 @@ class Session:
                        filter_option=filter_option)
         except ArgvError as e:
             raise SessionError(e.code, e.message) from None
+        with _creation_lock(chart_dir):                  # two freeglaz processes, one chart
+            return cls._create_locked(chart_dir, desc, model=model, filter_option=filter_option,
+                                      engine=engine, now=now)
+
+    @classmethod
+    def _create_locked(cls, chart_dir: Path, desc: dict, *, model: str, filter_option: Optional[str],
+                       engine: EngineSpec, now: Optional[datetime]) -> "Session":
         existing = cls.find_open(chart_dir)
         if existing is not None:
             raise SessionError("session_exists", "an open session already exists for this chart",
@@ -676,5 +718,11 @@ class Session:
         if (engine.sha256, engine.origin) != (rec["sha256"], rec["origin"]):
             raise SessionError("engine_changed", "this session was measured with another engine binary",
                                recorded=rec["origin"], now=engine.origin)
+        self.check_engine_file(engine)
+
+    @staticmethod
+    def check_engine_file(engine: EngineSpec) -> None:
+        """The engine file still has the bytes that were checked (called again right before
+        it is started, to keep the window for a substitution as short as possible)."""
         if _sha256_file(Path(engine.path)) != engine.sha256:
             raise SessionError("engine_changed", "the engine file changed since it was checked")

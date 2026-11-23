@@ -1097,6 +1097,7 @@
     "instrument_several": "Several instruments are plugged in: leave only one.",
     "session_not_found": "No open session for this chart.",
     "session_exists": "A session is already open for this chart.",
+    "session_busy": "Another window or another freeglaz is creating a session on this chart: try again in a moment.",
     "session_closed": "This session is closed.",
     "session_complete": "Every strip is already saved.",
     "chart_not_found": "Chart not found.",

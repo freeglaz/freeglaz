@@ -42,6 +42,7 @@ when output was expected. Pure: time is always passed in.
 """
 from __future__ import annotations
 
+import math
 import re
 from collections import deque
 from dataclasses import dataclass
@@ -314,9 +315,14 @@ class ActivityMonitor:
     def verdict(self, now: float, flood: Optional[FloodState] = None,
                 expect_output_within: Optional[float] = None, since: Optional[float] = None) -> Verdict:
         """``since``: when the expectation started (a key sent, the process started)."""
-        if flood is not None and flood.flooding and flood.seconds >= self.flood_seconds:
-            if self._last_progress is None or now - self._last_progress >= flood.seconds:
-                return Verdict(FLOODING, f"{flood.lines_per_s} lines/s for {flood.seconds} s")
+        if flood is not None and flood.flooding:
+            # Only the flooded whole seconds that began after the last progress count. (Comparing
+            # the time since progress with the flooded seconds left a window of 1 − frac(progress)
+            # per second, a few ms at worst: a long flood could go unnoticed for seconds.)
+            clean = flood.seconds if self._last_progress is None else \
+                min(flood.seconds, int(now) - math.ceil(self._last_progress))
+            if clean >= self.flood_seconds:
+                return Verdict(FLOODING, f"{flood.lines_per_s} lines/s for {clean} s")
         ratio = self.cpu_ratio()
         if ratio is not None and ratio >= self.spin_cpu_ratio:
             span = self._cpu[-1][0] - self._cpu[0][0]

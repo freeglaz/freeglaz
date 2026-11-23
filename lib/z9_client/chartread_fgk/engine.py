@@ -39,6 +39,16 @@ proof comes at run time, later: the ``-K`` line of the first strip prompt.
 
 The result (:class:`EngineStatus`) is computed here, by the backend, each time. It is a
 fact about a local file, not provenance: a measurement record never carries it as proof.
+
+**Trust.** The manifest proves the binary is the one it describes (integrity), not where it
+comes from: whoever can write the binary can write its manifest, and a shipped location is
+only a folder. So an engine is a TRUSTED BUILD only when the sha256 of its bytes is listed in
+:data:`TRUSTED_BUILDS`, which is part of freeglaz's own code (replacing it means replacing
+freeglaz). The origin derived from it (``approved`` only for a trusted build found where
+freeglaz ships it) is decided in :class:`~.session.EngineSpec`. The list is empty until a
+reproducible build is approved: until then no engine is approved and nothing is published.
+Tests inject entries by monkeypatching the list, in their own process only; no environment
+variable, configuration key or file can add one.
 """
 from __future__ import annotations
 
@@ -72,15 +82,26 @@ ACCEPTED_PATCHES = {
 SUPPORTED_ARGYLL = ("3.5.0",)
 SUPPORTED_PLATFORMS = ("linux", "darwin")
 
-# Text the v3 patch puts in the binary (format strings of chartread.c, kept by the compiler).
+# Text the v3 patch puts in the binary on every platform (format strings of chartread.c,
+# kept by the compiler).
 MARKERS = (
     b"Save the .ti3 after each strip pass",   # -K usage line
     b"passes read so far are saved",          # -K strip prompt
     b"Checkpoint: %d patches saved to",       # checkpoint confirmation
     b"Checkpoint not saved",                  # refused checkpoint
-    b"Checkpoint durability reduced",         # v2+: F_FULLFSYNC not supported, fsync only
     b"Checkpoint not durable",                # v2+: directory flush failed after rename
 )
+# Text present only where F_FULLFSYNC exists (macOS). On Linux the reduced-durability branch
+# can never run, and the compiler drops it with its message (-O2 build of the official
+# 3.5.0 source + v3, note 142): requiring it there would refuse every genuine Linux build.
+PLATFORM_MARKERS = {
+    "darwin": (b"Checkpoint durability reduced",),   # v2+: F_FULLFSYNC not supported, fsync only
+}
+
+# The builds freeglaz trusts as its own, by (platform, arch) → sha256 of the binary. Part of
+# freeglaz's code: the trust anchor, independent of any manifest (see the module doc). Empty
+# until a reproducible build is approved (distribution work, D1).
+TRUSTED_BUILDS: dict[tuple[str, str], frozenset[str]] = {}
 
 # chartread port: the engine is built for USB instruments only, so port 1 is the first USB
 # instrument and never a serial port. Which instrument is plugged in is checked elsewhere,
@@ -104,6 +125,7 @@ class EngineStatus:
     patch_version: Optional[str] = None
     patch_sha256: Optional[str] = None
     usb_only: Optional[bool] = None
+    trusted: bool = False                # binary_sha256 is a trusted build for this platform
 
     def to_dict(self) -> dict:
         return {"name": ENGINE_NAME, **asdict(self)}
@@ -169,6 +191,17 @@ def locate_engine() -> tuple[Optional[Path], Optional[str]]:
 
 
 # ─── check ──────────────────────────────────────────────────────────────────
+def required_markers(platform: Optional[str] = None) -> tuple[bytes, ...]:
+    return MARKERS + PLATFORM_MARKERS.get(platform or _platform(), ())
+
+
+def trusted_build(sha256: Optional[str], platform: Optional[str] = None,
+                  arch: Optional[str] = None) -> bool:
+    """Is ``sha256`` a build freeglaz trusts on this platform? Read from the code only."""
+    return bool(sha256) and sha256 in TRUSTED_BUILDS.get((platform or _platform(), arch or _arch()),
+                                                         frozenset())
+
+
 def _fail(code: str, message: str, **kw) -> EngineStatus:
     return EngineStatus(False, code, message, **kw)
 
@@ -239,13 +272,14 @@ def check_engine(path: Path, source: Optional[str] = None) -> EngineStatus:
         return _fail("engine_sha256_mismatch",
                      f"{path.name} does not match its manifest (sha256 {sha[:12]}…)",
                      binary_sha256=sha, **declared)
-    missing = [m.decode() for m in MARKERS if m not in data]
+    missing = [m.decode() for m in required_markers() if m not in data]
     if missing:
         return _fail("engine_markers_missing",
                      f"{path.name} lacks the checkpoint patch text ({missing[0]!r})",
                      binary_sha256=sha, **declared)
     return EngineStatus(True, None, f"{ENGINE_NAME} ArgyllCMS {man['argyll_version']} + checkpoint "
-                        f"patch v{patch['version']}", binary_sha256=sha, **declared)
+                        f"patch v{patch['version']}", binary_sha256=sha, trusted=trusted_build(sha),
+                        **declared)
 
 
 def engine_status() -> EngineStatus:

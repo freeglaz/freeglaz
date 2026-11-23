@@ -38,9 +38,10 @@ latest snapshot; the snapshot route is the polling fallback; ``Last-Event-ID`` (
 (only a fingerprint stays in the session files), never the engine path, never a store path.
 
 **Publication** goes through ``measurement_publish.publish_measurement`` only, and only for
-a complete session whose engine origin is ``approved`` (the copy shipped with freeglaz):
-an engine pinned for development, or a test engine, can run and save sessions, never
-publish them as measurements.
+a complete session whose engine origin is ``approved`` (a trusted build found where freeglaz
+ships it; the trusted list is checked again at publication): an engine pinned for
+development, an untrusted binary in the shipped place, or a test engine, can run and save
+sessions, never publish them as measurements.
 
 **Start-up** reconciles the open sessions and closes interrupted runs; it never starts an
 engine, so the instrument is not opened. **Shutdown** pauses the live run within the
@@ -136,11 +137,17 @@ def default_lock_scope() -> str:
 # ─── broadcast ──────────────────────────────────────────────────────────────
 class Broadcast:
     """Latest snapshot per chart + recent notices, a global increasing seq, and a condition
-    readers wait on. Writers never block on readers."""
+    readers wait on. Writers never block on readers.
+
+    The seq starts at the wall clock in microseconds: it keeps growing ACROSS backend restarts,
+    so a window that kept the last snapshot of a backend that died accepts the new backend's
+    snapshots (clients keep the snapshot with the highest seq), and a command decided on the
+    old state is refused as stale. (Starting at 0, the windows stayed frozen on the dead
+    run, note 142.) Below 2**53: exact in JavaScript."""
 
     def __init__(self):
         self._cond = threading.Condition()
-        self.seq = 0
+        self.seq = time.time_ns() // 1000
         self._rev: dict[str, int] = {}
         self.notices: deque = deque(maxlen=NOTICES_KEPT)
 
@@ -281,7 +288,7 @@ class ExternalMeasureService:
         return {"chart_id": chart_id, "seq": max(self.broadcast.rev(chart_id), state_seq), "running": False,
                 "state": state, "state_seq": state_seq, "actions": actions, "prompt": None,
                 "session": _scrub(session.summary()) if session else None,
-                "publishable": bool(session and session.data["engine"]["origin"] == ORIGIN_APPROVED),
+                "publishable": bool(session and session_publishable(session)),
                 "lock_scope": self.lock_scope(), "presence": self._presence_note.get(chart_id),
                 "notices": self.broadcast.recent(chart_id)[-20:], "context": self.context(chart_id),
                 "last_session": _scrub(last.summary()) if session is None and (last := self._last_session(chart_id))
@@ -422,7 +429,7 @@ class ExternalMeasureService:
         with self._ops:
             self._check(chart_id, "finalize", expect_state, seq)
             s = self._open_session(chart_id)
-            if s.data["engine"]["origin"] != ORIGIN_APPROVED:
+            if not session_publishable(s):
                 raise ExternalMeasureError(409, "engine_not_approved",
                                            "measured with a development or test engine: not publishable",
                                            origin=s.data["engine"]["origin"])
@@ -522,7 +529,7 @@ class ExternalMeasureService:
                     "prompt": {"kind": p.kind, **_scrub(dict(p.data))} if p else None,
                     "pass": snap["pass"], "acquired_not_saved": snap["acquired_not_saved"],
                     "error": _scrub(snap["error"]), "session": _scrub(snap["session"]),
-                    "publishable": act.session.data["engine"]["origin"] == ORIGIN_APPROVED,
+                    "publishable": session_publishable(act.session),
                     "lock_scope": self.lock_scope(), "presence": self._presence_note.get(act.chart_id),
                     "notices": self.broadcast.recent(act.chart_id)[-20:]}
 
@@ -574,6 +581,15 @@ class ExternalMeasureService:
                 pass
         logger.info("external measure: shut down in %.2f s", time.monotonic() - t0)
         return act.run.ended
+
+
+def session_publishable(s: Session) -> bool:
+    """Measured with a trusted build of the engine, found where freeglaz ships it. The origin
+    in session.json is not enough on its own (a file in the store): the sha256 it records is
+    checked against the trusted builds in freeglaz's code, now."""
+    eng = s.data["engine"]
+    return (eng.get("origin") == ORIGIN_APPROVED and eng.get("source") == "bundle"
+            and fgk.trusted_build(eng.get("sha256")))
 
 
 def build_record(s: Session, v) -> dict:

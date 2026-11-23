@@ -1097,6 +1097,7 @@
     "instrument_several": "Plusieurs instruments sont branchés : n'en laisse qu'un.",
     "session_not_found": "Aucune séance ouverte pour cette charte.",
     "session_exists": "Une séance est déjà ouverte pour cette charte.",
+    "session_busy": "Une autre fenêtre ou un autre freeglaz crée une séance sur cette charte : réessaie dans un instant.",
     "session_closed": "Cette séance est close.",
     "session_complete": "Toutes les rangées sont déjà sauvegardées.",
     "chart_not_found": "Charte introuvable.",

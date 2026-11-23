@@ -335,12 +335,14 @@ def run(step):
         lines = f["lines"] if "lines" in f else [f["line"]]
         block = "".join(l + "\n" for l in lines).encode("latin-1")
         batch = max(1, f.get("batch", 4096) // len(lines))
-        left = f["count"] // len(lines)
+        left = f["count"] // len(lines) if "count" in f else None
+        until = time.monotonic() + f["seconds"] if "seconds" in f else None
         fd = 2 if f.get("stderr") else 1
-        while left > 0:
-            n = min(batch, left)
+        while (left is None or left > 0) and (until is None or time.monotonic() < until):
+            n = batch if left is None else min(batch, left)
             out(block * n, fd)
-            left -= n
+            if left is not None:
+                left -= n
     elif "sleep" in step:
         time.sleep(step["sleep"])
     elif "spin" in step:

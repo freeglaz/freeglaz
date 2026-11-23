@@ -164,12 +164,14 @@ def python_engine(tmp: Path, chart: Chart, name: str = "engine", **measure) -> t
     return exe, {"PATH": "/usr/bin:/bin", "LANG": "C", "HOME": str(tmp)}
 
 
-def approved_engine(tmp: Path, chart: Chart, monkeypatch, **measure) -> Path:
+def approved_engine(tmp: Path, chart: Chart, monkeypatch, *, trust: bool = True, **measure) -> Path:
     """A "shipped" engine: an executable named chartread-fgK carrying the v3 patch's text and a
     valid manifest, in the place engine.py looks for the copy shipped with freeglaz (the
-    Flatpak's, monkeypatched to a temporary folder). The production code then establishes
-    its origin as approved by itself. It runs the Python fake in measure mode. Call again
-    with other ``measure`` options to change the behaviour: the file and its sha256 stay."""
+    Flatpak's, monkeypatched to a temporary folder). With ``trust`` (default), its sha256 is
+    ALSO added to engine.TRUSTED_BUILDS for this test only (monkeypatch, this process): the
+    explicit injection that makes it approved. Without it, the same file in the same place
+    stays a development engine. It runs the Python fake in measure mode. Call again with
+    other ``measure`` options to change the behaviour: the file and its sha256 stay."""
     from lib.z9_client.chartread_fgk import engine as E
     scen = tmp / "shipped.scenario.json"
     scen.write_text(json.dumps({"max_seconds": measure.pop("max_seconds", 120),
@@ -178,7 +180,7 @@ def approved_engine(tmp: Path, chart: Chart, monkeypatch, **measure) -> Path:
     exe = d / E.ENGINE_NAME
     if not exe.exists():
         d.mkdir(parents=True)
-        body = ("#!/bin/sh\n" + "".join(f"# {m.decode()}\n" for m in E.MARKERS)
+        body = ("#!/bin/sh\n" + "".join(f"# {m.decode()}\n" for m in E.required_markers())
                 + f'exec "{sys.executable}" -I "{FAKE}" "{scen}" "$@"\n').encode()
         exe.write_bytes(body)
         exe.chmod(0o755)
@@ -192,7 +194,18 @@ def approved_engine(tmp: Path, chart: Chart, monkeypatch, **measure) -> Path:
     monkeypatch.setattr(E, "FLATPAK_INFO", info)
     monkeypatch.setattr(E, "FLATPAK_DIR", d)
     monkeypatch.delenv(E.ENV_PATH, raising=False)
+    if trust:
+        trust_build(monkeypatch, hashlib.sha256(exe.read_bytes()).hexdigest())
     return exe
+
+
+def trust_build(monkeypatch, sha256: str) -> None:
+    """TEST ONLY: add ``sha256`` to the trusted builds of this platform, for this test."""
+    from lib.z9_client.chartread_fgk import engine as E
+    key = (E._platform(), E._arch())
+    builds = dict(E.TRUSTED_BUILDS)
+    builds[key] = builds.get(key, frozenset()) | {sha256}
+    monkeypatch.setattr(E, "TRUSTED_BUILDS", builds)
 
 
 FAKEINST = os.environ.get("FREEGLAZ_TEST_CHARTREAD_FAKEINST")

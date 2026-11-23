@@ -92,7 +92,17 @@ class Run:
                                          "ended_at": None, "end": None, "exit_code": None,
                                          "log": f"logs/run{k}.log", "reconciliation": actions})
             session._save()
-            proc = PtyProcess.spawn(argv, cwd=str(session.work_dir), env=env)
+            try:
+                session.check_engine_file(engine)            # again, just before execve
+                proc = PtyProcess.spawn(argv, cwd=str(session.work_dir), env=env)
+            except BaseException as e:                       # recorded, never left "running"
+                session.data["runs"][-1].update({"ended_at": _iso(), "end": "not_started",
+                                                 "error": getattr(e, "code", type(e).__name__)})
+                try:
+                    session._save()
+                except OSError:
+                    pass
+                raise
         except BaseException:
             lock.release()
             raise

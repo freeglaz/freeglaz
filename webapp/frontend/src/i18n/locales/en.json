@@ -277,7 +277,8 @@
     "icc_tooltip_none_body": "Unlike OS pipelines (macOS ColorSync, Windows WCS), freeglaZ does not assume sRGB automatically — rendering may be unpredictable.",
     "icc_tooltip_none_advice": "It can still be printed: it will be tagged to the loaded paper's resident profile (OutputIntent = resident) and printed as-is, without colour management — correct for a test chart or an already-device file. To colour-manage a photo, run it through the Convert tab first.",
     "margins_label": "margins {{x}} × {{y}} mm",
-    "overflow_label": "overflow +{{x}} × +{{y}} mm"
+    "overflow_label": "overflow +{{x}} × +{{y}} mm",
+    "z9pro_roll_centred": "Z9 Pro on a roll: the image is centred on the roll, its horizontal position is fixed."
   },
   "papers": {
     "section_favorites": "Favorites",

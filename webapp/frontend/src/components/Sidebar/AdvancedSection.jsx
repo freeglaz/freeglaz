@@ -13,12 +13,13 @@ function Row({ label, children }) {
   );
 }
 
-function MmInput({ value, onChange, hint = '' }) {
+function MmInput({ value, onChange, hint = '', disabled = false }) {
   return (
     <div className={`flex items-center gap-1.5 font-mono text-xs bg-sunken px-2.5 py-1 rounded
-                     ${hint ? 'text-text-faint italic' : 'text-text-strong'}`}>
+                     ${hint ? 'text-text-faint italic' : 'text-text-strong'} ${disabled ? 'opacity-60' : ''}`}>
       <input
         type="text"
+        disabled={disabled}
         value={value.toFixed(1)}
         onChange={(e) => { const n = parseFloat(e.target.value); if (!isNaN(n)) onChange?.(n); }}
         className="w-12 bg-transparent outline-none text-right tabular-nums"
@@ -55,6 +56,7 @@ export default function AdvancedSection({
   value, onChange,
   autoX = 0, autoY = 0,
   onPositionReset, centerDisabled = false, onRotate90,
+  xLocked = false,
   disabled = false,
 }) {
   const { t } = useTranslation();
@@ -84,7 +86,9 @@ export default function AdvancedSection({
             <MmInput
               value={dispX}
               onChange={(v) => upd({ positionX: v })}
-              hint={isAuto ? t('print.advanced_hint_auto_centered') : ''}/>
+              disabled={xLocked}
+              hint={xLocked ? t('print.z9pro_roll_centred')
+                : (isAuto ? t('print.advanced_hint_auto_centered') : '')}/>
           </Row>
           <Row label={t('print.advanced_position_y')}>
             <MmInput

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import Viewer from './components/Viewer/Viewer.jsx';
 import Sidebar from './components/Sidebar/Sidebar.jsx';
@@ -28,7 +28,7 @@ import { PrinterFamilyProvider } from './hooks/usePrinterFamily.js';
 import { deriveUIState, isWorkerActive, UIState } from './lib/state-machine.js';
 import { postPrint, postPrintCancel, wakeZ9, disableDemo } from './api/client.js';
 import { uiGEToBackend } from './api/mappings.js';
-import { rollCenterX, isCenteredX } from './lib/placement.js';
+import { rollCenterX, isCenteredX, horizontalLocked } from './lib/placement.js';
 
 const DEFAULT_PARAMS = { gloss: 'image', quality: 'HIGH', copies: 1 };
 // `positionX` / `positionY` are **absolute positions in mm from the
@@ -272,6 +272,16 @@ export default function App() {
 
   const isRoll = status?.paper?.kind === 'roll';
   const geom = file?.preview?.geometry;
+  // Z9 Pro on a roll: the image is centred, the horizontal position is fixed
+  // (backend page_layout "z9pro_roll"). Decided from the status (family + roll)
+  // so that the first preview request already sends no X delta; a stored
+  // positionX is ignored, not erased (it comes back on another printer).
+  const xLocked = horizontalLocked(status?.family, isRoll);
+  // Memoized: a fresh object on every render would re-trigger the preview effect.
+  const advancedEff = useMemo(
+    () => (xLocked && advanced.positionX != null ? { ...advanced, positionX: null } : advanced),
+    [xLocked, advanced],
+  );
   // "Stale geometry": the current preview was computed for an orientation
   // AND/OR a paper DIFFERENT from the current selection. The paper change is
   // not instantaneous (re-fetch), and rotation transposes the footprint on the
@@ -302,12 +312,12 @@ export default function App() {
     ? rollCenterX(geom?.sheet_width_mm ?? sheet_w, geom?.image_width_mm ?? effImageW)
     : null;
   // Effective X position actually used (positionX takes precedence over the auto anchor).
-  const effX = advanced.positionX ?? autoX;
+  const effX = advancedEff.positionX ?? autoX;
   // Centered now? (sheet: both axes null = auto; roll: X on the horizontal
   // center). Values of the same freshness (all backend/effX).
   const isCenteredNow = isRoll
     ? isCenteredX(effX, rollCenterX_mm)
-    : (advanced.positionX == null && advanced.positionY == null);
+    : (advancedEff.positionX == null && advancedEff.positionY == null);
   // "Center" button: greyed out ONLY when we are CERTAIN it is already
   // centered = FRESH geometry AND centered. While it is stale (recompute window
   // after rotation/paper change), we do NOT grey it out — the user must be able
@@ -337,11 +347,11 @@ export default function App() {
   useEffect(() => {
     if (!fileId) return;
     const handle = setTimeout(() => {
-      updatePreview(toBackendParams(params, advanced, autoX, autoY), fileId);
+      updatePreview(toBackendParams(params, advancedEff, autoX, autoY), fileId);
     }, 300);
     return () => clearTimeout(handle);
     // paperKey: re-fetch on a paper change (Bug A). Stable string, not the object.
-  }, [fileId, params, advanced, autoX, autoY, updatePreview, paperKey]);
+  }, [fileId, params, advancedEff, autoX, autoY, updatePreview, paperKey]);
 
   // GE state hygiene (O1): a paper the firmware reports as NOT
   // gloss-enhancer-capable must not keep a residual gloss='image' inherited
@@ -439,7 +449,7 @@ export default function App() {
     if (!file) return;
     const { job_id } = await postPrint({
       file_id: file.info.id,
-      params: toBackendParams(params, advanced, autoX, autoY),
+      params: toBackendParams(params, advancedEff, autoX, autoY),
     });
     setJobId(job_id);
   }
@@ -470,6 +480,7 @@ export default function App() {
   // Avoids race conditions from fast double-drag (absolute commit rather
   // than cumulative delta).
   function handlePositionCommit(absX_mm, absY_mm, axis) {
+    if (xLocked) return;   // Z9 Pro roll: nothing to move (the drag is disabled too)
     // Roll X-only drag (axis === 'x'): commit X, leave Y on auto (null).
     // Committing a Y here would FREEZE it at its current value — unwanted on a
     // free-length roll where Y has no meaningful reference. Sheet: both axes.
@@ -483,7 +494,8 @@ export default function App() {
   // free-length roll has no reference height, vertical centering is undefined.
   function handlePositionReset() {
     if (isRoll) {
-      setAdvanced((a) => ({ ...a, positionX: rollCenterX_mm, positionY: null }));
+      // Z9 Pro roll: the backend's own centring (null = auto), never an explicit X.
+      setAdvanced((a) => ({ ...a, positionX: xLocked ? null : rollCenterX_mm, positionY: null }));
     } else {
       setAdvanced((a) => ({ ...a, positionX: null, positionY: null }));
     }
@@ -623,7 +635,8 @@ export default function App() {
               state={state}
               file={file}
               paper={status?.paper}
-              advanced={advanced}
+              advanced={advancedEff}
+              xLocked={xLocked}
               loading={fileLoading}
               autoX={autoX}
               autoY={autoY}
@@ -636,7 +649,8 @@ export default function App() {
               paper={status?.paper}
               file={file}
               params={params}     onParamsChange={setParams}
-              advanced={advanced} onAdvancedChange={setAdvanced}
+              advanced={advancedEff} onAdvancedChange={setAdvanced}
+              xLocked={xLocked}
               autoX={autoX}       autoY={autoY}
               onPositionReset={handlePositionReset}
               centerDisabled={centerDisabled}

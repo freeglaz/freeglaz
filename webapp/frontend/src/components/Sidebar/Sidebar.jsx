@@ -24,7 +24,7 @@ export default function Sidebar({
   params, onParamsChange,
   advanced, onAdvancedChange,
   autoX = 0, autoY = 0,
-  onPositionReset, centerDisabled = false, onRotate90,
+  onPositionReset, centerDisabled = false, onRotate90, xLocked = false,
   progress, geomStale = false, onPrint, onCancel,
 }) {
   const { t } = useTranslation();
@@ -68,6 +68,11 @@ export default function Sidebar({
           iccStatus={iccStatus}
           fileProfile={fileProfile}
           iccReason={iccReason}/>
+        {xLocked && (
+          <p className="mt-2 text-xs2 text-text-muted" data-testid="z9pro-roll-centred">
+            {t('print.z9pro_roll_centred')}
+          </p>
+        )}
 
         <div className="h-5"/>
         <ParamsSection
@@ -85,6 +90,7 @@ export default function Sidebar({
           onPositionReset={onPositionReset}
           centerDisabled={centerDisabled}
           onRotate90={onRotate90}
+          xLocked={xLocked}
           disabled={dimAll}/>
 
         <div className="h-6"/>

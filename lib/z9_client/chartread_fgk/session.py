@@ -447,7 +447,15 @@ class Session:
                 "complete": bool(lc.get("complete")), "durability": lc.get("durability"),
                 "durability_warning": self.data.get("durability_warning"),
                 "suspended": self.data.get("suspended"), "engine_origin": self.data["engine"]["origin"],
-                "runs": len(self.data["runs"])}
+                "runs": len(self.data["runs"]),
+                # for the strip map and the final check (labels in chartread's order)
+                "passes": list(lc.get("passes") or []), "pass_labels": list(self.plan.passes),
+                "identity": lc.get("identity"), "final": bool(lc.get("final")),
+                "accepted_warnings": len(self.data.get("accepted_warnings") or []),
+                "corrections": [c["pass"] for c in self.data.get("corrections") or []],
+                "last_stop": self.data.get("last_stop"),
+                "last_run_end": self.data["runs"][-1].get("end") if self.data["runs"] else None,
+                "published": self.data.get("published")}
 
     def ensure_open(self) -> None:
         if self.data["status"] != OPEN:

@@ -19,7 +19,7 @@ import ProfileInspectorModal from '../ProfileInspector/ProfileInspectorModal.jsx
 import ArgyllProfileWizard from '../Charts/ArgyllProfileWizard.jsx';
 import MeasurementBadge from '../Charts/MeasurementBadge.jsx';
 import IdentityRefusal from '../Charts/IdentityRefusal.jsx';
-import ExternalMeasurementPending from '../Charts/ExternalMeasurementPending.jsx';
+import ExternalMeasurePanel from '../ExternalMeasure/ExternalMeasurePanel.jsx';
 import { chartMeasurement, identityRefusal } from '../../lib/measurementMethod.js';
 import { chartIdFromHash } from '../../lib/libraryLink.js';
 import { errorText } from '../../lib/errorText.js';
@@ -552,9 +552,10 @@ export default function MesuresPage({ offline }) {
               {/* Actions — scan DELEGATES to the wizard (isLoaded); disk management (DESTRUCTIVE) here */}
               <section className="pt-2 border-t border-border-soft space-y-2">
                 {idMeasurement.external ? (
-                  // External instrument: the built-in scan is never offered; the chartread driver
-                  // is a later increment — explicit state, no action that would not work.
-                  <ExternalMeasurementPending chart={id} nScans={detail.scans.length} inLibrary/>
+                  // External instrument: the built-in scan is never offered; the measurement is the
+                  // chartread-fgK session (panel + wizard), driven by the backend's state.
+                  <ExternalMeasurePanel chartId={selected} instrument={idMeasurement.instrument} nScans={detail.scans.length} inLibrary
+                                        onPublished={() => { loadDetail(selected); reload(); }}/>
                 ) : (
                   <>
                     <button type="button" onClick={openScan}

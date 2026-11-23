@@ -1081,7 +1081,54 @@
     "scans_not_comparable": "Ces scans n'ont pas été mesurés de la même façon : ce ne sont pas des lectures répétées d'une même mesure.",
     "printtarg_not_found": "printtarg (ArgyllCMS) est introuvable : installe ArgyllCMS pour créer une charte externe.",
     "ti1_missing_targen_tables": "Ce .ti1 n'a pas les tables qu'écrit targen : printtarg a besoin d'un .ti1 généré par targen.",
-    "chart_for_external_instrument": "Cette charte se lit avec un instrument externe : le scan intégré n'est pas disponible pour elle."
+    "chart_for_external_instrument": "Cette charte se lit avec un instrument externe : le scan intégré n'est pas disponible pour elle.",
+    "measurement_empty": "Le fichier de mesure ne contient aucune lecture.",
+    "measurement_not_spectral": "Une mesure externe doit contenir ses spectres (colonnes SPEC_) : celle-ci n'en a pas, ou pas sur une grille régulière.",
+    "measurement_incomplete": "Mesure incomplète : toutes les rangées ne sont pas sauvegardées.",
+    "stale_command": "L'état de la mesure a changé entre-temps.",
+    "command_not_allowed": "Cette action n'est pas possible dans l'état actuel.",
+    "command_refused": "chartread n'attend pas cette réponse maintenant.",
+    "run_active": "Une mesure est déjà en cours dans freeglaz.",
+    "run_not_active": "Aucune mesure n'est en cours pour cette charte.",
+    "run_ended": "La lecture s'est arrêtée entre-temps.",
+    "instrument_busy": "L'instrument est déjà utilisé par une autre mesure (autre fenêtre ou autre freeglaz).",
+    "instrument_absent": "Aucun instrument détecté : branche-le, puis recommence.",
+    "instrument_other": "L'instrument branché n'est pas celui de la charte.",
+    "instrument_several": "Plusieurs instruments sont branchés : n'en laisse qu'un.",
+    "session_not_found": "Aucune séance ouverte pour cette charte.",
+    "session_exists": "Une séance est déjà ouverte pour cette charte.",
+    "session_closed": "Cette séance est close.",
+    "session_complete": "Toutes les rangées sont déjà sauvegardées.",
+    "chart_not_found": "Charte introuvable.",
+    "chart_not_external": "Cette charte se mesure avec le spectrophotomètre intégré.",
+    "instrument_not_for_chart": "Cette charte a été composée pour un autre instrument.",
+    "argv_filter_required": "Choisis la condition de mesure (M0, M1 ou M2).",
+    "argv_filter_unsupported": "Cette condition de mesure n'est pas proposée par l'instrument.",
+    "argv_filter_not_applicable": "Cet instrument n'a pas de condition de mesure à choisir.",
+    "engine_missing": "Le moteur de mesure chartread-fgK n'est pas installé.",
+    "engine_not_executable": "Le moteur de mesure n'est pas exécutable.",
+    "engine_manifest_missing": "Le moteur de mesure n'a pas son manifeste.",
+    "engine_manifest_invalid": "Le manifeste du moteur de mesure est invalide.",
+    "engine_platform_mismatch": "Le moteur de mesure n'est pas fait pour cette machine.",
+    "engine_patch_unknown": "Le moteur de mesure porte un correctif que freeglaz ne reconnaît pas.",
+    "engine_argyll_unsupported": "Version d'ArgyllCMS du moteur non prise en charge.",
+    "engine_build_unsupported": "Le moteur de mesure n'est pas construit pour l'USB seul.",
+    "engine_sha256_mismatch": "Le moteur de mesure ne correspond pas à son manifeste.",
+    "engine_markers_missing": "Ce moteur n'a pas la sauvegarde par rangée (-K).",
+    "engine_unreadable": "Le moteur de mesure est illisible.",
+    "engine_unsupported_platform": "La mesure externe n'est disponible que sous Linux et macOS.",
+    "engine_changed": "Le moteur de mesure a changé depuis le début de la séance.",
+    "engine_not_approved": "Mesure faite avec un moteur de développement ou de test : elle ne peut pas être publiée.",
+    "validated_invalid": "La sauvegarde validée de la séance est altérée : la séance est bloquée.",
+    "validated_missing": "La sauvegarde validée de la séance est introuvable.",
+    "external_measure_running": "Une mesure de cette charte est en cours : mets-la en pause avant de supprimer la charte.",
+    "pass_not_saved": "Cette rangée n'est pas sauvegardée.",
+    "chart_unreadable": "La charte (chart.json ou .ti2) est illisible.",
+    "chart_mismatch": "La charte ne correspond plus à la séance (elle a été modifiée) : la séance est bloquée.",
+    "command_unknown": "Commande inconnue.",
+    "session_unreadable": "L'état de la séance est illisible : elle est bloquée.",
+    "session_unsupported": "Cette séance a été écrite par une version de freeglaz incompatible.",
+    "validated_ahead_incompatible": "La sauvegarde validée ne contient pas toutes les rangées que la séance dit avoir sauvegardées : la séance est bloquée."
   },
   "modify_mechanical": {
     "title": "Propriétés mécaniques",
@@ -1921,15 +1968,6 @@
       "body": "Laisse-la sécher, puis mesure-la avec le {{instrument}}. Elle t'attend dans la bibliothèque (onglet Mesures).",
       "open_library": "Voir dans Mesures"
     },
-    "pending": {
-      "title": "Mesure externe pas encore intégrée",
-      "body": "Cette charte se mesure avec le {{instrument}} (chartread). freeglaz ne pilote pas encore cette lecture, et ne lance jamais le scan intégré pour une charte externe.",
-      "has_scans_one": "{{count}} mesure déjà enregistrée : le contrôle qualité et la construction du profil se font dans l'onglet Mesures.",
-      "has_scans_other": "{{count}} mesures déjà enregistrées : le contrôle qualité et la construction du profil se font dans l'onglet Mesures.",
-      "has_scans_here_one": "{{count}} mesure déjà enregistrée : son contrôle qualité et la construction du profil sont ci-dessus.",
-      "has_scans_here_other": "{{count}} mesures déjà enregistrées : leur contrôle qualité et la construction du profil sont ci-dessus.",
-      "later": "La lecture pilotée par freeglaz (chartread) arrivera dans une prochaine version."
-    },
     "badge": {
       "integrated": "HP intégré",
       "external": "Externe — {{instrument}}",
@@ -1998,6 +2036,285 @@
     "generator_warning": {
       "patches_not_located_one": "{{count}} patch n'a pas pu être vérifié sur les pixels de la charte (couleur répétée ou blanche) : sa place est celle donnée par printtarg.",
       "patches_not_located_other": "{{count}} patches n'ont pas pu être vérifiés sur les pixels de la charte (couleur répétée ou blanche) : leur place est celle donnée par printtarg."
+    }
+  },
+  "external_measure": {
+    "title": "Mesure externe",
+    "running": "mesure en cours",
+    "refused": "Action refusée :",
+    "saved_counts": "{{passes}} rangées sur {{total}} ({{patches}} patches utiles sur {{patches_total}}) restent sauvegardées.",
+    "close_hint": "Fermer cette fenêtre n'interrompt pas la mesure.",
+    "steps": {
+      "prepare": "Préparer",
+      "calibrate": "Calibrer",
+      "read": "Lire",
+      "publish": "Vérifier et publier"
+    },
+    "heading": {
+      "prepare": "Préparer la mesure avec le {{instrument}}",
+      "calibrate": "Calibrer le {{instrument}}",
+      "read": "Lire les rangées",
+      "publish": "Vérifier et publier la mesure"
+    },
+    "state": {
+      "none": "Aucune séance",
+      "idle": "Séance en pause, reprenable",
+      "complete": "Toutes les rangées sont sauvegardées",
+      "published": "Mesure publiée",
+      "abandoned": "Dernière séance abandonnée",
+      "starting": "Ouverture de l'instrument",
+      "calibration": "Calibration demandée",
+      "calibrating": "Calibration en cours",
+      "calibrated": "Calibration terminée",
+      "ready": "Prêt à lire une rangée",
+      "saving": "Sauvegarde de la rangée",
+      "saved": "Rangée sauvegardée",
+      "warning": "Lecture à reprendre",
+      "finishing": "Enregistrement final",
+      "stopping": "Arrêt en cours"
+    },
+    "panel": {
+      "title": "Mesure externe ({{instrument}})",
+      "measure": "Mesurer avec le {{instrument}}",
+      "continue": "Ouvrir la séance",
+      "resume": "Reprendre la mesure",
+      "follow": "Suivre la mesure",
+      "verify": "Vérifier et publier",
+      "saved": "{{passes}} / {{total}} rangées · {{patches}} / {{patches_total}} patches utiles sauvegardés",
+      "has_scans_one": "{{count}} mesure déjà enregistrée : le contrôle qualité et la construction du profil se font dans l'onglet Mesures.",
+      "has_scans_other": "{{count}} mesures déjà enregistrées : le contrôle qualité et la construction du profil se font dans l'onglet Mesures.",
+      "has_scans_here_one": "{{count}} mesure déjà enregistrée : son contrôle qualité et la construction du profil sont ci-dessus.",
+      "has_scans_here_other": "{{count}} mesures déjà enregistrées : leur contrôle qualité et la construction du profil sont ci-dessus.",
+      "measure_again": "Nouvelle mesure avec le {{instrument}}",
+      "published_next": "le contrôle qualité et la construction du profil se font dans l'onglet Mesures."
+    },
+    "prepare": {
+      "chart": "Charte",
+      "patches": "{{count}} patches utiles en {{strips}} rangées",
+      "instrument": "Instrument attendu",
+      "presence_label": "Instrument branché",
+      "engine": "Moteur de mesure",
+      "condition_title": "Condition de mesure",
+      "condition_hint": "À choisir explicitement : elle fait partie de l'identité de la mesure, et deux conditions ne se mélangent jamais.",
+      "create": "Préparer la séance",
+      "start": "Démarrer la mesure",
+      "how": "La lecture se fait rangée par rangée avec le bouton du {{instrument}} : freeglaz ne déclenche jamais une lecture. Chaque rangée est sauvegardée dès qu'elle est lue ; une séance interrompue se reprend où elle s'est arrêtée."
+    },
+    "presence": {
+      "present": "{{instrument}} détecté",
+      "absent": "aucun instrument détecté",
+      "other": "un autre instrument est branché",
+      "several": "plusieurs instruments branchés : n'en laisse qu'un",
+      "error": "détection impossible ici (vérifie le branchement)",
+      "present_family": "un i1Pro 3 est branché (le modèle exact se confirme à la lecture)"
+    },
+    "engine": {
+      "ok": "chartread-fgK (ArgyllCMS {{argyll}}, sauvegarde par rangée v{{patch}})",
+      "unavailable": "Moteur de mesure indisponible",
+      "development": "Moteur de développement : la séance fonctionne, mais sa mesure ne pourra pas être publiée comme acquisition réelle."
+    },
+    "origin": {
+      "approved": "moteur livré avec freeglaz",
+      "development": "moteur de développement",
+      "test": "moteur de test"
+    },
+    "calibrate": {
+      "title": "Calibration",
+      "retry_title": "La calibration a échoué : recommence",
+      "sensor_position": "Tourne la molette du {{instrument}} sur la position calibration (le capteur face à la pastille blanche), puis confirme.",
+      "white_reference": "Pose le {{instrument}} sur sa céramique blanche de référence, puis confirme.",
+      "white_calibration": "Fais une calibration du blanc en réflexion, puis confirme.",
+      "other": "Suis la consigne de l'instrument : {{text}}",
+      "explicit": "La calibration ne démarre qu'à ta confirmation.",
+      "confirm": "C'est fait, calibrer",
+      "abort": "Annuler la calibration",
+      "wait": {
+        "starting": "Ouverture de l'instrument…",
+        "calibrating": "Calibration en cours…",
+        "calibrated": "Calibration terminée, préparation de la lecture…"
+      }
+    },
+    "read": {
+      "expected": "Rangée attendue",
+      "reread": "Cette rangée a déjà été lue : la relire remplacera ses valeurs.",
+      "how": "Place l'instrument au début de la rangée, appuie sur son bouton et balaie la rangée. freeglaz ne déclenche jamais la lecture.",
+      "saving": "Rangée {{pass}} lue, sauvegarde en cours…",
+      "stopping": "Arrêt de la lecture en cours…",
+      "passes": "Rangées sauvegardées",
+      "patches": "Patches utiles sauvegardés",
+      "last_checkpoint": "Dernière sauvegarde",
+      "prev": "Relire la précédente",
+      "next": "Rangée suivante",
+      "next_unread": "Prochaine non lue",
+      "pause": "Mettre en pause",
+      "resume": "Reprendre la mesure",
+      "resume_title": "Séance en pause.",
+      "resume_body": "Les rangées ci-dessous sont sauvegardées. La reprise recommence à la première rangée non lue, sans recalibrer si la calibration est encore valable.",
+      "abandon": "Abandonner la séance",
+      "abandon_confirm": "Abandonner cette séance ? Ses fichiers sont conservés, mais elle ne pourra plus être reprise ni publiée.",
+      "correct_title": "Relire une rangée sauvegardée :",
+      "correct": "Retirer pour relire",
+      "correct_hint": "La rangée est retirée de la sauvegarde (une copie est gardée) ; la reprise la redemandera en premier.",
+      "correct_confirm": "Retirer la rangée {{pass}} pour la relire ?",
+      "strip_map": "Carte des rangées",
+      "legend": {
+        "saved": "sauvegardée",
+        "current": "attendue",
+        "acquired": "lue, en sauvegarde",
+        "pending": "à lire"
+      }
+    },
+    "warning": {
+      "misread": "Lecture ratée ({{reason}}).",
+      "wrong_strip": "Ce n'est pas la bonne rangée : lu {{read}}, attendu {{expected}}.",
+      "unexpected": "Une valeur est très inattendue (ΔE {{de}}).",
+      "comms_failed": "Communication avec l'instrument perdue pendant la lecture.",
+      "strip_error": "Erreur pendant la lecture : {{message}}.",
+      "instrument_error": "Erreur de l'instrument : {{message}}.",
+      "retry_prompt": "La lecture doit être reprise.",
+      "stopped": "Lecture arrêtée."
+    },
+    "warning_hint": {
+      "wrong_strip": "Replace l'instrument sur la rangée attendue et relis-la. Garder une mauvaise rangée n'est jamais proposé.",
+      "unexpected": "Relis la rangée. Ne la garde que si tu es sûr de la lecture (une encre très saturée, par exemple) : ce choix est noté dans la fiche de mesure.",
+      "default": "Relis la rangée, ou arrête la lecture : les rangées déjà sauvegardées restent acquises."
+    },
+    "actions": {
+      "retry": "Relire",
+      "give_up": "Arrêter la lecture",
+      "accept": "Garder quand même",
+      "accept_confirm": "Garder cette rangée malgré la valeur inattendue ? Le choix sera noté dans la fiche de mesure."
+    },
+    "durability": {
+      "none": "Aucune rangée sauvegardée pour l'instant.",
+      "full": "Sauvegarde confirmée sur le disque.",
+      "reduced": "Sauvegarde faite, durabilité réduite : ce disque ne permet qu'une synchronisation partielle (fsync seul).",
+      "reduced_lasting_one": "Durabilité réduite constatée {{count}} fois sur ce disque pendant la séance.",
+      "reduced_lasting_other": "Durabilité réduite constatée {{count}} fois sur ce disque pendant la séance.",
+      "not_durable": "Sauvegarde non confirmée : le fichier est écrit, mais sa synchronisation a échoué.",
+      "refused": "Sauvegarde refusée : la dernière rangée lue n'est pas sur le disque.",
+      "invalid": "Sauvegarde non retenue : la séance est suspendue.",
+      "recovered": "Rangées récupérées après une interruption (fichier validé).",
+      "correction": "État après le retrait d'une rangée."
+    },
+    "durability_short": {
+      "reduced": "durabilité réduite",
+      "not_durable": "sauvegarde non confirmée",
+      "refused": "sauvegarde refusée",
+      "invalid": "sauvegarde non retenue",
+      "recovered": "récupérée",
+      "correction": "corrigée"
+    },
+    "event": {
+      "checkpoint": "Rangée {{pass}} sauvegardée ({{patches}} patches utiles)",
+      "suspended": "Séance suspendue : {{reason}}",
+      "error": "Erreur : {{error}}",
+      "run_ended": "Lecture arrêtée",
+      "corrected": "Rangée {{pass}} retirée pour être relue",
+      "published": "Mesure publiée",
+      "calibration_prompt": "Calibration demandée",
+      "misread": "Lecture ratée",
+      "wrong_strip": "Mauvaise rangée",
+      "unexpected": "Valeur inattendue",
+      "needcal": "Recalibration demandée par l'instrument",
+      "sensor_position": "Molette mal placée"
+    },
+    "problem": {
+      "instrument_lost": {
+        "title": "Instrument perdu",
+        "body": "L'instrument ne répond plus (débranché, câble ?). La mesure a été arrêtée proprement. Rebranche-le, puis reprends."
+      },
+      "output_flood": {
+        "title": "Erreurs en rafale de l'instrument",
+        "body": "chartread répétait la même erreur sans arrêt (souvent une connexion USB perdue) : la mesure a été arrêtée."
+      },
+      "engine_spinning": {
+        "title": "Moteur bloqué",
+        "body": "chartread tournait sans rien produire : il a été arrêté."
+      },
+      "engine_timeout": {
+        "title": "Pas de réponse du moteur",
+        "body": "chartread n'a pas répondu dans le délai prévu : il a été arrêté."
+      },
+      "counts_diverge": {
+        "title": "Comptes incohérents",
+        "body": "chartread et freeglaz ne s'accordent pas sur les rangées lues : la mesure a été mise en pause. Reprends-la pour comparer à nouveau."
+      },
+      "engine_not_checkpointing": {
+        "title": "Le moteur ne sauvegarde pas",
+        "body": "chartread ne confirme pas la sauvegarde après chaque rangée (-K) : la mesure a été arrêtée avant toute lecture."
+      },
+      "instrument_not_spectral": {
+        "title": "Instrument sans spectres",
+        "body": "Cet instrument ne fournit pas de spectres : sa mesure ne peut pas servir au profilage."
+      },
+      "instrument_unit_changed": {
+        "title": "Autre instrument branché",
+        "body": "Ce n'est pas l'instrument qui a commencé la séance (numéro de série différent). Rebranche le premier, ou abandonne la séance."
+      },
+      "start_failed": {
+        "title": "Démarrage impossible",
+        "body": "chartread n'a pas pu ouvrir l'instrument (absent, occupé ou non pris en charge)."
+      },
+      "fatal": {
+        "title": "Erreur du moteur",
+        "body": "chartread s'est arrêté sur une erreur."
+      },
+      "driver_failure": {
+        "title": "Erreur du pilote",
+        "body": "Le pilote freeglaz a rencontré une erreur et a arrêté chartread."
+      },
+      "engine_error": {
+        "title": "Erreur du moteur",
+        "body": "chartread s'est arrêté sur une erreur."
+      },
+      "checkpoint_refused": {
+        "title": "Sauvegarde refusée",
+        "body": "chartread n'a pas pu enregistrer la dernière rangée (disque plein ?). Elle n'est pas sauvegardée et sera relue à la reprise. Libère de la place, puis reprends."
+      },
+      "checkpoint_not_durable": {
+        "title": "Sauvegarde non confirmée",
+        "body": "La dernière rangée est enregistrée, mais sa durabilité n'est pas confirmée (le dossier n'a pas pu être synchronisé) : la séance est suspendue. Vérifie le disque, puis reprends."
+      },
+      "checkpoint_invalid": {
+        "title": "Sauvegarde invalide",
+        "body": "Le fichier écrit par chartread ne correspond pas à la charte (instrument, condition, rangées) : il n'a pas été retenu, la séance est suspendue."
+      },
+      "session_write_failed": {
+        "title": "Écriture impossible",
+        "body": "freeglaz n'a pas pu enregistrer l'état de la séance (disque plein ?). La séance est suspendue ; elle sera remise en ordre à la reprise."
+      },
+      "suspended": {
+        "title": "Séance suspendue",
+        "body": "La séance a été suspendue."
+      },
+      "interrupted": {
+        "title": "Séance interrompue",
+        "body": "freeglaz s'est arrêté pendant la lecture. Les rangées sauvegardées sont intactes : reprends quand tu veux."
+      },
+      "exited": {
+        "title": "chartread s'est arrêté",
+        "body": "Le moteur s'est arrêté de lui-même. Les rangées sauvegardées sont intactes."
+      }
+    },
+    "publish": {
+      "publish": "Publier la mesure",
+      "published_title": "Mesure publiée.",
+      "published": "Elle est enregistrée comme {{stem}} ({{n}} lectures) et apparaît dans l'onglet Mesures.",
+      "accepted_one": "{{count}} valeur inattendue a été gardée pendant la lecture.",
+      "accepted_other": "{{count}} valeurs inattendues ont été gardées pendant la lecture.",
+      "corrections": "Rangées retirées puis relues : {{list}}.",
+      "check": {
+        "complete": "Toutes les rangées sont sauvegardées ({{passes}} / {{total}})",
+        "spectral": "Spectres : {{n}} bandes de {{start}} à {{end}} nm",
+        "instrument": "Instrument signalé : {{value}}",
+        "calstd": "Standard de calibration : {{value}}",
+        "provenance": "Provenance : {{origin}}"
+      }
+    },
+    "notice": {
+      "stale": "L'état de la mesure avait changé : il a été rechargé, rien n'a été envoyé.",
+      "sse_lost": "Connexion aux événements interrompue : actualisation toutes les 2 secondes."
     }
   }
 }

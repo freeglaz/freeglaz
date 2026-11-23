@@ -44,7 +44,7 @@ assert(flat(fr.measurement).every((k) => String(k.split('.').reduce((o, x) => o[
 
 console.log('Test 2 — static keys used by the components');
 const files = ['components/Charts/ArgyllProfileWizard.jsx', 'components/Charts/MeasurementBadge.jsx',
-  'components/Charts/IdentityRefusal.jsx', 'components/Charts/ExternalMeasurementPending.jsx',
+  'components/Charts/IdentityRefusal.jsx', 'components/ExternalMeasure/ExternalMeasurePanel.jsx',
   'components/Charts/ScanKeepList.jsx', 'components/Charts/BuildPreviewSummary.jsx',
   'components/Charts/ProfileBuildPanel.jsx', 'components/Mesures/MesuresPage.jsx', 'lib/measurementMethod.js'];
 const used = new Set();
@@ -110,7 +110,7 @@ assert(!/PrintedExternalView[\s\S]{0,4000}?scanChart/.test(wiz.slice(wiz.indexOf
        'PrintedExternalView never calls the scan API');
 const mes = read(join(src, 'components/Mesures/MesuresPage.jsx'));
 assert(/if \(!detail \|\| chartMeasurement\(detail\.identity\)\.external\) return;/.test(mes), 'Measurements: openScan refuses an external chart');
-assert(/idMeasurement\.external \? \(\s*\/\/[^\n]*\n[^\n]*\n\s*<ExternalMeasurementPending/.test(mes), 'Measurements: explicit pending state instead of the scan button');
+assert(/idMeasurement\.external \? \(\s*\/\/[^\n]*\n[^\n]*\n\s*<ExternalMeasurePanel/.test(mes), 'Measurements: the external measurement panel instead of the scan button');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

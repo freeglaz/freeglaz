@@ -1,0 +1,90 @@
+/**
+ * i18n of the external measurement interface:
+ *  1. fr / en parity of the external_measure catalog, no empty string;
+ *  2. every static key used by the ExternalMeasure components and the hook exists in both;
+ *  3. every code the interface translates dynamically mirrors the backend and is translated:
+ *     run states, problems, durability kinds, calibration kinds, warning prompts, presence,
+ *     events, engine origins, and every error code the service and the engine resolver send;
+ *  4. the components never send a key to chartread nor offer a reading trigger.
+ * Run: node webapp/frontend/src/lib/externalSession.i18n.test.mjs
+ */
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const src = join(here, '..');
+const repo = join(src, '..', '..', '..');
+const read = (p) => readFileSync(p, 'utf-8');
+const fr = JSON.parse(read(join(src, 'i18n/locales/fr.json')));
+const en = JSON.parse(read(join(src, 'i18n/locales/en.json')));
+
+let pass = 0, fail = 0;
+function assert(cond, msg) { if (cond) { pass++; console.log(`  ✓ ${msg}`); } else { fail++; console.error(`  ✗ ${msg}`); } }
+const flat = (o, p = '') => Object.entries(o).flatMap(([k, v]) => (v && typeof v === 'object' ? flat(v, `${p}${k}.`) : [`${p}${k}`]));
+const get = (cat, key) => key.split('.').reduce((o, k) => (o == null ? undefined : o[k]), cat);
+const has = (cat, key) => get(cat, key) !== undefined || (get(cat, `${key}_one`) !== undefined && get(cat, `${key}_other`) !== undefined);
+const both = (key) => has(fr, key) && has(en, key);
+
+console.log('Test 1 — fr / en parity of external_measure');
+const kf = flat(fr.external_measure).sort(), ke = flat(en.external_measure).sort();
+assert(JSON.stringify(kf) === JSON.stringify(ke), `same ${kf.length} keys in fr and en`);
+assert(kf.every((k) => String(get(fr.external_measure, k)).trim() && String(get(en.external_measure, k)).trim()), 'no empty string');
+assert(fr.measurement.pending === undefined && en.measurement.pending === undefined, 'the "not integrated yet" texts are gone');
+
+console.log('Test 2 — static keys of the components');
+const files = ['components/ExternalMeasure/ExternalMeasureWizard.jsx', 'components/ExternalMeasure/ExternalMeasurePanel.jsx',
+  'components/ExternalMeasure/StripMap.jsx'];
+const used = new Set();
+for (const f of files) for (const m of read(join(src, f)).matchAll(/t\(\s*'((?:external_measure|errors|measurement|common)\.[a-z0-9_.]+)'/gi)) used.add(m[1]);
+const missing = [...used].filter((k) => !both(k));
+assert(used.size > 40, `${used.size} static keys found`);
+assert(missing.length === 0, `all present ${missing.length ? JSON.stringify(missing) : ''}`);
+
+console.log('Test 3 — dynamic codes mirror the backend');
+const service = read(join(repo, 'webapp/backend/services/external_measure.py'));
+const engine = read(join(repo, 'lib/z9_client/chartread_fgk/engine.py'));
+const session = read(join(repo, 'lib/z9_client/chartread_fgk/session.py'));
+const run = read(join(repo, 'lib/z9_client/chartread_fgk/run.py'));
+const lib = read(join(src, 'lib/externalSession.js'));
+const phases = /_PUBLIC_PHASES = \{([^}]*)\}/.exec(service)[1].match(/"([a-z_]+)"/g).map((s) => s.replaceAll('"', ''));
+const states = [...phases, 'stopping', 'none', 'idle', 'complete', 'published', 'abandoned'];
+assert(states.every((s) => both(`external_measure.state.${s}`)), `every state translated (${states.length})`);
+const svcCodes = [...service.matchAll(/ExternalMeasureError\(\d{3}, "([a-z_]+)"/g)].map((m) => m[1]);
+const engCodes = [...engine.matchAll(/_fail\("([a-z_]+)"/g)].map((m) => m[1]);
+const sessCodes = [...session.matchAll(/SessionError\("([a-z_]+)"/g)].map((m) => m[1]).filter((c) => c !== 'internal');
+const presCodes = ['absent', 'other', 'several'].map((s) => `instrument_${s}`);
+const errs = [...new Set([...svcCodes, ...engCodes, ...sessCodes, ...presCodes, 'measurement_empty', 'measurement_not_spectral'])];
+const untranslated = errs.filter((c) => !both(`errors.${c}`));
+assert(svcCodes.length > 10 && engCodes.length > 8, `${svcCodes.length} service and ${engCodes.length} engine codes found`);
+assert(untranslated.length === 0, `every error code translated ${untranslated.length ? JSON.stringify(untranslated) : ''}`);
+const runErrors = [...run.matchAll(/_fail\("([a-z_]+)"/g)].map((m) => m[1]);
+const libProblems = [...lib.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+assert(runErrors.every((k) => libProblems.includes(k)), `every Run error kind known to the interface (${runErrors})`);
+const problems = [...new Set([...runErrors, 'checkpoint_refused', 'checkpoint_not_durable', 'checkpoint_invalid', 'session_write_failed',
+  'start_failed', 'fatal', 'driver_failure', 'engine_error', 'suspended', 'interrupted', 'exited'])];
+assert(problems.every((k) => both(`external_measure.problem.${k}.title`) && both(`external_measure.problem.${k}.body`)),
+       `every problem has a title and a body (${problems.length})`);
+for (const d of ['none', 'full', 'reduced', 'reduced_lasting', 'not_durable', 'refused', 'invalid', 'recovered', 'correction']) {
+  assert(both(`external_measure.durability.${d}`), `durability.${d}`);
+}
+for (const c of ['sensor_position', 'white_reference', 'white_calibration', 'other']) assert(both(`external_measure.calibrate.${c}`), `calibration ${c}`);
+const promptsSrc = read(join(repo, 'lib/z9_client/chartread_fgk/prompts.py'));
+const waitPrompts = /WAIT_PROMPTS = \{([^}]*)\}/s.exec(run)[1].match(/"([a-z_]+)"/g).map((s) => s.replaceAll('"', ''));
+assert(waitPrompts.every((k) => both(`external_measure.warning.${k}`)), `every warning prompt translated (${waitPrompts})`);
+assert(/def _calibration_kind/.test(promptsSrc) && ['sensor_position', 'white_reference', 'white_calibration'].every((k) => promptsSrc.includes(`"${k}"`)),
+       'calibration kinds mirror prompts.py');
+for (const s of ['present', 'present_family', 'absent', 'other', 'several', 'error']) assert(both(`external_measure.presence.${s}`), `presence ${s}`);
+for (const o of ['approved', 'development', 'test']) assert(both(`external_measure.origin.${o}`), `origin ${o}`);
+
+console.log('Test 4 — no key to chartread, no reading trigger');
+const wiz = read(join(src, 'components/ExternalMeasure/ExternalMeasureWizard.jsx'));
+const hook = read(join(src, 'hooks/useExternalSession.js'));
+const commands = [...(wiz + hook).matchAll(/command\('([a-z_]+)'\)/g)].map((m) => m[1]);
+const allowedCmds = ['calibrate', 'abort_calibration', 'prev', 'next', 'next_unread', 'retry', 'give_up', 'accept', 'pause'];
+assert(commands.length > 5 && commands.every((c) => allowedCmds.includes(c)), `only backend commands are sent (${[...new Set(commands)]})`);
+assert(!/keydown[\s\S]{0,200}(command|post)\(/.test(wiz), 'no keyboard event is forwarded to the engine');
+assert(!/onUnmount|pause\(\)[\s\S]{0,40}return \(\) =>/.test(hook) && !/command\('pause'\)/.test(hook), 'closing or unmounting never pauses');
+
+console.log(`\n${pass} passed, ${fail} failed`);
+if (fail) process.exit(1);

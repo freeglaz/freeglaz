@@ -147,6 +147,47 @@ def test_a_session_from_creation_to_publication(lab, caplog):
     assert SERIAL_SECRET not in public and str(lab.tmp) not in public
 
 
+def test_the_interface_context_and_summary(lab):
+    """What the UI shows comes from the snapshot: chart size, engine, presence, conditions, the
+    strip labels and which are saved, the last session once published. Nothing private in it."""
+    lab.mp.setattr(em.ExternalMeasureService, "CONTEXT_TTL_S", 0.0)
+    s = snap(lab)
+    ctx = s["context"]
+    assert (s["state"], s["actions"], s["last_session"]) == ("none", ["create"], None)
+    assert (ctx["model"], ctx["filter_options"], ctx["filter_required"]) == ("colormunki", [], False)
+    assert ctx["chart"] == {"patch_count": 130, "n_strips": 5}
+    assert ctx["engine"] == {"ok": False, "code": "engine_missing"}
+    assert ctx["presence"]["status"] == "present" and ctx["lock_scope"] == "user"
+    lab.engine(button_ms=20)
+    eng = snap(lab)["context"]["engine"]
+    assert eng["ok"] and eng["origin"] == "approved" and eng["publishable"] and eng["patch_version"]
+    s = lab.client.post(lab.base, json={}).json()
+    sm = s["session"]
+    assert sm["pass_labels"] == ["A", "B", "C", "D", "E"] and sm["passes"] == [] and sm["identity"] is None
+    assert post(lab, "/start", s).status_code == 200
+    calibrate(lab)
+    s = run_to_end(lab)
+    sm = s["session"]
+    assert sm["passes"] == sm["pass_labels"] and sm["final"] and sm["corrections"] == []
+    assert sm["identity"]["n_bands"] == 36 and sm["last_stop"]["reason"] == sm["last_run_end"] == "finished"
+    assert post(lab, "/finalize", s).status_code == 200
+    s = snap(lab)
+    assert s["state"] == "published" and s["session"] is None
+    assert s["last_session"]["published"]["stem"] and s["last_session"]["passes_saved"] == 5
+    public = json.dumps(s)
+    assert SERIAL_SECRET not in public and str(lab.tmp) not in public
+
+
+def test_i1pro3plus_context_offers_conditions_without_default(tmp_path, monkeypatch):
+    store = tmp_path / "store"
+    monkeypatch.setenv("FREEGLAZ_STORE_ROOT", str(store))
+    chart = make_chart(store, n_useful=52, steps=26, model="i1pro3plus")
+    svc = em.ExternalMeasureService(presence_provider=lambda m: Presence("absent", m), lock_scope=lambda: "user")
+    ctx = svc.context(chart.chart_id)
+    assert ctx["filter_required"] and [o["condition"] for o in ctx["filter_options"]] == ["M0", "M1", "M2"]
+    assert ctx["presence"]["status"] == "absent"
+
+
 # ─── commands ───────────────────────────────────────────────────────────────
 def test_stale_and_forbidden_commands_do_nothing(lab):
     create_and_start(lab)

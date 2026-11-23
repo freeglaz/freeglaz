@@ -31,7 +31,7 @@ import {
 } from '../../lib/measurementMethod.js';
 import { openInLibrary } from '../../lib/libraryLink.js';
 import MeasurementBadge from './MeasurementBadge.jsx';
-import ExternalMeasurementPending from './ExternalMeasurementPending.jsx';
+import ExternalMeasurePanel from '../ExternalMeasure/ExternalMeasurePanel.jsx';
 
 /**
  * ArgyllProfileWizard — custom profiling (Argyll) as an ACTION ON THE SLOT, mirroring
@@ -731,7 +731,8 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
           {phase === 'scanready' && selected && selectedExternal && (
             <div className="space-y-2.5">
               <ScanReadyView chart={selected}/>
-              <ExternalMeasurementPending chart={selected} nScans={selected.n_scans ?? 0}/>
+              <ExternalMeasurePanel chartId={selected.chart_id} instrument={chartMeasurement(selected).instrument}
+                                    nScans={selected.n_scans ?? 0}/>
             </div>
           )}
           {phase === 'scanready' && selected && !selectedExternal && (
@@ -1446,8 +1447,8 @@ function PrinttargPreviewView({ t, result, family, printBlockedBy, dev }) {
   );
 }
 
-// After printing an external chart: ready for an external measurement, NO scan action (the
-// chartread driver is a later increment). The chart waits in the library.
+// After printing an external chart: the external measurement panel (chartread-fgK session),
+// NO built-in scan action. The chart also waits in the library.
 function PrintedExternalView({ t, chart, onClose, onOpenLibrary }) {
   const m = chartMeasurement(chart);
   return (
@@ -1465,7 +1466,7 @@ function PrintedExternalView({ t, chart, onClose, onOpenLibrary }) {
         <Info size={14} className="mt-0.5 text-accent flex-shrink-0"/>
         <span>{t('measurement.printed.body', { instrument: instrumentLabel(t, m.instrument) })}</span>
       </div>
-      <p className="text-tiny text-text-faint">{t('measurement.pending.later')}</p>
+      {chart?.chart_id && <ExternalMeasurePanel chartId={chart.chart_id} instrument={m.instrument}/>}
       <div className="flex items-center justify-end gap-2 pt-1">
         <button type="button" onClick={onOpenLibrary} data-action="open-library"
                 className="text-xs2 font-medium border border-border-soft text-text-strong px-3 py-1.5 rounded-md hover:bg-sunken">

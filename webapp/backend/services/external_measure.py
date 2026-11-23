@@ -62,6 +62,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from lib.z9_client import cache
+from lib.z9_client import measurement_identity as mi
 from lib.z9_client import measurement_publish as mp
 from lib.z9_client.argyll import instrument_env
 from lib.z9_client.chartread_fgk import engine as fgk
@@ -189,6 +190,7 @@ class ExternalMeasureService:
         self._active: Optional[_Active] = None
         self._idle_state: dict[str, tuple[str, int]] = {}
         self._presence_note: dict[str, str] = {}
+        self._ctx_cache: dict[str, tuple[float, dict]] = {}
 
     # ─── lookups ────────────────────────────────────────────────────────────
     def _chart_dir(self, chart_id: str) -> Path:
@@ -203,6 +205,47 @@ class ExternalMeasureService:
 
     def is_running(self, chart_id: str) -> bool:
         return self.active_chart() == chart_id
+
+    # ─── context shown before and during a measurement ─────────────────────
+    CONTEXT_TTL_S = 2.0
+
+    def context(self, chart_id: str) -> dict:
+        """What the interface needs around the session: the chart's instrument and size, the
+        conditions it may be read under, whether the engine is there (and publishable), whether
+        the instrument is plugged in. Passive only (no instrument opened); cached 2 s."""
+        now = time.monotonic()
+        hit = self._ctx_cache.get(chart_id)
+        if hit and now - hit[0] < self.CONTEXT_TTL_S:
+            return hit[1]
+        d = self._chart_dir(chart_id)
+        try:
+            desc = json.loads((d / "chart.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            desc = {}
+        model = (desc.get("instrument") or {}).get("key")
+        m = mi.INSTRUMENT_MODELS.get(model) if model else None
+        options = ([{"option": opt, "condition": cond} for opt, cond in mi.CHARTREAD_FILTERS.items()
+                    if cond in m.conditions] if m and m.filter_selectable else [])
+        try:
+            spec, _ = self.engine_provider()
+            engine = {"ok": True, "origin": spec.origin, "publishable": spec.origin == ORIGIN_APPROVED,
+                      "argyll_version": spec.argyll_version, "patch_version": spec.patch_version}
+        except SessionError as e:
+            engine = {"ok": False, "code": e.code}
+        presence = None
+        if m is not None:
+            try:
+                p = self.presence_provider(model)
+                presence = {"status": p.status, "family_only": p.family_only,
+                            "instruments": [x.argyll_name for x in p.instruments]}
+            except Exception:                            # a listing problem is never an absence
+                presence = {"status": "error", "family_only": False, "instruments": []}
+        geom = desc.get("geometry") or {}
+        ctx = {"model": model, "filter_options": options, "filter_required": bool(options),
+               "chart": {"patch_count": geom.get("patch_count"), "n_strips": geom.get("total_strips")},
+               "engine": engine, "presence": presence, "lock_scope": self.lock_scope()}
+        self._ctx_cache[chart_id] = (now, ctx)
+        return ctx
 
     # ─── state ──────────────────────────────────────────────────────────────
     def _idle(self, chart_id: str, session: Optional[Session]) -> tuple[str, list[str]]:
@@ -230,7 +273,8 @@ class ExternalMeasureService:
         with self._lock:
             act = self._active if self._active and self._active.chart_id == chart_id else None
             if act is not None:
-                return {**act.view, "chart_id": chart_id, "seq": self.broadcast.rev(chart_id), "running": True}
+                return {**act.view, "chart_id": chart_id, "seq": self.broadcast.rev(chart_id), "running": True,
+                        "context": self.context(chart_id)}
         session = Session.find_open(d)
         state, actions = self._idle(chart_id, session)
         state_seq = self._idle_seq(chart_id, state)
@@ -239,7 +283,13 @@ class ExternalMeasureService:
                 "session": _scrub(session.summary()) if session else None,
                 "publishable": bool(session and session.data["engine"]["origin"] == ORIGIN_APPROVED),
                 "lock_scope": self.lock_scope(), "presence": self._presence_note.get(chart_id),
-                "notices": self.broadcast.recent(chart_id)[-20:]}
+                "notices": self.broadcast.recent(chart_id)[-20:], "context": self.context(chart_id),
+                "last_session": _scrub(last.summary()) if session is None and (last := self._last_session(chart_id))
+                else None}
+
+    def _last_session(self, chart_id: str) -> Optional[Session]:
+        sessions = Session.sessions(self._chart_dir(chart_id))
+        return sessions[-1] if sessions else None
 
     def _check(self, chart_id: str, action: str, expect_state: Optional[str], seq: Optional[int],
                snap: Optional[dict] = None) -> dict:

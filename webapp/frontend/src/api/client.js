@@ -1427,3 +1427,36 @@ export async function deleteChart(chartId) {
 export async function lightenChart(chartId) {       // deletes the TIFF chart, keeps the ti3
   return http(`/api/charts/${encodeURIComponent(chartId)}/lighten`, { method: 'POST' });
 }
+
+// ─── External measurement (chartread-fgK sessions) ──────────────────────────
+// Every POST but creation carries {expect_state, seq} from the snapshot it was decided on
+// (built by lib/externalSession.commandBody); the backend refuses an older decision with
+// 409 stale_command. The client never names an executable, an argument or an engine.
+const emBase = (chartId) => `/api/charts/${encodeURIComponent(chartId)}/external-measure`;
+
+export async function getExternalMeasure(chartId) {
+  return http(emBase(chartId));
+}
+export async function createExternalMeasure(chartId, filterOption = null) {
+  return http(emBase(chartId), { method: 'POST', body: JSON.stringify({ filter_option: filterOption }) });
+}
+export async function postExternalMeasure(chartId, action, body) {
+  const path = action === 'command' || action === 'start' || action === 'correct' || action === 'finalize'
+    || action === 'abandon' ? `/${action}` : null;
+  if (!path) throw new Error(`unknown external measure action ${action}`);
+  return http(emBase(chartId) + path, { method: 'POST', body: JSON.stringify(body) });
+}
+
+/** SSE of a chart's measurement: a snapshot at once, then one per change (ids are seqs, so
+ *  the browser's own reconnection resumes with Last-Event-ID). Returns {close}. */
+export const subscribeExternalMeasure = (chartId, { onSnapshot, onError } = {}) => {
+  const es = new EventSource(BASE + emBase(chartId) + '/events');
+  const onSnap = (e) => {
+    try { onSnapshot?.(JSON.parse(e.data)); } catch { /* malformed: ignored, polling catches up */ }
+  };
+  es.addEventListener('snapshot', onSnap);
+  es.onerror = () => onError?.();
+  return {
+    close: () => { es.removeEventListener('snapshot', onSnap); es.close(); },
+  };
+};

@@ -86,7 +86,14 @@ _LINE_PATTERNS: list[tuple[str, str]] = [
     ("passes_in_strip", r"Passes in each Strip = (?P<pis_n>\d+)"),
     ("instrument_field", r"(?P<if_name>Instrument Type|Serial Number|Firmware version|Version string"
                          r"|Calibration Ver\.|Chip ID|Production No\.):[ \t]*(?P<if_value>.*)"),
-    ("start_failed", r"Establishing communications with instrument failed with message '(?P<sf_msg>.*)"),
+    # chartread.c start-up failures (it exits right after them, status 0)
+    ("start_failed", r"Establishing communications with instrument failed with message '(?P<sf_msg>.*)"
+                     r"|Initialising instrument failed with message '(?P<sf_msg2>.*)"
+                     r"|(?P<sf_text>Unknown, inappropriate or no instrument detected"
+                     r"|Setting requested filter not supported by instrument"
+                     r"|Need reflection spot, strip, xy or chart reading capability,)"),
+    ("instrument_not_spectral", r"Warning: Instrument isn't capable of spectral measurement"),
+    ("chart_instrument", r"Warning: chart is for (?P<ci_chart>.*), using instrument (?P<ci_inst>.*)"),
     ("fatal", r"(?P<fe_prog>chartread[\w.-]*): Error - (?P<fe_msg>.*)"),
     # macOS IOKit transfer errors (usbio_ox.c), possibly glued to other text.
     ("usb_error", r"icoms_usb_transaction: (?P<ue_dir>Read|Write)PipeAsync failed with "
@@ -258,8 +265,12 @@ class PromptParser:
             return {"message": g["ckf_msg"] or g["ckr_msg"] or g["ckn_msg"]}
         if name == "strip_ok":
             return {"reversed": g["ok_rev"] is not None, "dtp_offset": g["ok_dtp"] is not None}
-        if name in ("start_failed", "calibration_failed"):
-            return {"message": g["sf_msg"] or g["cf_msg"]}
+        if name == "start_failed":
+            return {"message": g["sf_msg"] or g["sf_msg2"] or g["sf_text"]}
+        if name == "calibration_failed":
+            return {"message": g["cf_msg"]}
+        if name == "chart_instrument":
+            return {"chart": g["ci_chart"], "instrument": g["ci_inst"]}
         if name in ("steps_in_pass", "passes_in_strip"):
             return {"n": int(g["sip_n"] or g["pis_n"])}
         if name == "instrument_field":

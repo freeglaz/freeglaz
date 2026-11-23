@@ -133,7 +133,8 @@ def ready(step):
         if key:
             cls = "command" if key[0] in COMMAND_KEYS else "abort" if key[0] in ABORT_KEYS else "TRIGGER"
             log_key("ready", key, cls)
-            out("\n")
+            if cls == "command":                        # chartread: printf("\n") for a command
+                out("\n")
             return key
         if button_at is not None and time.monotonic() >= button_at:
             log_key("ready", b"", "button")
@@ -141,7 +142,180 @@ def ready(step):
         time.sleep(0.05)
 
 
+# ─── "measure": a small strip-reading chartread with -K checkpoints ─────────
+TARGETS = {"colormunki": "X-Rite ColorMunki", "i1pro3": "X-Rite i1 Pro 3"}
+
+
+def _read_cgats(path):
+    kw, fmt, rows, state = {}, [], [], "head"
+    for ln in open(path, encoding="latin-1").read().splitlines():
+        s = ln.strip()
+        if state == "data":
+            if s == "END_DATA":
+                break
+            if s:
+                rows.append(s.split())
+        elif s == "BEGIN_DATA_FORMAT":
+            state = "fmt"
+        elif state == "fmt":
+            if s == "END_DATA_FORMAT":
+                state = "head"
+            else:
+                fmt += s.split()
+        elif s == "BEGIN_DATA":
+            state = "data"
+        elif s and " " in s:
+            k, v = s.split(None, 1)
+            kw.setdefault(k, v.strip('"'))
+    return kw, fmt, rows
+
+
+def _label(loc):
+    return loc.strip('"').rstrip("0123456789")
+
+
+def measure(cfg):
+    args = sys.argv[2:]
+    base, resume, nocal = args[-1], "-r" in args, "-N" in args
+    flt = args[args.index("-F") + 1] if "-F" in args else None
+    kw, fmt, rows = _read_cgats(base + ".ti2")
+    i_id, i_loc = fmt.index("SAMPLE_ID"), fmt.index("SAMPLE_LOC")
+    rgb_i = [fmt.index(c) for c in ("RGB_R", "RGB_G", "RGB_B")]
+    values = json.load(open(cfg["values"]))
+    labels = sorted({_label(r[i_loc]) for r in rows}, key=lambda s: (len(s), s))
+    members = {lab: [k for k, r in enumerate(rows) if _label(r[i_loc]) == lab and r[i_id] != "0"]
+               for lab in labels}
+    read = {}                                            # row index -> measured value strings
+    if resume and os.path.exists(base + ".ti3"):
+        _, f3, r3 = _read_cgats(base + ".ti3")
+        where = {r[i_loc]: k for k, r in enumerate(rows)}
+        for r in r3:
+            read[where[r[f3.index("SAMPLE_LOC")]]] = r[f3.index("XYZ_X"):]
+    nb = len(next(iter(values.values()))) - 3
+    target = cfg.get("target_instrument", TARGETS[cfg.get("type", "colormunki")])
+
+    def write(final=False, crash=None):
+        head = ["CTI3   ", "", 'DESCRIPTOR "Argyll Calibration Target chart information 3"',
+                'ORIGINATOR "Argyll chartread"', f'CREATED "{time.ctime()} {time.monotonic_ns()}"',
+                'DEVICE_CLASS "OUTPUT"', 'COLOR_REP "iRGB_XYZ"', f'TARGET_INSTRUMENT "{target}"']
+        if cfg.get("instrument_filter"):                 # a wrong keyword, for refusal tests
+            head.append(f'INSTRUMENT_FILTER "{cfg["instrument_filter"]}"')
+        elif flt == "u":
+            head.append('INSTRUMENT_FILTER "UVCUT"')
+        head += [f'DEVCALSTD "{cfg.get("devcalstd", "XRGA")}"', f'SPECTRAL_BANDS "{nb}"',
+                 f'SPECTRAL_START_NM "{cfg.get("start_nm", 380):.6f}"', ""]
+        cols = ["SAMPLE_ID", "SAMPLE_LOC", "RGB_R", "RGB_G", "RGB_B", "XYZ_X", "XYZ_Y", "XYZ_Z"] + \
+            [f"SPEC_{int(cfg.get('start_nm', 380) + 10 * j)}" for j in range(nb)]
+        body = [" ".join([rows[k][i_id], rows[k][i_loc]] + [rows[k][i] for i in rgb_i] + read[k])
+                for k in sorted(read)]
+        text = "\n".join(head + [f"NUMBER_OF_FIELDS {len(cols)}", "BEGIN_DATA_FORMAT", " ".join(cols),
+                                 "END_DATA_FORMAT", "", f"NUMBER_OF_SETS {len(body)}", "BEGIN_DATA"]
+                         + body + ["END_DATA", ""]).encode()
+        tmp = base + ".ti3.tmp"
+        with open(tmp, "wb") as f:
+            if crash == "during_write":
+                f.write(text[:len(text) // 2])
+                f.flush()
+                os.kill(os.getpid(), signal.SIGKILL)
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, base + ".ti3")
+        if crash == "after_rename":
+            os.kill(os.getpid(), signal.SIGKILL)
+        return len(body)
+
+    out(f"Steps in each Pass = {kw.get('STEPS_IN_PASS', '?')}\n"
+        f"Passes in each Strip = {kw.get('PASSES_IN_STRIPS2', '1').split(',')[0]}\n")
+    out(f"Instrument Type:   {cfg.get('type_name', 'ColorMunki')}\n")
+    if cfg.get("serial"):
+        out(f"Serial Number: {cfg['serial']}\n")
+    if not (nocal and cfg.get("calibration_valid", True)):
+        out("\n")
+        if key_prompt("calibration", {"instruction": cfg.get("instruction",
+                                      "Set instrument sensor to calibration position,")})[0] in ABORT_KEYS:
+            return 0
+
+    def unread(lab):
+        return any(k not in read for k in members[lab])
+
+    def next_unread(cur):
+        for i in range(1, len(labels) + 1):
+            if unread(labels[(cur + i) % len(labels)]):
+                return (cur + i) % len(labels)
+        return cur
+
+    cur = next((i for i, lab in enumerate(labels) if unread(lab)), 0)
+    trig = nck = 0
+    while True:
+        lab, all_done = labels[cur], not any(unread(x) for x in labels)
+        key = ready({"pass": lab, "all_read": all_done, "read_before": not unread(lab)})
+        if key and key[0] in COMMAND_KEYS:
+            c = key.lower()
+            if c == b"f":
+                cur = (cur + 1) % len(labels)
+            elif c == b"b":
+                cur = (cur - 1) % len(labels)
+            elif c == b"n":
+                cur = next_unread(cur)
+            else:                                        # d (and g, as chartread)
+                if not all_done:
+                    first = next(k for x in labels for k in members[x] if k not in read)
+                    if key_prompt("done_confirm", {"id": rows[first][i_id],
+                                                   "loc": rows[first][i_loc].strip('"')}) not in (b"y", b"Y"):
+                        continue
+                if cfg.get("final") == "fail":
+                    out(f"{os.path.basename(sys.argv[0])}: Error - Write error : write error on "
+                        f"'{base}.ti3.tmp' (No space left on device)\n")
+                    return 1
+                write(final=True)
+                if cfg.get("final") == "reduced":
+                    out("\n(Warning) Checkpoint durability reduced: F_FULLFSYNC not supported for the "
+                        "file, only fsync() done: the drive cache may not be flushed\n")
+                return 0
+            continue
+        if key and key[0] in ABORT_KEYS:
+            if key_prompt("stopped", {})[0] in ABORT_KEYS:
+                return 0
+            continue
+        trig += 1                                        # a reading (button or trigger key)
+        act = cfg.get("actions", {}).get(str(trig), "")
+        if act == "kill":
+            os.kill(os.getpid(), signal.SIGKILL)
+        if act == "misread":
+            if key_prompt("misread", {})[0] in ABORT_KEYS:
+                return 0
+            continue
+        accepted = False
+        if act in ("wrong_strip", "unexpected"):
+            k = key_prompt(act, {"read": labels[(cur + 3) % len(labels)], "expected": lab})
+            if k[0] in ABORT_KEYS:
+                return 0
+            if k not in (b"\r", b"\n"):
+                continue
+            accepted = True
+        scale = float(act.split("=")[1]) if act.startswith("scale=") else 1.0
+        for k in members[lab]:
+            v = values[rows[k][i_loc].strip('"')]
+            read[k] = [f"{x * scale:.6f}" for x in v]
+        if not accepted:
+            out(" Strip read OK\n")
+        nck += 1
+        mode = cfg.get("checkpoints", {}).get(str(nck), "full")
+        if mode == "refused":
+            out(CHECKPOINT["refused"].format(n=0, path=base + ".ti3"))
+        else:
+            n = write(crash={"crash_during_write": "during_write",
+                             "crash_after_rename": "after_rename"}.get(mode))
+            out(CHECKPOINT[mode if mode in CHECKPOINT else "full"].format(n=n, path=base + ".ti3"))
+            if mode == "crash_after_line":
+                os.kill(os.getpid(), signal.SIGKILL)
+        cur = next_unread(cur)
+
+
 def run(step):
+    if "measure" in step:
+        sys.exit(measure(step["measure"]))
     if "say" in step:
         out(step["say"], 2 if step.get("stderr") else 1)
     elif "prompt" in step:

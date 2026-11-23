@@ -154,6 +154,20 @@ def test_strip_prompt_variants_done_confirm_and_errors():
     assert ev[4].data["program"] == "chartread-fgK" and ev[6].data["reversed"]
 
 
+def test_start_up_failures_are_explicit():
+    """chartread exits right after these (status 0): the driver must say why."""
+    ev = parse("Warning: chart is for GretagMacbeth i1 Pro, using instrument X-Rite i1 Pro 3\n"
+               "Setting requested filter not supported by instrument\n"
+               "Unknown, inappropriate or no instrument detected\n"
+               "Initialising instrument failed with message 'Instrument Access Failed' (x)\n"
+               "Warning: Instrument isn't capable of spectral measurement\n")
+    assert kinds(ev) == ["chart_instrument", "start_failed", "start_failed", "start_failed",
+                         "instrument_not_spectral"]
+    assert ev[0].data == {"chart": "GretagMacbeth i1 Pro", "instrument": "X-Rite i1 Pro 3"}
+    assert ev[1].data["message"] == "Setting requested filter not supported by instrument"
+    assert ev[3].data["message"].startswith("Instrument Access Failed")
+
+
 def test_without_K_the_strip_prompt_says_so():
     ev = parse(READY.format(p="A", s="").replace("(passes read so far are saved)", "without saving"))
     assert ev[0].data["checkpointing"] is False

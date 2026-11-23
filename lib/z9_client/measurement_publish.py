@@ -153,21 +153,34 @@ def check_spectral(ti3_text: str) -> tuple[float, ...]:
     is only known from a real reading."""
     from .multipass import parse_ti3
     _, fmt, rows = parse_ti3(ti3_text)            # already proven readable by check_complete
+    issue = spectral_issue(fmt, rows)
+    if issue is not None:
+        raise PublishError("measurement_not_spectral", issue.pop("message"), **issue)
+    return spectral_grid(fmt)
+
+
+def spectral_grid(fmt) -> tuple[float, ...]:
+    """Sorted wavelengths of the SPEC_* columns (raises ValueError on a bad column name)."""
+    return tuple(sorted(float(c[5:]) for c in fmt if c.startswith("SPEC_")))
+
+
+def spectral_issue(fmt, rows) -> Optional[dict]:
+    """The spectral rule shared by publication and checkpoints, on parsed CGATS data: None
+    when it holds, else ``{"message", "reason", …}`` (reason: bad_column | no_spectra |
+    single_band | irregular_grid | non_numeric)."""
     spec = [(k, c) for k, c in enumerate(fmt) if c.startswith("SPEC_")]
     try:
-        bands = sorted(float(c[5:]) for _, c in spec)
+        bands = list(spectral_grid(fmt))
     except ValueError:
-        raise PublishError("measurement_not_spectral", "unreadable spectral column name",
-                           reason="bad_column") from None
+        return {"message": "unreadable spectral column name", "reason": "bad_column"}
     if len(bands) < 2:
-        raise PublishError("measurement_not_spectral",
-                           "an external measurement must carry its spectra (SPEC_* columns)",
-                           reason="no_spectra" if not bands else "single_band", n_bands=len(bands))
+        return {"message": "an external measurement must carry its spectra (SPEC_* columns)",
+                "reason": "no_spectra" if not bands else "single_band", "n_bands": len(bands)}
     steps = [b - a for a, b in zip(bands, bands[1:])]
     if min(steps) <= 0 or max(steps) - min(steps) > 1.0:
-        raise PublishError("measurement_not_spectral", "the spectral bands are not one regular grid",
-                           reason="irregular_grid", bands=bands)
-    sid = fmt.index("SAMPLE_ID")
+        return {"message": "the spectral bands are not one regular grid", "reason": "irregular_grid",
+                "bands": bands}
+    sid = fmt.index("SAMPLE_ID") if "SAMPLE_ID" in fmt else 0
     for row in rows:
         for k, c in spec:
             try:
@@ -175,9 +188,9 @@ def check_spectral(ti3_text: str) -> tuple[float, ...]:
             except (ValueError, IndexError):
                 v = float("nan")
             if not math.isfinite(v):
-                raise PublishError("measurement_not_spectral", f"non-numeric spectral value in {c}",
-                                   reason="non_numeric", column=c, sample_id=row[sid])
-    return tuple(bands)
+                return {"message": f"non-numeric spectral value in {c}", "reason": "non_numeric",
+                        "column": c, "sample_id": row[sid] if row else None}
+    return None
 
 
 @dataclass(frozen=True)

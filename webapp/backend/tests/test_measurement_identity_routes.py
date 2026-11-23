@@ -344,6 +344,8 @@ def test_printtarg_options_come_from_the_whitelist(client, monkeypatch):
     monkeypatch.setattr(subprocess, "Popen", _no_run)
     monkeypatch.setattr(argyll, "find_argyll_binary",
                         lambda name: None if name == "chartread" else f"/opt/argyll/{name}")
+    monkeypatch.delenv("FREEGLAZ_CHARTREAD_FGK", raising=False)
+    monkeypatch.setattr(argyll, "_argyll_config", lambda: {})
     app.dependency_overrides[charts_routes.get_chart_z9] = _no_printer
     r = client.get("/api/charts/printtarg-options")
     assert r.status_code == 200, r.text
@@ -358,7 +360,10 @@ def test_printtarg_options_come_from_the_whitelist(client, monkeypatch):
             (ref.page_w_mm, ref.page_h_mm, ref.unlimited_strip)
         assert i["measurement"]["method"] == "external"
     assert o["roll_layout"]["default"] == "transverse"
-    assert o["binaries"] == {"printtarg": {"available": True}, "chartread": {"available": False}}
+    assert o["binaries"] == {"printtarg": {"available": True},
+                             "chartread": {"available": False, "used_for_measurement": False}}
+    assert o["measurement_engine"]["name"] == "chartread-fgK"
+    assert (o["measurement_engine"]["ok"], o["measurement_engine"]["code"]) == (False, "engine_missing")
     assert o["requires_printer_for_measurement"] is False
 
 

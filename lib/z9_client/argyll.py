@@ -77,8 +77,10 @@ REQUIRED_BINARIES = ("targen", "colprof", "spec2cie", "profcheck")
 # Binaries used by OPTIONAL tooling: the Convert module (collink = build a
 # DeviceLink, cctiff = apply it, tiffgamut = image-aware gamut extraction), the
 # diagnostic gamut bench (xicclu = look colours up through a profile/link) and the
-# external-instrument path (printtarg = strip layout, chartread = reading it with a
-# USB spectrophotometer). Resolved ON DEMAND via find_argyll_binary and NEVER gate
+# external-instrument path (printtarg = strip layout). The official chartread is only
+# REPORTED: freeglaz never measures with it, the external measurement engine is
+# chartread-fgK, resolved and checked by lib.z9_client.chartread_fgk.engine (never
+# through this module). Resolved ON DEMAND via find_argyll_binary and NEVER gate
 # check_argyll's ``ok`` — a freeglaz install without them prints and profiles perfectly.
 # Resolving a path never runs the binary.
 OPTIONAL_BINARIES = ("collink", "cctiff", "tiffgamut", "xicclu", "printtarg", "chartread")

@@ -94,9 +94,12 @@ def get_formats() -> dict:
 def get_printtarg_options() -> dict:
     """What a printtarg chart can be created with: instruments, printtarg selectors,
     media, presets and roll composition, all derived from lib.z9_client.printtarg_chart
-    (no copy here), plus whether printtarg and chartread are installed (path resolution
-    only: no binary is run, no printer and no instrument is contacted)."""
+    (no copy here), plus what is installed: printtarg, the official chartread (reported for
+    information, never used to measure) and the measurement engine chartread-fgK (checked
+    from its manifest). Files are only resolved and read: no binary is run, no printer and
+    no instrument is contacted."""
     from lib.z9_client.argyll import find_argyll_binary
+    from lib.z9_client.chartread_fgk import engine as fgk
     opts = _ptc.supported_options()
     models = _mi.INSTRUMENT_MODELS
     for inst in opts["instruments"]:
@@ -104,8 +107,10 @@ def get_printtarg_options() -> dict:
         inst["measurement"] = ({"method": m.method, "conditions": list(m.conditions),
                                 "filter_selectable": m.filter_selectable} if m else None)
     return {**opts,
-            "binaries": {name: {"available": find_argyll_binary(name) is not None}
-                         for name in ("printtarg", "chartread")},
+            "binaries": {"printtarg": {"available": find_argyll_binary("printtarg") is not None},
+                         "chartread": {"available": find_argyll_binary("chartread") is not None,
+                                       "used_for_measurement": False}},
+            "measurement_engine": fgk.engine_status().to_dict(),
             "requires_printer_for_measurement": False}
 
 

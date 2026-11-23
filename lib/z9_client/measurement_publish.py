@@ -24,9 +24,10 @@ record already in place:
 1. the caller prepares and checks the reading OUTSIDE ``measurements/`` (its session
    folder) and hands over the staged file, the expected SAMPLE_IDs and the record;
 2. :func:`publish_measurement` checks completeness (the exact set of expected
-   SAMPLE_IDs: none missing, none unknown, no duplicate, no padding id 0) and the
-   record against the ti3 (:func:`measurement_identity.identity_from_bytes`) — nothing
-   is written before both pass;
+   SAMPLE_IDs: none missing, none unknown, no duplicate, no padding id 0; an empty ti3 is
+   ``measurement_empty``), the record against the ti3
+   (:func:`measurement_identity.identity_from_bytes`) and, for an external reading, its
+   spectra (:func:`check_spectral`) — nothing is written before all pass;
 3. the bytes are copied to ``<chart>/.publish/`` (same filesystem) and flushed;
 4. the record is written to ``measurements/<stem>.json`` (temporary file + replace);
 5. the ti3 is linked to ``measurements/<stem>.ti3`` LAST, without ever overwriting.
@@ -43,6 +44,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -62,9 +64,9 @@ _LOCK = threading.Lock()
 
 
 class PublishError(ValueError):
-    """Publication refused. ``code`` is stable: measurement_incomplete |
-    measurement_unreadable | measurement_staged_in_place | measurement_publish_conflict |
-    measurement_record_* (from measurement_identity)."""
+    """Publication refused. ``code`` is stable: measurement_empty | measurement_incomplete |
+    measurement_unreadable | measurement_not_spectral | measurement_staged_in_place |
+    measurement_publish_conflict | measurement_record_* (from measurement_identity)."""
 
     def __init__(self, code: str, message: str, **info):
         super().__init__(f"{code}: {message}")
@@ -77,16 +79,45 @@ def _natural(s: str):
     return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", s)]
 
 
+def _data_row_count(ti3_text: str) -> Optional[int]:
+    """Data lines of the first table (blank and comment lines excluded); None when the text
+    has no data format, or no complete BEGIN_DATA … END_DATA block and no NUMBER_OF_SETS."""
+    try:
+        mi.read_ti3_header(ti3_text)
+    except ValueError:
+        return None
+    n, in_data, sets = 0, False, None
+    for raw in ti3_text.splitlines():
+        line = raw.strip()
+        if in_data:
+            if line == "END_DATA":
+                return n
+            if line and not line.startswith("#"):
+                n += 1
+        elif line == "BEGIN_DATA":
+            in_data = True
+        elif line.startswith("NUMBER_OF_SETS") and sets is None:
+            sets = line.split()[1:2]
+    return 0 if sets == ["0"] and not in_data else None
+
+
 def check_complete(ti3_text: str, expected_sample_ids: Collection[str]) -> int:
-    """Raises PublishError(measurement_incomplete) unless the ti3 holds EXACTLY the
-    expected SAMPLE_IDs once each, without padding (id 0), with XYZ or Lab. Returns the
-    number of readings. Completeness is a set equality, not a row count."""
+    """Raises PublishError unless the ti3 holds EXACTLY the expected SAMPLE_IDs once each,
+    without padding (id 0), with XYZ or Lab. Returns the number of readings. Completeness is
+    a set equality, not a row count.
+
+    A ti3 that holds nothing (an empty file, or a header with zero readings, as chartread
+    writes when the session ends before any strip) is ``measurement_empty``: nothing was
+    read. ``measurement_unreadable`` is kept for a file that is not a ti3."""
     from .multipass import parse_ti3
     expected = {str(x) for x in expected_sample_ids}
     if not expected:
         raise ValueError("no expected SAMPLE_ID given")
     if PADDING_SAMPLE_ID in expected:
         raise ValueError("the padding id 0 cannot be an expected reading")
+    if not ti3_text.strip() or _data_row_count(ti3_text) == 0:
+        raise PublishError("measurement_empty", "the ti3 holds no reading (nothing was read)",
+                           expected=len(expected), found=0)
     try:
         _, fmt, rows = parse_ti3(ti3_text)
         i = fmt.index("SAMPLE_ID")
@@ -108,6 +139,45 @@ def check_complete(ti3_text: str, expected_sample_ids: Collection[str]) -> int:
     if not ({"XYZ_X", "XYZ_Y", "XYZ_Z"} <= cols or {"LAB_L", "LAB_A", "LAB_B"} <= cols):
         raise PublishError("measurement_incomplete", "the ti3 has neither XYZ nor Lab columns")
     return len(ids)
+
+
+def check_spectral(ti3_text: str) -> tuple[float, ...]:
+    """An external reading is published only with its spectra: SPEC_* columns on one
+    regular grid (at least two distinct bands, increasing by one step, give or take the 1 nm
+    of Argyll's integer column names), every value a finite number. Returns the bands.
+    Raises PublishError(measurement_not_spectral, reason=…).
+
+    Why: the spectral grid is part of the measurement identity. Without spectra a reading
+    (chartread -n, a replay giving XYZ only) could still feed a build alone, and nothing
+    could tell its instrument apart. The exact grid of each model is NOT imposed here: it
+    is only known from a real reading."""
+    from .multipass import parse_ti3
+    _, fmt, rows = parse_ti3(ti3_text)            # already proven readable by check_complete
+    spec = [(k, c) for k, c in enumerate(fmt) if c.startswith("SPEC_")]
+    try:
+        bands = sorted(float(c[5:]) for _, c in spec)
+    except ValueError:
+        raise PublishError("measurement_not_spectral", "unreadable spectral column name",
+                           reason="bad_column") from None
+    if len(bands) < 2:
+        raise PublishError("measurement_not_spectral",
+                           "an external measurement must carry its spectra (SPEC_* columns)",
+                           reason="no_spectra" if not bands else "single_band", n_bands=len(bands))
+    steps = [b - a for a, b in zip(bands, bands[1:])]
+    if min(steps) <= 0 or max(steps) - min(steps) > 1.0:
+        raise PublishError("measurement_not_spectral", "the spectral bands are not one regular grid",
+                           reason="irregular_grid", bands=bands)
+    sid = fmt.index("SAMPLE_ID")
+    for row in rows:
+        for k, c in spec:
+            try:
+                v = float(row[k])
+            except (ValueError, IndexError):
+                v = float("nan")
+            if not math.isfinite(v):
+                raise PublishError("measurement_not_spectral", f"non-numeric spectral value in {c}",
+                                   reason="non_numeric", column=c, sample_id=row[sid])
+    return tuple(bands)
 
 
 @dataclass(frozen=True)
@@ -196,6 +266,8 @@ def publish_measurement(chart_dir: Path, staged_ti3: Path, record: Mapping,
             identity = mi.identity_from_bytes(data, rec_bytes, chart_id=chart_dir.name)
         except mi.MeasurementRecordError as e:
             raise PublishError(e.code, e.message, **e.info) from None
+        if identity.method == mi.METHOD_EXTERNAL:           # new external readings only
+            check_spectral(data.decode("ascii", errors="replace"))
         pub = chart_dir / PUBLISH_DIR_NAME
         pub.mkdir(exist_ok=True)
         tmp_ti3 = pub / f"{stem}.{secrets.token_hex(4)}.tmp"

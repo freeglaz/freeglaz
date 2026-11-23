@@ -86,7 +86,47 @@ CHARTREAD_FILTERS = {"n": "M0", "5": "M1", "6": "D65", "u": "M2", "p": "M3"}
 TI3_INSTRUMENT_FILTERS = {"UVCUT": "M2", "POLARIZED": "M3", "D65": "D65"}
 # Reading modes other than reflective: never recorded as a profiling measurement.
 _NON_REFLECTIVE_FLAGS = ("-t", "-e", "-d")
+# chartread options whose readings are not a spectral profiling measurement:
+#   -x  values typed in by hand (-xl / -xx), not measured;   -n  spectra not saved.
+_NOT_MEASURED_FLAGS = ("-x", "-n")
+# Programs an external record may name in argv[0]: the official chartread and the freeglaz
+# engine (chartread + checkpoint patch). Anything else (a replay helper, another engine)
+# is not a chartread reading, whatever "tool" says.
+EXTERNAL_PROGRAMS = ("chartread", "chartread-fgK")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _program_name(arg0: str) -> str:
+    """Base name of argv[0], any path style, without a Windows ``.exe``."""
+    name = re.split(r"[\\/]", arg0)[-1]
+    return name[:-4] if name.lower().endswith(".exe") else name
+
+
+def check_external_argv(argv: Sequence[str]) -> None:
+    """The argv of an external reading must be a real chartread reading, reflective, with
+    its spectra. Raises MeasurementRecordError (measurement_record_unsupported).
+
+    chartread reads ONE option letter per argument (``argv[i][1]``, Argyll style), so the
+    letter decides: ``-nv`` is ``-n``. chartread 3.5.0 has no long option at all: any
+    ``--…`` comes from another program (``--replay`` of a simulation, a JSON engine…) and is
+    refused without keeping a list of them. Values of options (``-F n``) do not start with
+    ``-`` and are not options."""
+    prog = _program_name(argv[0])
+    if prog not in EXTERNAL_PROGRAMS:
+        raise _unsupported(f"argv[0] {prog!r} is not chartread", program=prog)
+    for tok in argv[1:]:
+        if tok.startswith("--"):
+            raise _unsupported(f"option {tok} is not a chartread option (simulation or foreign "
+                               "engine): not a measurement", option=tok)
+        if len(tok) < 2 or tok[0] != "-":
+            continue
+        flag = tok[:2]
+        if flag in _NON_REFLECTIVE_FLAGS:
+            raise _unsupported(f"non-reflective reading mode {flag} is not a profiling measurement",
+                               option=tok)
+        if flag in _NOT_MEASURED_FLAGS:
+            raise _unsupported(f"chartread {flag} does not give a spectral measurement "
+                               "(-x: typed values, -n: no spectra)", option=tok)
 
 
 # ── instrument models ───────────────────────────────────────────────────────
@@ -424,9 +464,7 @@ def parse_record(data) -> MeasurementRecord:
             raise _unsupported(f"external tool {tool!r} is not supported (chartread only)")
         if argv is None:
             raise _malformed("an external record must keep the executed argv")
-        bad = [a for a in argv if a in _NON_REFLECTIVE_FLAGS]
-        if bad:
-            raise _unsupported(f"non-reflective reading mode {bad[0]} is not a profiling measurement")
+        check_external_argv(argv)
     software = acq.get("software")
     if software is not None and (not isinstance(software, Mapping)
                                  or not all(isinstance(v, (str, type(None))) for v in software.values())):

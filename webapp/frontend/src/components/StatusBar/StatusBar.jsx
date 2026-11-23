@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { printerLabel } from '../../lib/printerLabel.js';
 import { UIState } from '../../lib/state-machine.js';
 import { fmtPct } from '../../lib/format.js';
 import { useCurrentCalibration } from '../../hooks/useCurrentCalibration.js';
@@ -20,6 +21,7 @@ import JobQueueButton from '../JobQueue/JobQueueButton.jsx';
  */
 export default function StatusBar({
   state, paper, inks, job, progress = 0,
+  printerModel, printerFamily,   // status.model / status.family — the name shown
   z9Activity,     // status.z9_activity — physical printer state (Processing/Drying…)
   queueSnapshot, queueOpen, queueButtonRef, onToggleQueue,
   // Z9 wake
@@ -35,6 +37,7 @@ export default function StatusBar({
   onExitDemo,
 }) {
   const { t } = useTranslation();
+  const printer = printerLabel(printerModel, printerFamily);
   const calibrationJob = useCurrentCalibration();
   const profilingJob = useActiveProfile();
   const printing = state === UIState.E_PRINTING;
@@ -61,13 +64,19 @@ export default function StatusBar({
     <div className="h-9 bg-surface border-t border-border-soft flex items-center px-4 gap-4 text-xs2 text-text-muted">
       <div className="flex items-center gap-2">
         <span className={`w-2 h-2 rounded-full ${dotColor}`}/>
-        <span className="text-xs font-medium text-text-strong">HP DesignJet Z9</span>
+        <span className="text-xs font-medium text-text-strong whitespace-nowrap" data-testid="printer-name">{printer.name}</span>
+        {printer.badge && (
+          <span data-testid="printer-support-badge"
+                className="px-1.5 py-0.5 rounded border border-warn text-text-strong font-semibold text-tiny uppercase tracking-wide whitespace-nowrap">
+            {t(`settings.printers.badge_${printer.badge}`)}
+          </span>
+        )}
         {demo && (
           <span className="px-1.5 py-0.5 rounded bg-accent/15 text-accent font-semibold text-tiny uppercase tracking-wide">
             {t('settings.printers.demo_badge')}
           </span>
         )}
-        <span>· {label}</span>
+        <span className="whitespace-nowrap">· {label}</span>
         {act && (
           <span className="text-accent font-medium">· {activityLabel}</span>
         )}

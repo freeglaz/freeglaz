@@ -605,7 +605,9 @@ export default function App() {
         path={path}
         onNavigate={navigate}
         state={state}
-        showConvert={showConvertTab}/>
+        showConvert={showConvertTab}
+        printerModel={status?.model}
+        printerFamily={status?.family}/>
       <div className="flex-1 flex min-h-0">
         {(isConvertRoute && showConvertTab) ? (
           <ConvertPage
@@ -664,6 +666,8 @@ export default function App() {
       </div>
       <StatusBar
         state={state}
+        printerModel={status?.model}
+        printerFamily={status?.family}
         paper={status?.paper}
         inks={status?.inks}
         job={status?.current_job}

@@ -54,7 +54,7 @@ from ..measurement_publish import spectral_grid, spectral_issue
 PADDING_ID = "0"
 _LOC = re.compile(r"^([A-Za-z]+)(\d+)$")
 RGB_TOLERANCE = 5e-4
-_FILTER_OF_CONDITION = {"M2": "UVCUT", "M3": "POLARIZED", "D65": "D65"}
+_FILTER_OF_CONDITION = {cond: name for name, cond in mi.TI3_INSTRUMENT_FILTERS.items()}
 
 
 class CheckpointInvalid(ValueError):

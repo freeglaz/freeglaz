@@ -56,10 +56,14 @@ REPEAT_THRESHOLD = 20            # identical lines forwarded before the rest are
 FLOOD_LINES_PER_S = 2000
 FLOOD_BYTES_PER_S = 256 << 10
 
-_MASKS = (
-    (re.compile(rb"^((?:Serial Number|Chip ID|Production No\.):[ \t]*)\S.*$"), rb"\1<masked>"),
-    (re.compile(rb"(reflective white reference(?: S/N)? )[^,\s]+"), rb"\1<masked>"),
+# The instrument's unit identifiers, masked in everything written or shown (one table, used on
+# the raw bytes of the log and on the text of the parsed events).
+_MASK_PATTERNS = (
+    (r"((?:Serial Number|Chip ID|Production No\.):[ \t]*)\S.*", r"\1<masked>"),
+    (r"(reflective white reference(?: S/N)? )[^,\s]+", r"\1<masked>"),
 )
+_MASKS = tuple((re.compile(p.encode()), r.encode()) for p, r in _MASK_PATTERNS)
+_MASKS_TEXT = tuple((re.compile(p), r) for p, r in _MASK_PATTERNS)
 _NONPRINT = re.compile(rb"[\x00-\x08\x0b-\x1f\x7f-\xff]")
 
 
@@ -67,6 +71,12 @@ def mask_serials(line: bytes) -> bytes:
     for rx, rep in _MASKS:
         line = rx.sub(rep, line)
     return line
+
+
+def mask_serials_text(text: str) -> str:
+    for rx, rep in _MASKS_TEXT:
+        text = rx.sub(rep, text)
+    return text
 
 
 def _printable(line: bytes) -> str:

@@ -98,16 +98,20 @@ export function stripMap(snap) {
 // Problems shown as a banner. Every message says how many strips stay saved.
 const RUN_ERRORS = ['instrument_lost', 'output_flood', 'engine_spinning', 'engine_timeout', 'counts_diverge',
   'engine_not_checkpointing', 'instrument_not_spectral', 'instrument_unit_changed', 'start_failed', 'fatal',
-  'driver_failure'];
+  'driver_failure', 'instrument_type_mismatch', 'instrument_type_unknown', 'instrument_serial_unknown'];
 const SUSPENSIONS = ['checkpoint_refused', 'checkpoint_not_durable', 'checkpoint_invalid', 'session_write_failed',
   'instrument_unit_changed'];
 
-/** The problem to show, if any: {code, tone, passes, patches}. */
+/** The problem to show, if any: {code, tone, passes, patches, found, expected}. ``found`` /
+ *  ``expected``: the instrument type the device reported and the one the session expects
+ *  (identity refusals), for the message. */
 export function problem(snap) {
   if (!snap) return null;
   const s = snap.session || null;
   const p = progress(snap);
-  const out = (code, tone = 'danger') => ({ code, tone, passes: p.passesSaved, patches: p.patchesSaved });
+  const err = (snap.running ? snap.error : s?.last_stop?.error) || null;
+  const out = (code, tone = 'danger') => ({ code, tone, passes: p.passesSaved, patches: p.patchesSaved,
+                                            found: err?.found ?? '', expected: err?.expected ?? '' });
   if (snap.running && snap.error?.kind) {
     const k = snap.error.kind;
     return out(RUN_ERRORS.includes(k) ? k : 'engine_error');

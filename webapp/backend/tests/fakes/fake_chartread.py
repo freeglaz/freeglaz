@@ -227,9 +227,12 @@ def measure(cfg):
 
     out(f"Steps in each Pass = {kw.get('STEPS_IN_PASS', '?')}\n"
         f"Passes in each Strip = {kw.get('PASSES_IN_STRIPS2', '1').split(',')[0]}\n")
-    out(f"Instrument Type:   {cfg.get('type_name', 'ColorMunki')}\n")
+    # The driver's -v block (a real ColorMunki prints it here, before any prompt). type_name
+    # null: no "Instrument Type" line at all (a device that never says what it is).
+    if cfg.get("type_name", "ColorMunki") is not None:
+        out(f"Instrument Type:   {cfg.get('type_name', 'ColorMunki')}\n")
     if cfg.get("serial"):
-        out(f"Serial Number: {cfg['serial']}\n")
+        out(f"Serial Number:     {cfg['serial']}\n")
     if not (nocal and cfg.get("calibration_valid", True)):
         out("\n")
         if key_prompt("calibration", {"instruction": cfg.get("instruction",

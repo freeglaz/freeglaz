@@ -26,6 +26,7 @@ from __future__ import annotations
 import time
 from typing import Callable, Optional
 
+from .. import measurement_identity as mi
 from . import checkpoint as ck
 from .engine import build_argv
 from .prompts import KeyGate, KeyRefused, PromptParser
@@ -36,6 +37,14 @@ from .transcript import ActivityMonitor, Transcript
 WAIT_PROMPTS = {"misread", "comms_failed", "strip_error", "instrument_error", "wrong_strip",
                 "unexpected", "retry_prompt", "stopped"}
 PHASE_LIMITS = {"starting": 30.0, "calibrating": 90.0, "saving": 30.0, "finishing": 30.0}
+# From the first prompt on, nothing goes ahead (no key answered, no strip saved) until the device
+# chartread opened has identified itself as the session's model and unit: chartread -v prints
+# the driver's "Instrument Type" and "Serial Number" lines when it opens the device, before any
+# prompt (0.12 s vs 0.34 s on a real ColorMunki). After a resume (-N) the strip prompt comes
+# right after them and the instrument's button can start a reading: hence every later event too.
+IDENTITY_GATED = frozenset({"calibration_prompt", "calibration_retry", "calibration_done", "ready",
+                            "strip_ok", "checkpoint", "needcal", "sensor_position", "done_confirm"}
+                           | WAIT_PROMPTS)
 USER_COMMANDS = {"calibrate": "continue", "retry": "retry", "give_up": "give_up", "accept": "accept",
                  "prev": "prev", "next": "next", "next_unread": "next_unread", "abort_calibration": "abort"}
 
@@ -68,6 +77,8 @@ class Run:
         self.notices: list[dict] = []
         self.ended: Optional[dict] = None
         self._next_cpu = self._next_presence = 0.0
+        self.identity = {"type": None, "serial": None}   # as the device reported them (this run)
+        self.identity_ok = False
 
     @classmethod
     def start(cls, session: Session, engine: EngineSpec, *, lock: InstrumentLock, env: dict, **kw) -> "Run":
@@ -90,7 +101,8 @@ class Run:
             session.data["suspended"] = None
             session.data["runs"].append({"k": k, "argv": argv, "resume": resume, "started_at": _iso(),
                                          "ended_at": None, "end": None, "exit_code": None,
-                                         "log": f"logs/run{k}.log", "reconciliation": actions})
+                                         "log": f"logs/run{k}.log", "reconciliation": actions,
+                                         "identity": "pending"})
             session._save()
             try:
                 session.check_engine_file(engine)            # again, just before execve
@@ -153,7 +165,15 @@ class Run:
             self.monitor.on_progress(now)
             self.transcript.note(f"{ev.kind} {ev.public().data}", now)
         k = ev.kind
-        if k == "instrument_field" and ev.data["name"] == "Serial Number":
+        if k in IDENTITY_GATED and not self.identity_ok:
+            if not self.stopping:
+                self._identity_missing()
+            if self.stopping:
+                self._act_stop()
+            return
+        if k == "instrument_field" and ev.data["name"] == "Instrument Type":
+            self._instrument_type(ev.data["value"])
+        elif k == "instrument_field" and ev.data["name"] == "Serial Number":
             self._serial(ev.data["value"])
         elif k in ("calibration_prompt", "calibration_retry"):
             self._phase("calibration", now)
@@ -192,17 +212,59 @@ class Run:
         if self.stopping:
             self._act_stop()
 
+    # ─── identity of the device chartread opened ────────────────────────────
+    def _instrument_type(self, value: str) -> None:
+        """The driver's own name for the device, compared EXACTLY with the session's model."""
+        if self.stopping or self.identity["type"] is not None:
+            return
+        self.identity["type"] = value
+        expected = mi.INSTRUMENT_MODELS[self.session.model].instrument_types
+        if value not in expected:
+            self._identity_refused("instrument_type_mismatch",
+                                   f"the instrument reports {value!r}, this session expects "
+                                   f"{' or '.join(repr(t) for t in expected) or 'none'}", found=value)
+            return
+        self._identity_update()
+
     def _serial(self, value: str) -> None:
         value = value.strip()
-        if not value or value.startswith("<"):
+        if not value or value.startswith("<") or self.stopping:
             return                                           # nothing reliable: invent nothing
+        self.identity["serial"] = value
+        self._identity_update()
+
+    def _identity_update(self) -> None:
+        """Type and serial number both reported, the type the session's model: compare the unit
+        with the one that started the session, then let the run go on."""
+        if self.identity_ok or self.stopping or self.identity["type"] is None or not self.identity["serial"]:
+            return
         inst = self.session.data["instrument"]
-        if inst.get("serial") is None:
-            inst["serial"] = value
-            self.session._save()
-        elif inst["serial"] != value:
-            self._fail("instrument_unit_changed", "another unit of the model is connected",
-                       suspend=True)
+        if inst.get("serial") is not None and inst["serial"] != self.identity["serial"]:
+            self._identity_refused("instrument_unit_changed", "another unit of the model is connected",
+                                   suspend=True)
+            return
+        inst["serial"] = self.identity["serial"]             # in the session folder only (masked out)
+        inst["instrument_type"] = self.identity["type"]
+        self.session.data["runs"][self.k - 1]["identity"] = "confirmed"
+        self.identity_ok = True
+        self.session._save()
+
+    def _identity_missing(self) -> None:
+        """A prompt (or a reading) came before the device identified itself: never go on."""
+        if self.identity["type"] is None:
+            self._identity_refused("instrument_type_unknown",
+                                   "chartread went on before the instrument reported its type")
+        else:
+            self._identity_refused("instrument_serial_unknown",
+                                   "the instrument reported no serial number")
+
+    def _identity_refused(self, kind: str, detail: str, *, suspend: bool = False, **info) -> None:
+        """Stop without answering any prompt. The session is kept as it is; whatever this run
+        may have left in the work file is never adopted (Session.reconcile, identity)."""
+        self.session.data["runs"][self.k - 1]["identity"] = "refused"
+        expected = mi.INSTRUMENT_MODELS[self.session.model].instrument_types
+        self._fail(kind, detail, now=not suspend, suspend=suspend,
+                   expected=expected[0] if expected else None, **info)
 
     def _ready(self, ev, now: float) -> None:
         self._phase("ready", now)
@@ -253,9 +315,9 @@ class Run:
         self._notice("suspended", reason=reason, detail=detail)
         self.pause(f"suspended:{reason}")
 
-    def _fail(self, kind: str, detail: str, *, now: bool = False, suspend: bool = False) -> None:
-        self.error = {"kind": kind, "detail": detail}
-        self._notice("error", error=kind, detail=detail)
+    def _fail(self, kind: str, detail: str, *, now: bool = False, suspend: bool = False, **info) -> None:
+        self.error = {"kind": kind, "detail": detail, **info}
+        self._notice("error", error=kind, detail=detail, **info)
         if suspend:
             self._suspend(kind, detail)
         elif now:
@@ -308,6 +370,9 @@ class Run:
             raise SessionError("run_stopping", "the run is stopping")
         if name not in USER_COMMANDS:
             raise SessionError("command_unknown", f"unknown command {name!r}")
+        if not self.identity_ok:
+            raise SessionError("instrument_identity_unconfirmed",
+                               "the instrument has not identified itself as the session's model")
         prompt = self.gate.prompt
         self.gate.request(USER_COMMANDS[name])
         if name == "calibrate":

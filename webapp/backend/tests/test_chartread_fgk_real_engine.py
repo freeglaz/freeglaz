@@ -45,8 +45,8 @@ from lib.z9_client.chartread_fgk.transcript import ActivityMonitor, Transcript
 from lib.z9_client.chartread_fgk.usb_presence import Presence
 from webapp.backend.main import app
 from webapp.backend.services import external_measure as em
-from webapp.backend.tests.session_harness import (NB, data_rows, drive, fakeinst_engine, kinds, make_chart,
-                                                  trust_build)
+from webapp.backend.tests.session_harness import (NB, data_rows, drive, fakeinst_engine, identified,
+                                                  identity_of, kinds, make_chart, trust_build)
 
 FAKEINST = os.environ.get("FREEGLAZ_TEST_CHARTREAD_FAKEINST")
 STOCK = os.environ.get("FREEGLAZ_TEST_CHARTREAD_STOCK")
@@ -80,8 +80,8 @@ def _fake_instrument_binaries_only():
 # ─── helpers ────────────────────────────────────────────────────────────────
 def setup(tmp, n=520, *, binary=None, actions="", extra=None, chart_id="CHT-20261124-1015-AB"):
     chart = make_chart(tmp, n_useful=n, steps=26, chart_id=chart_id)
-    _, env = fakeinst_engine(tmp, chart, actions=actions, extra=extra)
-    eng = S.EngineSpec.for_test(str(binary or FAKEINST))
+    exe, env = fakeinst_engine(tmp, chart, actions=actions, extra=extra, binary=binary)
+    eng = S.EngineSpec.for_test(str(exe))
     s = S.Session.create(chart.dir, model="colormunki", filter_option=None, engine=eng)
     return chart, s, eng, env
 
@@ -177,7 +177,10 @@ def strace_engine(tmp, *args, binary=None):
     exe = tmp / "strace-engine.sh"
     log = tmp / "strace.log"
     quoted = " ".join(f"'{a}'" for a in args)
-    exe.write_text(f'#!/bin/sh\nexec "{STRACE}" -f -qq -o "{log}" {quoted} "{binary or FAKEINST}" "$@"\n')
+    ident = identity_of("colormunki")              # the -v block the fake cannot print (harness)
+    exe.write_text("#!/bin/sh\n"
+                   f"printf 'Instrument Type:   %s\\nSerial Number:     %s\\n' '{ident['type_name']}' '{ident['serial']}'\n"
+                   f'exec "{STRACE}" -f -qq -o "{log}" {quoted} "{binary or FAKEINST}" "$@"\n')
     exe.chmod(0o755)
     return S.EngineSpec.for_test(str(exe))
 
@@ -340,7 +343,7 @@ def test_engine_killed_while_writing_a_checkpoint(tmp_path, delayed, validated_a
     assert (f"{chart.chart_id}.ti3.tmp" in left) == (delayed == "file")
     assert any("recovered 1 pass" in a for a in actions) == recovered
     assert S.Session.open(s.dir).summary()["passes_saved"] == validated_after + (1 if recovered else 0)
-    eng2 = S.EngineSpec.for_test(FAKEINST)
+    eng2 = S.EngineSpec.for_test(str(identified(tmp_path, FAKEINST, name="identified-engine-2")))
     s3 = S.Session.open(s.dir)
     s3.data["engine"] = eng2.to_dict()
     s3._save()
@@ -400,7 +403,8 @@ while r.ended is None:
 def _driver(tmp, s, env, *, stop_after=999, point="", nth=0):
     envfile = tmp / "driver_env.json"
     envfile.write_text(json.dumps(env))
-    return subprocess.Popen([sys.executable, "-c", _DRIVER, str(s.dir), FAKEINST, str(envfile),
+    exe = S.Session.open(s.dir).data["engine"]["path"]          # the session's own engine
+    return subprocess.Popen([sys.executable, "-c", _DRIVER, str(s.dir), exe, str(envfile),
                              str(tmp / "lock"), str(stop_after), point, str(nth)],
                             cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
 
@@ -682,7 +686,7 @@ def test_directory_flush_failure_is_not_durable(tmp_path):
     ck = [x for x in ns if x["kind"] == "checkpoint"]
     assert ck[1]["durability"] == "not_durable"
     assert s2.data["suspended"]["reason"] == "checkpoint_not_durable" and s2.summary()["passes_saved"] == 2
-    eng2 = S.EngineSpec.for_test(FAKEINST)
+    eng2 = S.EngineSpec.for_test(str(identified(tmp_path, FAKEINST, name="identified-engine-2")))
     s2.data["engine"] = eng2.to_dict()
     s2._save()
     go(s2, eng2, env, tmp_path / "s")
@@ -768,7 +772,11 @@ def ship_real_engine(tmp, monkeypatch, *, binary=None, trust=True):
     d = tmp / "app" / "chartread-fgK"
     d.mkdir(parents=True, exist_ok=True)
     exe = d / E.ENGINE_NAME
-    shutil.copy2(binary or FAKEINST, exe)
+    real = d / "fake-instrument-build"
+    shutil.copy2(binary or FAKEINST, real)
+    # the fake build behind the device's -v block (harness.identified), carrying the patch's
+    # text: engine.py checks this file for real (manifest sha256, markers)
+    identified(d, real, markers=True, name=E.ENGINE_NAME)
     (d / E.MANIFEST_NAME).write_text(json.dumps({
         "schema": E.MANIFEST_SCHEMA, "schema_version": 1, "binary": E.ENGINE_NAME,
         "sha256": hashlib.sha256(exe.read_bytes()).hexdigest(), "argyll_version": "3.5.0",

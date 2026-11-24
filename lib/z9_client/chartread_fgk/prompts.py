@@ -52,6 +52,8 @@ from collections import deque
 from dataclasses import dataclass, field, replace
 from typing import Callable, Optional
 
+from .transcript import mask_serials_text
+
 MAX_LINE = 4096
 
 # ─── complete lines ─────────────────────────────────────────────────────────
@@ -158,9 +160,7 @@ class Event:
         return replace(self, data=data, text=_mask(self.text))
 
 
-def _mask(text: str) -> str:
-    text = re.sub(r"((?:Serial Number|Chip ID|Production No\.):[ \t]*)\S.*", r"\1<masked>", text)
-    return re.sub(r"(reflective white reference(?: S/N)? )[^,\s]+", r"\1<masked>", text)
+_mask = mask_serials_text           # one table of unit identifiers to mask (transcript.py)
 
 
 def _calibration_kind(instruction: str) -> str:

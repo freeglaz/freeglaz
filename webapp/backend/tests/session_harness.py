@@ -153,8 +153,22 @@ def data_rows(ti3: bytes) -> list[str]:
 
 
 # ─── engines ────────────────────────────────────────────────────────────────
+TEST_SERIAL = "FAKE-0001"
+
+
+def identity_of(model: str) -> dict:
+    """What a real device of ``model`` says about itself, as the fakes say it: the driver's
+    "Instrument Type" when chartread -v opens it (from the model itself), a test serial number,
+    and the fake's device type for the TARGET_INSTRUMENT it writes in the .ti3."""
+    from lib.z9_client import measurement_identity as mi
+    return {"type_name": mi.INSTRUMENT_MODELS[model].instrument_types[0], "serial": TEST_SERIAL,
+            "type": "i1pro3" if model == "i1pro3plus" else "colormunki"}
+
+
 def python_engine(tmp: Path, chart: Chart, name: str = "engine", **measure) -> tuple[Path, dict]:
-    """An executable that runs the Python fake in measure mode with this scenario."""
+    """An executable that runs the Python fake in measure mode with this scenario. It identifies
+    itself as the chart's model unless ``type_name`` / ``serial`` say otherwise."""
+    measure = {**identity_of(chart.model), **measure}
     scen = tmp / f"{name}.json"
     scen.write_text(json.dumps({"max_seconds": measure.pop("max_seconds", 120),
                                 "steps": [{"measure": {"values": str(chart.values_path), **measure}}]}))
@@ -173,6 +187,7 @@ def approved_engine(tmp: Path, chart: Chart, monkeypatch, *, trust: bool = True,
     stays a development engine. It runs the Python fake in measure mode. Call again with
     other ``measure`` options to change the behaviour: the file and its sha256 stay."""
     from lib.z9_client.chartread_fgk import engine as E
+    measure = {**identity_of(chart.model), **measure}
     scen = tmp / "shipped.scenario.json"
     scen.write_text(json.dumps({"max_seconds": measure.pop("max_seconds", 120),
                                 "steps": [{"measure": {"values": str(chart.values_path), **measure}}]}))
@@ -211,9 +226,33 @@ def trust_build(monkeypatch, sha256: str) -> None:
 FAKEINST = os.environ.get("FREEGLAZ_TEST_CHARTREAD_FAKEINST")
 
 
+_ITYPE_MODEL = {"colormunki": "colormunki", "i1pro3": "i1pro3plus"}
+
+
+def identified(tmp: Path, binary, model: str = "colormunki", *, markers: bool = False,
+               name: str = "identified-engine") -> Path:
+    """TEST ONLY. The lab's fake-instrument build links no Argyll driver, so it never prints the
+    driver's -v block a real device prints when chartread opens it ("Instrument Type", "Serial
+    Number", before any prompt; seen on a real ColorMunki). This script prints that block for
+    ``model``, then becomes the fake binary itself (exec: same process, same terminal). With
+    ``markers``, it carries the checkpoint patch's text, for an engine checked as shipped."""
+    from lib.z9_client.chartread_fgk import engine as E
+    ident = identity_of(model)
+    lines = ["#!/bin/sh"]
+    if markers:
+        lines += [f"# {m.decode()}" for m in E.required_markers()]
+    lines += [f"printf 'Instrument Type:   %s\\nSerial Number:     %s\\n' '{ident['type_name']}' '{ident['serial']}'",
+              f'exec "{binary}" "$@"']
+    exe = tmp / name
+    exe.write_text("\n".join(lines) + "\n")
+    exe.chmod(0o755)
+    return exe
+
+
 def fakeinst_engine(tmp: Path, chart: Chart, *, itype: str = "colormunki", actions: str = "",
-                    extra: Optional[dict] = None) -> tuple[Path, dict]:
-    """The real chartread v3 linked to the lab's fake instrument (no USB code inside)."""
+                    extra: Optional[dict] = None, binary=None) -> tuple[Path, dict]:
+    """The real chartread v3 linked to the lab's fake instrument (no USB code inside), behind
+    :func:`identified` (the device's -v block, which the fake cannot print)."""
     data = [f"FGFAKE 1", f"TYPE {itype}", f"BANDS {NB} 380 730"]
     for lab in chart.labels:
         data.append(f"PASS {lab} {chart.steps}")
@@ -223,7 +262,7 @@ def fakeinst_engine(tmp: Path, chart: Chart, *, itype: str = "colormunki", actio
     script.write_text("\n".join(data) + "\n")
     env = {"PATH": "/usr/bin:/bin", "LANG": "C", "HOME": str(tmp), "FG_FAKEINST_SCRIPT": str(script),
            "FG_FAKEINST_STATE": str(tmp / "fakeinst.state"), "FG_FAKEINST_ACTIONS": actions, **(extra or {})}
-    return Path(FAKEINST), env
+    return identified(tmp, binary or FAKEINST, _ITYPE_MODEL[itype]), env
 
 
 # ─── the user's side ────────────────────────────────────────────────────────

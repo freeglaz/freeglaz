@@ -139,24 +139,38 @@ class InstrumentModel:
     header_identifies: bool           # the reported name alone designates THIS model
     conditions: tuple[str, ...]       # conditions it can be read under
     filter_selectable: bool           # True: the condition comes from the argv (-F)
+    # External instruments only. What identifies the device chartread opened, before any prompt:
+    instrument_types: tuple[str, ...] = ()   # exact "Instrument Type:" values (chartread -v)
+    usb_ids: tuple[tuple[int, int], ...] = ()  # (vendor, product) seen without opening it
+    usb_family_only: bool = False     # the USB id names a family of devices, not this model
 
 
 # External keys are the printtarg whitelist keys (lib.z9_client.printtarg_chart.INSTRUMENTS,
-# checked by a test). Reported names come from Argyll's inst_name() (insttypes.c):
-#  - "X-Rite ColorMunki" is that model only (also seen in a real chartread output);
-#  - "X-Rite i1 Pro 3" is the whole i1Pro 3 family: the header cannot tell an i1Pro 3 from
-#    an i1Pro 3 Plus, so only a record names the model. Whether a 3 Plus really reports
-#    this type still needs a physical reading.
+# checked by a test). Everything below is ArgyllCMS 3.5.0's own text, nothing guessed:
+#  - reported names: inst_name() (insttypes.c), the TARGET_INSTRUMENT chartread writes for the
+#    device it read with. "X-Rite ColorMunki" is that model only (also seen in a real chartread
+#    output); "X-Rite i1 Pro 3" is the whole i1Pro 3 family: the header cannot tell an i1Pro 3
+#    from an i1Pro 3 Plus, so only a record names the model;
+#  - instrument types: the driver's verbose line, printed when the device is opened, before the
+#    calibration and strip prompts. ColorMunki: the fixed text "ColorMunki" (munki_imp.c:858),
+#    seen on a real instrument. i1Pro 3 Plus: inst_name() + " Plus", printed when the EEPROM
+#    gives the 8 mm aperture (i1pro3_imp.c:927-928): the only text that tells a 3 Plus from an
+#    i1Pro 3. Taken from the ArgyllCMS sources, NOT yet seen on a real instrument;
+#  - USB ids: inst_usb_match() (insttypes.c). 0765:6009 is any i1Pro 3, Plus or not. The
+#    ColorMunki i1Studio (0765:6008) uses the same driver but is another product: not listed.
 INSTRUMENT_MODELS: dict[str, InstrumentModel] = {
     "hp_z9_embedded": InstrumentModel(
         "hp_z9_embedded", METHOD_SOL, "HP DesignJet Z9 embedded spectrophotometer",
         (SOL_TARGET_INSTRUMENT,), True, (CONDITION_FIXED,), False),
     "colormunki": InstrumentModel(
         "colormunki", METHOD_EXTERNAL, "X-Rite ColorMunki",
-        ("X-Rite ColorMunki",), True, (CONDITION_FIXED,), False),
+        ("X-Rite ColorMunki",), True, (CONDITION_FIXED,), False,
+        instrument_types=("ColorMunki",), usb_ids=((0x0971, 0x2007),)),
     "i1pro3plus": InstrumentModel(
         "i1pro3plus", METHOD_EXTERNAL, "X-Rite i1Pro 3 Plus",
-        ("X-Rite i1 Pro 3",), False, ("M0", "M1", "M2"), True),
+        ("X-Rite i1 Pro 3",), False, ("M0", "M1", "M2"), True,
+        instrument_types=("X-Rite i1 Pro 3 Plus",), usb_ids=((0x0765, 0x6009),),
+        usb_family_only=True),
 }
 SOL_MODEL = "hp_z9_embedded"
 

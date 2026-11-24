@@ -309,7 +309,11 @@ def test_a_reliable_serial_number_change_is_refused(tmp_path):
     s2 = reopen(s)
     assert run.ended["end"] == "suspended:instrument_unit_changed" and s2.summary()["passes_saved"] == 2
     assert "strip_acquired" not in kinds(ns)
-    reconfigure(tmp_path, chart)                                  # no serial printed: nothing invented
+    reconfigure(tmp_path, chart, serial=None)                     # no serial printed: refused, nothing invented
+    run, ns = full(reopen(s), eng, env, tmp_path)
+    assert run.ended["end"] == "error:instrument_serial_unknown" and "strip_acquired" not in kinds(ns)
+    assert reopen(s).data["instrument"]["serial"] == "SN-1" and reopen(s).summary()["passes_saved"] == 2
+    reconfigure(tmp_path, chart, serial="SN-1")                   # the first unit again: it goes on
     run, _ = full(reopen(s), eng, env, tmp_path)
     assert run.ended["end"] == "finished" and reopen(s).data["instrument"]["serial"] == "SN-1"
 

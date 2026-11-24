@@ -46,6 +46,9 @@ agree again, deterministically:
   and 4) is validated in full and adopted; its durability is then ``recovered``;
 - any other work file (fewer passes, other values, invalid, foreign) is kept aside, never
   deleted, and the work file is restored from ``validated.ti3``;
+- so is ANY work file that differs from ``validated.ti3`` after a run that never confirmed the
+  identity of the device it opened (``runs[-1].identity`` ``pending`` or ``refused``, run.py):
+  a reading it may have saved is never adopted;
 - chartread's ``.tmp`` is never recovered (v1).
 
 **Resume** always runs ``-r -N -K`` when a work file exists, after checking the chart (its
@@ -641,20 +644,28 @@ class Session:
                 atomic_write(self.work_ti3, self.validated.read_bytes())
                 actions.append("work file was missing: restored from validated.ti3")
         elif v is None or _sha256_file(self.work_ti3) != v.sha256:
-            try:
-                st = self._validate(self.work_ti3.read_bytes(), previous=v)
-            except ck.CheckpointInvalid as e:
-                actions.append(self._set_work_aside(e.code, e.message, restore=v is not None))
+            last = self.data["runs"][-1] if self.data["runs"] else {}
+            if last.get("identity") in ("pending", "refused"):
+                # The last run never confirmed which device it had opened (run.py): a strip it may
+                # have left (the instrument's button, before the run was stopped) is not a measurement.
+                actions.append(self._set_work_aside(
+                    "identity_unconfirmed", f"run {last.get('k')} never confirmed the instrument",
+                    restore=v is not None))
             else:
-                if v is not None and set(st.passes) == set(v.passes) and st.digests == v.digests:
-                    actions.append("work file has the validated content (rewritten): kept")
-                    self.commit_work(durability=self.data["last_checkpoint"]["durability"],
-                                     run=self.data["last_checkpoint"].get("run"))
+                try:
+                    st = self._validate(self.work_ti3.read_bytes(), previous=v)
+                except ck.CheckpointInvalid as e:
+                    actions.append(self._set_work_aside(e.code, e.message, restore=v is not None))
                 else:
-                    n_new = len(st.passes) - (len(v.passes) if v else 0)
-                    self.commit_work(durability="recovered")
-                    actions.append(f"recovered {n_new} pass(es) chartread had saved but freeglaz had not "
-                                   f"validated ({len(st.passes)} now)")
+                    if v is not None and set(st.passes) == set(v.passes) and st.digests == v.digests:
+                        actions.append("work file has the validated content (rewritten): kept")
+                        self.commit_work(durability=self.data["last_checkpoint"]["durability"],
+                                         run=self.data["last_checkpoint"].get("run"))
+                    else:
+                        n_new = len(st.passes) - (len(v.passes) if v else 0)
+                        self.commit_work(durability="recovered")
+                        actions.append(f"recovered {n_new} pass(es) chartread had saved but freeglaz "
+                                       f"had not validated ({len(st.passes)} now)")
         if (self.work_dir / f"{self.chart_id}.ti3.tmp").exists():
             actions.append("chartread's .tmp left as is (never recovered)")
         if actions:                                      # nothing to fix: nothing written

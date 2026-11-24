@@ -122,7 +122,7 @@ export default function ExternalMeasureWizard({ open, onClose, chartId, session 
           )}
           {pb && (
             <Notice kind={pb.tone === 'warn' ? 'warn' : 'danger'} title={t(`external_measure.problem.${pb.code}.title`)}>
-              {t(`external_measure.problem.${pb.code}.body`)} {t('external_measure.saved_counts', countArgs(snap))}
+              {t(`external_measure.problem.${pb.code}.body`, { found: pb.found, expected: pb.expected })} {t('external_measure.saved_counts', countArgs(snap))}
             </Notice>
           )}
           {block && block !== 'checking' && (step === 'prepare' || step === 'read') && (

@@ -1085,6 +1085,7 @@
     "too_many_strips_for_sheet": "Trop de patches pour une seule feuille de ce format avec cet instrument : réduis le nombre de patches ou choisis un rouleau.",
     "chart_media_mismatch": "Cette charte est composée pour un autre format que le papier chargé, ou ce papier n'est pas identifié : charge le support prévu, ou crée une charte pour ce format.",
     "chart_format_unknown": "Cette charte n'indique aucun format connu : elle n'est pas imprimée.",
+    "instrument_identity_unconfirmed": "L'instrument ne s'est pas encore identifié : aucune commande n'est envoyée.",
     "measurement_empty": "Le fichier de mesure ne contient aucune lecture.",
     "measurement_not_spectral": "Une mesure externe doit contenir ses spectres (colonnes SPEC_) : celle-ci n'en a pas, ou pas sur une grille régulière.",
     "measurement_incomplete": "Mesure incomplète : toutes les rangées ne sont pas sauvegardées.",
@@ -2268,6 +2269,18 @@
       "instrument_not_spectral": {
         "title": "Instrument sans spectres",
         "body": "Cet instrument ne fournit pas de spectres : sa mesure ne peut pas servir au profilage."
+      },
+      "instrument_type_mismatch": {
+        "title": "Ce n'est pas l'instrument de la séance",
+        "body": "L'instrument ouvert s'annonce « {{found}} » ; cette séance attend « {{expected}} ». Rien n'a été mesuré ni enregistré : branche le bon instrument et relance."
+      },
+      "instrument_type_unknown": {
+        "title": "Instrument non identifié",
+        "body": "L'instrument ouvert n'a pas indiqué son type : la séance s'est arrêtée avant toute mesure."
+      },
+      "instrument_serial_unknown": {
+        "title": "Numéro de série non fourni",
+        "body": "L'instrument ouvert n'a pas donné son numéro de série : la séance s'est arrêtée avant toute mesure."
       },
       "instrument_unit_changed": {
         "title": "Autre instrument branché",

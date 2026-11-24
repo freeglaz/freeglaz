@@ -48,6 +48,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
+from .. import measurement_identity as mi
+
 SYSFS_USB = Path("/sys/bus/usb/devices")
 IOREG = ("/usr/sbin/ioreg", "-p", "IOUSB", "-l", "-w", "0")
 IOREG_TIMEOUT_S = 10.0
@@ -68,16 +70,15 @@ ARGYLL_USB_IDS: dict[tuple[int, int], str] = {
     (0x273F, 0x1004): "ColorHug2",
 }
 
-# freeglaz instrument models → their USB identifiers. Only what was studied:
+# freeglaz instrument models → their USB identifiers, from the models themselves
+# (measurement_identity.INSTRUMENT_MODELS):
 #  - colormunki: 0971:2007, seen on the real instrument (B1). The ColorMunki i1Studio
 #    (0765:6008) uses the same Argyll driver but is another product: "other", not this one;
-#  - i1pro3plus: 0765:6009 is Argyll's "i1Pro 3"; whether an i1Pro 3 PLUS reports it too is
-#    not established (no reading yet), so it only identifies the family (``family_only``).
+#  - i1pro3plus: 0765:6009 is any i1Pro 3, Plus or not: it only identifies the family
+#    (``family_only``). The model is checked when chartread opens the device (run.py).
 MODEL_USB_IDS: dict[str, tuple[tuple[int, int], ...]] = {
-    "colormunki": ((0x0971, 0x2007),),
-    "i1pro3plus": ((0x0765, 0x6009),),
-}
-FAMILY_ONLY = frozenset({"i1pro3plus"})
+    k: m.usb_ids for k, m in mi.INSTRUMENT_MODELS.items() if m.usb_ids}
+FAMILY_ONLY = frozenset(k for k, m in mi.INSTRUMENT_MODELS.items() if m.usb_family_only)
 
 PRESENT, ABSENT, OTHER, SEVERAL, ERROR = "present", "absent", "other", "several", "error"
 CHECKING = "checking"               # the backend has no verdict yet: a listing is running

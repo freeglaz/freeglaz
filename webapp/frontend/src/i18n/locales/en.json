@@ -1085,6 +1085,7 @@
     "too_many_strips_for_sheet": "Too many patches for a single sheet of this format with this instrument: reduce the patch count or choose a roll.",
     "chart_media_mismatch": "This chart is laid out for another format than the loaded paper, or that paper is not identified: load the intended media, or create a chart for this format.",
     "chart_format_unknown": "This chart names no known format: it is not printed.",
+    "instrument_identity_unconfirmed": "The instrument has not identified itself yet: no command is sent.",
     "measurement_empty": "The measurement file holds no reading.",
     "measurement_not_spectral": "An external measurement must carry its spectra (SPEC_ columns): this one has none, or not on a regular grid.",
     "measurement_incomplete": "Incomplete measurement: not every strip is saved.",
@@ -2268,6 +2269,18 @@
       "instrument_not_spectral": {
         "title": "Instrument without spectra",
         "body": "This instrument gives no spectra: its measurement cannot be used for profiling."
+      },
+      "instrument_type_mismatch": {
+        "title": "Not the session's instrument",
+        "body": "The instrument that was opened reports “{{found}}”; this session expects “{{expected}}”. Nothing was measured or saved: plug in the right instrument and start again."
+      },
+      "instrument_type_unknown": {
+        "title": "Instrument not identified",
+        "body": "The instrument that was opened did not report its type: the session stopped before any measurement."
+      },
+      "instrument_serial_unknown": {
+        "title": "No serial number",
+        "body": "The instrument that was opened did not report its serial number: the session stopped before any measurement."
       },
       "instrument_unit_changed": {
         "title": "Another instrument plugged in",

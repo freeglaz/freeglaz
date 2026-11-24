@@ -806,3 +806,39 @@ def test_lock_set_is_all_or_nothing(tmp_path):
     ls.acquire({"op": "run"})
     assert ls.held
     ls.release()
+
+
+# ─── up to the ICC (note 164: the average used to lose DEVCALSTD and INSTRUMENT_FILTER) ──
+def test_a_profile_averaging_two_published_measurements_keeps_their_conditions(lab):
+    """i1Pro 3 Plus in M2, two sessions published, one profile on their average (real colprof):
+    the measurements colprof embeds in the ICC (targ, and CIED which freeglaz reads back
+    first) still state XRGA and UVCUT, so the profile read back without its records is M2 /
+    XRGA. Skipped without Argyll."""
+    from lib.z9_client.argyll import find_argyll_binary
+    from lib.z9_client.profiling import extract_cied_text, parse_icc_tags
+    if find_argyll_binary("colprof") is None:
+        pytest.skip("colprof (Argyll) absent")
+    # 536 patches: the first synthetic chart that holds a white patch (sample 536), which colprof needs
+    chart = make_chart(lab.store, n_useful=536, steps=26, model="i1pro3plus", chart_id="CHT-20261124-1015-M2")
+    lab.chart = chart
+    lab.engine = lambda **kw: approved_engine(lab.tmp, chart, lab.mp, **{"serial": SERIAL_SECRET, **kw})
+    base = f"/api/charts/{chart.chart_id}/external-measure"
+    for _ in range(2):
+        lab.engine(button_ms=20)
+        s = lab.client.post(base, json={"filter_option": "u"}).json()
+        assert post(lab, "/start", s, base).status_code == 200
+        calibrate(lab, base)
+        s = run_to_end(lab, base)
+        assert s["state"] == "complete", s
+        assert post(lab, "/finalize", s, base).status_code == 200
+    r = lab.client.post(f"/api/charts/{chart.chart_id}/profile",
+                        json={"profile_base": "average", "colprof_flags": "-v -ql"})
+    assert r.status_code == 200, r.text
+    assert r.json()["averaged"] and r.json()["n_scans_averaged"] == 2
+    icc = (chart.dir / "builds" / r.json()["build_id"] / "profile.icc").read_bytes()
+    tags = {sig: (off, size) for sig, off, size in parse_icc_tags(icc)}
+    for sig in ("targ", "CIED"):
+        header = mi.read_ti3_header(extract_cied_text(icc, *tags[sig]))
+        assert (header.keywords.get("DEVCALSTD"), header.keywords.get("INSTRUMENT_FILTER")) == ("XRGA", "UVCUT"), sig
+        ident = mi.identity_from_header(header)
+        assert (ident.condition, ident.calibration_standard) == ("M2", "XRGA"), sig

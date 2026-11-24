@@ -7,8 +7,8 @@ import StripMap from './StripMap.jsx';
 import { errorText } from '../../lib/errorText.js';
 import { instrumentLabel } from '../../lib/measurementMethod.js';
 import {
-  STEPS, allowed, canCreate, conditionChoices, durability, problem, progress, promptView, publishChecks,
-  recentEvents, stepOf,
+  STEPS, allowed, canCreate, conditionChoices, createPresenceWatch, durability, presenceState, problem, progress,
+  promptView, publishChecks, recentEvents, startBlock, stepOf, watchesPresence,
 } from '../../lib/externalSession.js';
 
 /**
@@ -16,6 +16,12 @@ import {
  * The step shown is the backend's state (stepOf); every button is an action the snapshot
  * allows, sent with the snapshot's state and seq. There is no button that starts a reading:
  * the instrument's own button does. Closing the window does not touch the measurement.
+ *
+ * Instrument presence: while the window is open on a chart without a live run, the snapshot is
+ * read again every 2 s (createPresenceWatch), so plugging or unplugging shows without a reload.
+ * "Start" waits while the chart's instrument is confirmed absent (or another one, or several are
+ * plugged in) and comes back by itself once it is detected; the backend still decides and
+ * refuses a start without it. The watch stops when the window closes or a run starts.
  *
  * Props: open, onClose, chartId, session (useExternalSession result).
  */
@@ -26,6 +32,16 @@ export default function ExternalMeasureWizard({ open, onClose, chartId, session 
   // A confirmation belongs to the state it was asked in: any new state drops it (no effect needed).
   const [pending, setPending] = useState(null);        // {what: 'abandon' | 'accept' | {correct}, seq}
   const [correctPick, setCorrectPick] = useState('');
+  // Last answer of the presence watch ({ok}); null while the first one is awaited ("checking").
+  const [check, setCheck] = useState(null);
+  const watching = open && watchesPresence(snap);
+  const { poll } = session;
+  useEffect(() => {
+    if (!watching) return undefined;
+    const watch = createPresenceWatch({ check: poll, onResult: (ok) => setCheck({ ok }) });
+    watch.start();
+    return () => { watch.stop(); setCheck(null); };
+  }, [watching, poll]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -45,21 +61,24 @@ export default function ExternalMeasureWizard({ open, onClose, chartId, session 
   const instrument = instrumentLabel(t, ctx.model);
   const pb = problem(snap);
   const can = (a) => allowed(snap, a) && !busy;
+  const presence = presenceState(snap, check);
+  const block = allowed(snap, 'start') ? startBlock(presence) : null;
+  const blockText = block ? t(`external_measure.start_blocked.${block}`, { instrument }) : undefined;
 
   const footer = [];
-  const act = (id, label, onClick, kind = 'secondary', icon = null) =>
-    footer.push({ id, label, onClick, kind, icon });
+  const act = (id, label, onClick, kind = 'secondary', icon = null, title = undefined) =>
+    footer.push({ id, label, onClick, kind, icon, title });
   if (step === 'prepare') {
     if (allowed(snap, 'create')) act('create', t('external_measure.prepare.create'), () => session.create(filter),
                                      canCreate(snap, filter) ? 'primary' : 'disabled');
-    if (allowed(snap, 'start')) act('start', t('external_measure.prepare.start'), session.start, can('start') ? 'primary' : 'disabled', Play);
+    if (allowed(snap, 'start')) act('start', t('external_measure.prepare.start'), session.start, can('start') && !block ? 'primary' : 'disabled', Play, blockText);
   } else if (step === 'calibrate') {
     if (allowed(snap, 'abort_calibration')) act('abort', t('external_measure.calibrate.abort'), () => session.command('abort_calibration'));
     if (allowed(snap, 'calibrate')) act('calibrate', t('external_measure.calibrate.confirm'), () => session.command('calibrate'), can('calibrate') ? 'primary' : 'disabled');
   } else if (step === 'read') {
     if (allowed(snap, 'abandon')) act('abandon', t('external_measure.read.abandon'), () => setConfirm('abandon'), 'danger-ghost');
     if (allowed(snap, 'pause')) act('pause', t('external_measure.read.pause'), () => session.command('pause'), 'secondary', Pause);
-    if (allowed(snap, 'start')) act('start', t('external_measure.read.resume'), session.start, can('start') ? 'primary' : 'disabled', Play);
+    if (allowed(snap, 'start')) act('start', t('external_measure.read.resume'), session.start, can('start') && !block ? 'primary' : 'disabled', Play, blockText);
   } else if (step === 'publish') {
     if (allowed(snap, 'abandon')) act('abandon', t('external_measure.read.abandon'), () => setConfirm('abandon'), 'danger-ghost');
     if (allowed(snap, 'finalize')) {
@@ -104,10 +123,14 @@ export default function ExternalMeasureWizard({ open, onClose, chartId, session 
               {t(`external_measure.problem.${pb.code}.body`)} {t('external_measure.saved_counts', countArgs(snap))}
             </Notice>
           )}
-          {step === 'prepare' && <PrepareStep t={t} snap={snap} instrument={instrument} filter={filter} setFilter={setFilter}/>}
+          {block && block !== 'checking' && (step === 'prepare' || step === 'read') && (
+            <Notice kind="warn"><span data-start-block={block}>{blockText}</span></Notice>
+          )}
+          {step === 'prepare' && <PrepareStep t={t} snap={snap} instrument={instrument} presence={presence} filter={filter} setFilter={setFilter}/>}
           {step === 'calibrate' && <CalibrateStep t={t} snap={snap} instrument={instrument}/>}
           {step === 'read' && (
             <ReadStep t={t} snap={snap} session={session} can={can} confirm={confirm} setConfirm={setConfirm}
+                      instrument={instrument} presence={presence}
                       correctPick={correctPick} setCorrectPick={setCorrectPick}/>
           )}
           {step === 'publish' && <PublishStep t={t} snap={snap} session={session} can={can} correctPick={correctPick}
@@ -153,14 +176,14 @@ function countArgs(snap) {
   return { passes: p.passesSaved, total: p.passesTotal, patches: p.patchesSaved, patches_total: p.patchesTotal };
 }
 
-function FooterButton({ id, label, onClick, kind, icon: Icon }) {
+function FooterButton({ id, label, onClick, kind, icon: Icon, title }) {
   const cls = kind === 'primary' ? 'bg-accent hover:bg-accent-press text-on-accent font-semibold border-transparent'
     : kind === 'disabled' ? 'bg-bg text-text-faint cursor-not-allowed border-border-soft'
       : kind === 'danger-ghost' ? 'text-danger border-danger hover:bg-sunken'
         : 'text-text-strong border-border-soft hover:bg-sunken';
   return (
     <button type="button" onClick={kind === 'disabled' ? undefined : onClick} disabled={kind === 'disabled'}
-            data-action={id}
+            data-action={id} title={title}
             className={`inline-flex items-center gap-1.5 py-[8px] px-[14px] rounded-[7px] text-[12.5px] border ${cls}`}>
       {Icon && <Icon size={13}/>}{label}
     </button>
@@ -190,10 +213,23 @@ function Row({ label, children }) {
   );
 }
 
-function PrepareStep({ t, snap, instrument, filter, setFilter }) {
+function PresenceRow({ t, instrument, presence }) {
+  const s = presence.status;
+  const color = s === 'present' ? 'text-success' : s === 'error' || s === 'checking' ? 'text-text-muted' : 'text-danger';
+  return (
+    <Row label={t('external_measure.prepare.presence_label')}>
+      <span className={`inline-flex items-center gap-1.5 ${color}`} data-presence={s}>
+        {s === 'checking' ? <Loader2 size={13} className="animate-spin"/> : <Usb size={13}/>}
+        {t(`external_measure.presence.${presence.familyOnly ? 'present_family' : s}`, { instrument })}
+      </span>
+      {s === 'error' && <span className="block text-tiny text-text-faint mt-0.5">{t('external_measure.presence_unchecked')}</span>}
+    </Row>
+  );
+}
+
+function PrepareStep({ t, snap, instrument, presence, filter, setFilter }) {
   const ctx = snap?.context || {};
   const p = progress(snap);
-  const pres = ctx.presence?.status || 'error';
   const eng = ctx.engine || {};
   const choices = conditionChoices(snap);
   const sessionCondition = snap?.session?.condition;
@@ -203,12 +239,7 @@ function PrepareStep({ t, snap, instrument, filter, setFilter }) {
         {t('external_measure.prepare.patches', { count: p.patchesTotal, strips: p.passesTotal })}
       </Row>
       <Row label={t('external_measure.prepare.instrument')}>{instrument}</Row>
-      <Row label={t('external_measure.prepare.presence_label')}>
-        <span className={`inline-flex items-center gap-1.5 ${pres === 'present' ? 'text-success' : pres === 'error' ? 'text-text-muted' : 'text-danger'}`}
-              data-presence={pres}>
-          <Usb size={13}/>{t(`external_measure.presence.${pres === 'present' && ctx.presence?.family_only ? 'present_family' : pres}`, { instrument })}
-        </span>
-      </Row>
+      <PresenceRow t={t} instrument={instrument} presence={presence}/>
       <Row label={t('external_measure.prepare.engine')}>
         {eng.ok
           ? <span data-engine={eng.origin}>{t('external_measure.engine.ok', { argyll: eng.argyll_version || '?', patch: eng.patch_version || '?' })}</span>
@@ -296,7 +327,7 @@ function DurabilityLine({ t, snap }) {
   );
 }
 
-function ReadStep({ t, snap, session, can, confirm, setConfirm, correctPick, setCorrectPick }) {
+function ReadStep({ t, snap, session, can, confirm, setConfirm, correctPick, setCorrectPick, instrument, presence }) {
   const pv = promptView(snap);
   const p = progress(snap);
   const s = snap?.state;
@@ -334,6 +365,7 @@ function ReadStep({ t, snap, session, can, confirm, setConfirm, correctPick, set
       {!snap?.running && s === 'idle' && !problem(snap) && (
         <Notice kind="info" title={t('external_measure.read.resume_title')}>{t('external_measure.read.resume_body')}</Notice>
       )}
+      {!snap?.running && allowed(snap, 'start') && <PresenceRow t={t} instrument={instrument} presence={presence}/>}
       <div className="grid grid-cols-2 gap-3">
         <Bar label={t('external_measure.read.passes')} value={p.passesSaved} total={p.passesTotal}/>
         <Bar label={t('external_measure.read.patches')} value={p.patchesSaved} total={p.patchesTotal}/>

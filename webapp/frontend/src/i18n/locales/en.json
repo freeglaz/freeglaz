@@ -2107,7 +2107,15 @@
       "other": "another instrument is plugged in",
       "several": "several instruments plugged in: leave only one",
       "error": "cannot be checked here (check the cable)",
-      "present_family": "an i1Pro 3 is plugged in (the exact model is confirmed by the reading)"
+      "present_family": "an i1Pro 3 is plugged in (the exact model is confirmed by the reading)",
+      "checking": "checking…"
+    },
+    "presence_unchecked": "freeglaz cannot list the instruments here: you can still start, and the engine will say if it does not find the instrument.",
+    "start_blocked": {
+      "checking": "Checking the instrument…",
+      "absent": "Plug in the {{instrument}}: the start button comes back as soon as it is detected.",
+      "other": "The instrument plugged in is not the chart's {{instrument}}: the start button comes back as soon as the right one is detected.",
+      "several": "Several instruments are plugged in: leave only the {{instrument}} and the start button will come back."
     },
     "engine": {
       "ok": "chartread-fgK (ArgyllCMS {{argyll}}, per-strip saving v{{patch}})",

@@ -219,7 +219,11 @@ class ExternalMeasureService:
     def context(self, chart_id: str) -> dict:
         """What the interface needs around the session: the chart's instrument and size, the
         conditions it may be read under, whether the engine is there (and publishable), whether
-        the instrument is plugged in. Passive only (no instrument opened); cached 2 s."""
+        the instrument is plugged in. Passive only (no instrument opened); cached 2 s.
+
+        A change of presence alone publishes no event: while it is open on a chart without a
+        live run, the wizard reads the snapshot again every 2 s (createPresenceWatch in the
+        frontend), which recomputes this context once the cache has expired."""
         now = time.monotonic()
         hit = self._ctx_cache.get(chart_id)
         if hit and now - hit[0] < self.CONTEXT_TTL_S:
@@ -357,6 +361,9 @@ class ExternalMeasureService:
                 raise ExternalMeasureError(409, e.code, e.message) from None
             pres = self.presence_provider(s.model)
             self._presence_note[chart_id] = pres.status
+            # The next snapshot (the window reloads it after a refusal) shows the presence this
+            # start just found, not the context cached up to CONTEXT_TTL_S before it.
+            self._ctx_cache.pop(chart_id, None)
             if pres.status in ("absent", "other", "several"):
                 raise ExternalMeasureError(409, f"instrument_{pres.status}", pres.detail)
             locks = self.locks_provider()

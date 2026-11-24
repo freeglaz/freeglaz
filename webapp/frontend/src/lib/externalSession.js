@@ -165,6 +165,102 @@ export function publishChecks(snap) {
   ];
 }
 
+// ─── instrument presence while the wizard is open ───────────────────────────
+// A change of presence alone publishes no SSE event (the backend computes it, passively, when it
+// builds a snapshot: context(), cached 2 s). So while the wizard is open on a chart without a live
+// run, it reads the snapshot again every PRESENCE_POLL_MS. During a run the engine itself watches
+// the instrument (instrument_lost); after a run, the watch resumes.
+
+export const PRESENCE_POLL_MS = 2000;
+const PRESENCE = new Set(['present', 'absent', 'other', 'several', 'error']);
+const NOT_THE_INSTRUMENT = new Set(['absent', 'other', 'several']);    // the backend refuses these
+
+/** Is the presence worth watching now? (no live run, and a session to create or to start) */
+export function watchesPresence(snap) {
+  return !!snap && !snap.running && (allowed(snap, 'create') || allowed(snap, 'start'));
+}
+
+/**
+ * Presence as the wizard shows it: checking | present | absent | other | several | error.
+ * `check` is the watch's last answer since it started ({ok}), or null while the first one is
+ * awaited: until then the presence carried by an older snapshot is not shown as current. An
+ * answer that failed, or a status the interface does not know, is "error": never a presence.
+ */
+export function presenceState(snap, check) {
+  if (!snap || !check) return { status: 'checking', familyOnly: false };
+  const p = snap.context?.presence;
+  if (!check.ok || !p || !PRESENCE.has(p.status)) return { status: 'error', familyOnly: false };
+  return { status: p.status, familyOnly: p.status === 'present' && !!p.family_only };
+}
+
+/**
+ * Why "Start" is not offered, or null. Absent, another instrument, several: refused by the
+ * backend anyway, so the button waits and comes back by itself when the chart's instrument is
+ * detected. Checking: the first answer is on its way. A detection error does not block: the
+ * backend starts without presence monitoring and the engine finds the instrument or says so.
+ */
+export function startBlock(presence) {
+  if (presence.status === 'checking') return 'checking';
+  return NOT_THE_INSTRUMENT.has(presence.status) ? presence.status : null;
+}
+
+/**
+ * The presence watch: check() now, then again PRESENCE_POLL_MS after each answer. Never two
+ * checks at once (the next one is only scheduled once the previous answered). onResult(ok)
+ * after each answer; stop() ends it, and an answer arriving after stop() is dropped.
+ * `check` resolves to something truthy when the snapshot was read.
+ */
+export function createPresenceWatch({ check, onResult, intervalMs = PRESENCE_POLL_MS, timers = globalThis }) {
+  let stopped = false;
+  let timer = null;
+  const tick = async () => {
+    timer = null;
+    let ok;
+    try { ok = !!(await check()); } catch { ok = false; }
+    if (stopped) return;
+    onResult(ok);
+    timer = timers.setTimeout(tick, intervalMs);
+  };
+  return {
+    start() { if (!stopped) tick(); },
+    stop() {
+      stopped = true;
+      if (timer !== null) timers.clearTimeout(timer);
+      timer = null;
+    },
+  };
+}
+
+/**
+ * Snapshot reads (GET) applied in the order they were asked: the answer to an earlier read that
+ * arrives after a later one was applied is dropped. (Snapshots of an unchanged state share their
+ * seq, so newer() alone would let a late answer put back an older presence.) shared() joins the
+ * read in flight instead of starting a second one.
+ */
+export function createSnapshotReader(fetchSnap, onSnap) {
+  let issued = 0;
+  let applied = 0;
+  let pending = null;
+  const read = () => {
+    const id = ++issued;
+    // `pending` is cleared before the caller hears the answer: a shared() right after it starts
+    // a new read instead of joining the finished one (a failure would otherwise be handed back).
+    const p = Promise.resolve().then(fetchSnap).then(
+      (s) => {
+        if (pending === p) pending = null;
+        if (id > applied) { applied = id; onSnap(s); }
+        return s;
+      },
+      (e) => {
+        if (pending === p) pending = null;
+        throw e;
+      });
+    pending = p;
+    return p;
+  };
+  return { read, shared: () => pending || read() };
+}
+
 /** Readable recent events (newest last), from the snapshot's notices. */
 export function recentEvents(snap, limit = 5) {
   const keep = new Set(['checkpoint', 'suspended', 'error', 'run_ended', 'corrected', 'published',

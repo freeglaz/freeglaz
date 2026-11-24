@@ -193,6 +193,38 @@ def test_i1pro3plus_context_offers_conditions_without_default(tmp_path, monkeypa
     assert ctx["presence"]["status"] == "absent"
 
 
+@pytest.mark.parametrize("status", ["absent", "other", "several"])
+def test_start_is_refused_without_the_chart_instrument(lab, status):
+    """The backend's refusal stays the authority, whatever a window shows: no run, no engine,
+    the session unchanged, start still offered. The snapshot that follows the refusal shows
+    the presence the start found, not the context cached before it (P1b, note 147 §16)."""
+    plugged = {"status": "present"}
+    lab.service(presence=lambda m: Presence(plugged["status"], m, detail="test"))
+    lab.engine(button_ms=20)
+    s = lab.client.post(lab.base, json={}).json()
+    assert s["context"]["presence"]["status"] == "present"           # now cached for 2 s
+    plugged["status"] = status                                       # unplugged (or another one)
+    r = post(lab, "/start", s)
+    assert r.status_code == 409 and code(r) == f"instrument_{status}"
+    after = snap(lab)
+    assert (after["state"], after["running"], after["state_seq"]) == ("idle", False, s["state_seq"])
+    assert "start" in after["actions"] and after["session"]["runs"] == 0
+    assert em.get_service().active_chart() is None
+    assert after["context"]["presence"]["status"] == status          # not the cached "present"
+    plugged["status"] = "present"                                    # plugged in again
+    r = post(lab, "/start", after)
+    assert r.status_code == 200 and r.json()["running"], r.text
+
+
+def test_a_detection_error_does_not_refuse_the_start(lab):
+    """A device list that cannot be read (a Flatpak without sysfs…) is not an absence: the
+    start goes on, without presence monitoring; the engine finds the instrument or says so.
+    The wizard therefore never disables the start on "error" (and never shows it as present)."""
+    lab.service(presence=lambda m: Presence("error", m, detail="test"))
+    s = create_and_start(lab, button_ms=20)
+    assert s["running"] and s["context"]["presence"]["status"] == "error"
+
+
 # ─── commands ───────────────────────────────────────────────────────────────
 def test_stale_and_forbidden_commands_do_nothing(lab):
     create_and_start(lab)

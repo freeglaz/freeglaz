@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as api from '../api/client.js';
-import { commandBody, isStale, newer } from '../lib/externalSession.js';
+import { commandBody, createSnapshotReader, isStale, newer } from '../lib/externalSession.js';
 
 /**
  * External measurement session of a chart (chartread-fgK), on the model of useProfileJob:
@@ -12,6 +12,11 @@ import { commandBody, isStale, newer } from '../lib/externalSession.js';
  *   stale_command refusal reloads the snapshot and is reported as `notice: 'stale'`, not as an
  *   error: nothing happened in the backend.
  * - Unmounting closes the subscription only: it never pauses or stops a measurement.
+ * - Snapshot reads are applied in the order they were asked (createSnapshotReader). poll() is
+ *   the wizard's presence watch: it joins a read in flight, and a failure is reported to the
+ *   caller only (it is not a refused action).
+ * - start() ignores a second call while the first is on its way (the backend would refuse it
+ *   with run_active, after showing an error for nothing).
  */
 const POLL_MS = 2000;
 
@@ -27,6 +32,8 @@ export function useExternalSession(chartId) {
   const aliveRef = useRef(true);
   const sseOkRef = useRef(false);
   const chartRef = useRef(chartId);
+  const startingRef = useRef(false);
+  const readerRef = useRef(null);                 // {chartId, reader}: made on first use, per chart
 
   const apply = useCallback((incoming) => {
     // A late answer about the previous chart is dropped (seq values are not comparable across charts).
@@ -36,17 +43,31 @@ export function useExternalSession(chartId) {
     setHeld({ chartId, snap: next });
   }, [chartId]);
 
+  const reader = useCallback(() => {
+    if (readerRef.current?.chartId !== chartId) {
+      readerRef.current = { chartId, reader: createSnapshotReader(() => api.getExternalMeasure(chartId), apply) };
+    }
+    return readerRef.current.reader;
+  }, [chartId, apply]);
+
   const refresh = useCallback(async () => {
     if (!chartId) return null;
     try {
-      const s = await api.getExternalMeasure(chartId);
-      apply(s);
-      return s;
+      return await reader().read();
     } catch (e) {
       if (aliveRef.current) setError(e);
       return null;
     }
-  }, [chartId, apply]);
+  }, [chartId, reader]);
+
+  const poll = useCallback(async () => {
+    if (!chartId) return null;
+    try {
+      return await reader().shared();
+    } catch {
+      return null;
+    }
+  }, [chartId, reader]);
 
   useEffect(() => {
     aliveRef.current = true;
@@ -101,12 +122,20 @@ export function useExternalSession(chartId) {
     run(() => api.createExternalMeasure(chartId, filterOption)), [chartId, run]);
   const post = useCallback((action, extra = {}) =>
     run(() => api.postExternalMeasure(chartId, action, commandBody(snapRef.current, extra))), [chartId, run]);
-  const start = useCallback(() => post('start'), [post]);
+  const start = useCallback(async () => {
+    if (startingRef.current) return null;
+    startingRef.current = true;
+    try {
+      return await post('start');
+    } finally {
+      startingRef.current = false;
+    }
+  }, [post]);
   const command = useCallback((name) => post('command', { command: name }), [post]);
   const correct = useCallback((passLabel) => post('correct', { pass_label: passLabel }), [post]);
   const finalize = useCallback(() => post('finalize'), [post]);
   const abandon = useCallback(() => post('abandon'), [post]);
 
-  return { snap, error, notice, busy, refresh, create, start, command, correct, finalize, abandon,
+  return { snap, error, notice, busy, refresh, poll, create, start, command, correct, finalize, abandon,
            clearError: () => setError(null) };
 }

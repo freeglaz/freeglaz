@@ -2107,7 +2107,15 @@
       "other": "un autre instrument est branché",
       "several": "plusieurs instruments branchés : n'en laisse qu'un",
       "error": "détection impossible ici (vérifie le branchement)",
-      "present_family": "un i1Pro 3 est branché (le modèle exact se confirme à la lecture)"
+      "present_family": "un i1Pro 3 est branché (le modèle exact se confirme à la lecture)",
+      "checking": "vérification…"
+    },
+    "presence_unchecked": "freeglaz ne peut pas lister les instruments ici : le démarrage reste possible, et le moteur dira s'il ne trouve pas l'instrument.",
+    "start_blocked": {
+      "checking": "Vérification de l'instrument en cours…",
+      "absent": "Branche le {{instrument}} : le bouton de démarrage se réactive dès qu'il est détecté.",
+      "other": "L'instrument branché n'est pas le {{instrument}} de la charte : le bouton de démarrage se réactive dès que le bon est détecté.",
+      "several": "Plusieurs instruments sont branchés : laisse seulement le {{instrument}} et le bouton de démarrage se réactivera."
     },
     "engine": {
       "ok": "chartread-fgK (ArgyllCMS {{argyll}}, sauvegarde par rangée v{{patch}})",

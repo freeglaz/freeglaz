@@ -5,7 +5,8 @@
  *  3. every code the interface translates dynamically mirrors the backend and is translated:
  *     run states, problems, durability kinds, calibration kinds, warning prompts, presence,
  *     events, engine origins, and every error code the service and the engine resolver send;
- *  4. the components never send a key to chartread nor offer a reading trigger.
+ *  4. the components never send a key to chartread nor offer a reading trigger;
+ *  5. the presence watch runs only while the wizard is open, and "Start" waits for the instrument.
  * Run: node webapp/frontend/src/lib/externalSession.i18n.test.mjs
  */
 import { readFileSync } from 'node:fs';
@@ -74,7 +75,8 @@ const waitPrompts = /WAIT_PROMPTS = \{([^}]*)\}/s.exec(run)[1].match(/"([a-z_]+)
 assert(waitPrompts.every((k) => both(`external_measure.warning.${k}`)), `every warning prompt translated (${waitPrompts})`);
 assert(/def _calibration_kind/.test(promptsSrc) && ['sensor_position', 'white_reference', 'white_calibration'].every((k) => promptsSrc.includes(`"${k}"`)),
        'calibration kinds mirror prompts.py');
-for (const s of ['present', 'present_family', 'absent', 'other', 'several', 'error']) assert(both(`external_measure.presence.${s}`), `presence ${s}`);
+for (const s of ['present', 'present_family', 'absent', 'other', 'several', 'error', 'checking']) assert(both(`external_measure.presence.${s}`), `presence ${s}`);
+for (const s of ['checking', 'absent', 'other', 'several']) assert(both(`external_measure.start_blocked.${s}`), `start_blocked ${s}`);
 for (const o of ['approved', 'development', 'test']) assert(both(`external_measure.origin.${o}`), `origin ${o}`);
 
 console.log('Test 4 — no key to chartread, no reading trigger');
@@ -85,6 +87,14 @@ const allowedCmds = ['calibrate', 'abort_calibration', 'prev', 'next', 'next_unr
 assert(commands.length > 5 && commands.every((c) => allowedCmds.includes(c)), `only backend commands are sent (${[...new Set(commands)]})`);
 assert(!/keydown[\s\S]{0,200}(command|post)\(/.test(wiz), 'no keyboard event is forwarded to the engine');
 assert(!/onUnmount|pause\(\)[\s\S]{0,40}return \(\) =>/.test(hook) && !/command\('pause'\)/.test(hook), 'closing or unmounting never pauses');
+
+console.log('Test 5 — presence watch and start button');
+assert(/const watching = open && watchesPresence\(snap\)/.test(wiz), 'the presence is watched only while the window is open');
+assert(/return \(\) => \{ watch\.stop\(\);/.test(wiz), 'closing the window (or a run starting) stops the watch');
+assert((wiz.match(/can\('start'\) && !block \?/g) || []).length === 2, 'both start buttons (start, resume) wait while the instrument is not there');
+assert(/if \(startingRef\.current\) return null;/.test(hook), 'a second start while the first is on its way is not sent');
+assert(/poll = useCallback[\s\S]{0,120}reader\(\)\.shared\(\)[\s\S]{0,40}catch \{\s*return null;/.test(hook),
+       'a failed presence check is not shown as a refused action');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

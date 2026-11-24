@@ -192,6 +192,7 @@ class ExternalMeasureService:
         self.engine_provider, self.presence_provider = engine_provider, presence_provider
         self.locks_provider, self.lock_scope = locks_provider, lock_scope
         self.broadcast = Broadcast()
+        self.probe = usb_presence.PresenceProbe(presence_provider)
         self._ops = threading.Lock()                     # session-file operations, one at a time
         self._lock = threading.RLock()                   # self._active and the idle states
         self._active: Optional[_Active] = None
@@ -215,15 +216,34 @@ class ExternalMeasureService:
 
     # ─── context shown before and during a measurement ─────────────────────
     CONTEXT_TTL_S = 2.0
+    # USB presence, through self.probe (one listing at a time, on its own thread):
+    PRESENCE_FRESH_S = 1.0           # a verdict this recent is shared (windows, SSE, the run's watch)
+    PRESENCE_STALE_S = 5.0           # while a listing is late, the last verdict is shown this long
+    SNAPSHOT_PRESENCE_WAIT_S = 1.0   # the longest a snapshot without a live run waits for a listing
+    START_PRESENCE_WAIT_S = 3.0      # start: a listing begun after the request, awaited this long
 
-    def context(self, chart_id: str) -> dict:
+    def context(self, chart_id: str, presence_wait_s: float = SNAPSHOT_PRESENCE_WAIT_S) -> dict:
         """What the interface needs around the session: the chart's instrument and size, the
         conditions it may be read under, whether the engine is there (and publishable), whether
-        the instrument is plugged in. Passive only (no instrument opened); cached 2 s.
+        the instrument is plugged in. Passive only (no instrument opened). Everything but the
+        presence is cached 2 s.
 
         A change of presence alone publishes no event: while it is open on a chart without a
         live run, the wizard reads the snapshot again every 2 s (createPresenceWatch in the
-        frontend), which recomputes this context once the cache has expired."""
+        frontend). The presence comes from the probe: a verdict less than PRESENCE_FRESH_S old,
+        or a new listing awaited up to ``presence_wait_s``; if it is late, the last verdict
+        (up to PRESENCE_STALE_S old) or ``checking``. Never under a lock of this service."""
+        base = self._static_context(chart_id)
+        presence = None
+        if base["model"] in mi.INSTRUMENT_MODELS:
+            p = self.probe.get(base["model"], fresh_s=self.PRESENCE_FRESH_S, wait_s=presence_wait_s,
+                               stale_s=self.PRESENCE_STALE_S)
+            presence = ({"status": p.status, "family_only": p.family_only,
+                         "instruments": [x.argyll_name for x in p.instruments]} if p is not None else
+                        {"status": usb_presence.CHECKING, "family_only": False, "instruments": []})
+        return {**base, "presence": presence}
+
+    def _static_context(self, chart_id: str) -> dict:
         now = time.monotonic()
         hit = self._ctx_cache.get(chart_id)
         if hit and now - hit[0] < self.CONTEXT_TTL_S:
@@ -243,18 +263,10 @@ class ExternalMeasureService:
                       "argyll_version": spec.argyll_version, "patch_version": spec.patch_version}
         except SessionError as e:
             engine = {"ok": False, "code": e.code}
-        presence = None
-        if m is not None:
-            try:
-                p = self.presence_provider(model)
-                presence = {"status": p.status, "family_only": p.family_only,
-                            "instruments": [x.argyll_name for x in p.instruments]}
-            except Exception:                            # a listing problem is never an absence
-                presence = {"status": "error", "family_only": False, "instruments": []}
         geom = desc.get("geometry") or {}
         ctx = {"model": model, "filter_options": options, "filter_required": bool(options),
                "chart": {"patch_count": geom.get("patch_count"), "n_strips": geom.get("total_strips")},
-               "engine": engine, "presence": presence, "lock_scope": self.lock_scope()}
+               "engine": engine, "lock_scope": self.lock_scope()}
         self._ctx_cache[chart_id] = (now, ctx)
         return ctx
 
@@ -279,13 +291,23 @@ class ExternalMeasureService:
                 return seq
             return prev[1]
 
-    def snapshot(self, chart_id: str) -> dict:
+    def snapshot(self, chart_id: str, presence_wait_s: Optional[float] = None) -> dict:
+        """The state and its context. During a live run the context never waits for a USB
+        listing (the run watches the instrument itself); otherwise up to
+        ``presence_wait_s``, SNAPSHOT_PRESENCE_WAIT_S by default."""
+        st = self._state(chart_id)
+        if presence_wait_s is None:
+            presence_wait_s = 0.0 if st["running"] else self.SNAPSHOT_PRESENCE_WAIT_S
+        return {**st, "context": self.context(chart_id, presence_wait_s)}
+
+    def _state(self, chart_id: str) -> dict:
+        """The snapshot without its context: what commands are checked against. It never waits
+        for a USB listing, so neither does a command (pause) nor the pump thread."""
         d = self._chart_dir(chart_id)
         with self._lock:
             act = self._active if self._active and self._active.chart_id == chart_id else None
             if act is not None:
-                return {**act.view, "chart_id": chart_id, "seq": self.broadcast.rev(chart_id), "running": True,
-                        "context": self.context(chart_id)}
+                return {**act.view, "chart_id": chart_id, "seq": self.broadcast.rev(chart_id), "running": True}
         session = Session.find_open(d)
         state, actions = self._idle(chart_id, session)
         state_seq = self._idle_seq(chart_id, state)
@@ -294,7 +316,7 @@ class ExternalMeasureService:
                 "session": _scrub(session.summary()) if session else None,
                 "publishable": bool(session and session_publishable(session)),
                 "lock_scope": self.lock_scope(), "presence": self._presence_note.get(chart_id),
-                "notices": self.broadcast.recent(chart_id)[-20:], "context": self.context(chart_id),
+                "notices": self.broadcast.recent(chart_id)[-20:],
                 "last_session": _scrub(last.summary()) if session is None and (last := self._last_session(chart_id))
                 else None}
 
@@ -304,7 +326,7 @@ class ExternalMeasureService:
 
     def _check(self, chart_id: str, action: str, expect_state: Optional[str], seq: Optional[int],
                snap: Optional[dict] = None) -> dict:
-        snap = snap or self.snapshot(chart_id)
+        snap = snap or self._state(chart_id)
         if expect_state != snap["state"] or seq is None or seq < snap["state_seq"] or seq > self.broadcast.seq:
             raise ExternalMeasureError(409, "stale_command", "the measurement state changed; reload it",
                                        state=snap["state"], state_seq=snap["state_seq"], seq=snap["seq"])
@@ -346,30 +368,52 @@ class ExternalMeasureService:
             raise ExternalMeasureError(404, "session_not_found", "no open measurement session on this chart")
         return s
 
+    def _refuse_if_active(self) -> None:
+        with self._lock:
+            if self._active is not None:
+                raise ExternalMeasureError(409, "run_active", "a measurement is already running",
+                                           chart_id=self._active.chart_id)
+
+    def _confirm_presence(self, model: str) -> usb_presence.Presence:
+        """The authoritative check before an engine is started: a listing begun after this
+        call, awaited up to START_PRESENCE_WAIT_S outside every lock."""
+        p = self.probe.get(model, since=time.monotonic(), wait_s=self.START_PRESENCE_WAIT_S)
+        if p is None:
+            return usb_presence.Presence(usb_presence.ERROR, model, detail="the USB listing did not answer "
+                                         f"within {self.START_PRESENCE_WAIT_S:.0f} s")
+        return p
+
+    def _run_presence(self, model: str) -> usb_presence.Presence:
+        """The live run's watch, on the pump thread: never waits. The last verdict (a new
+        listing starts in the background once it is PRESENCE_FRESH_S old), or ``checking``."""
+        p = self.probe.get(model, fresh_s=self.PRESENCE_FRESH_S, stale_s=self.PRESENCE_STALE_S)
+        return p if p is not None else usb_presence.Presence(usb_presence.CHECKING, model)
+
     def start(self, chart_id: str, expect_state: Optional[str], seq: Optional[int]) -> dict:
-        """Start (or resume, -r -N -K) the engine for the chart's open session."""
+        """Start (or resume, -r -N -K) the engine for the chart's open session.
+
+        The presence is a listing begun after the request, awaited before the session lock is
+        taken; the state is checked again under it. Absent, another model or several are
+        refused (409 ``instrument_<status>``)."""
+        self._refuse_if_active()
+        self._check(chart_id, "start", expect_state, seq)
+        model = self._open_session(chart_id).model
+        try:
+            spec, env = self.engine_provider()
+        except SessionError as e:
+            raise ExternalMeasureError(409, e.code, e.message) from None
+        pres = self._confirm_presence(model)
+        self._presence_note[chart_id] = pres.status
+        if pres.status in ("absent", "other", "several"):
+            raise ExternalMeasureError(409, f"instrument_{pres.status}", pres.detail)
         with self._ops:
-            with self._lock:
-                if self._active is not None:
-                    raise ExternalMeasureError(409, "run_active", "a measurement is already running",
-                                               chart_id=self._active.chart_id)
+            self._refuse_if_active()
             self._check(chart_id, "start", expect_state, seq)
             s = self._open_session(chart_id)
-            try:
-                spec, env = self.engine_provider()
-            except SessionError as e:
-                raise ExternalMeasureError(409, e.code, e.message) from None
-            pres = self.presence_provider(s.model)
-            self._presence_note[chart_id] = pres.status
-            # The next snapshot (the window reloads it after a refusal) shows the presence this
-            # start just found, not the context cached up to CONTEXT_TTL_S before it.
-            self._ctx_cache.pop(chart_id, None)
-            if pres.status in ("absent", "other", "several"):
-                raise ExternalMeasureError(409, f"instrument_{pres.status}", pres.detail)
             locks = self.locks_provider()
             try:
                 run = Run.start(s, spec, lock=locks, env=env,
-                                presence=(lambda: self.presence_provider(s.model)) if pres.present else None)
+                                presence=(lambda: self._run_presence(s.model)) if pres.present else None)
             except LockBusy as e:
                 holder = e.info.get("holder") or {}
                 raise ExternalMeasureError(409, "instrument_busy", "another measurement holds the instrument",
@@ -397,7 +441,7 @@ class ExternalMeasureService:
         self._check(chart_id, command, expect_state, seq)
 
         def apply(run: Run):
-            snap = self.snapshot(chart_id)                    # again, on the pump thread
+            snap = self._state(chart_id)                      # again, on the pump thread
             self._check(chart_id, command, expect_state, seq, snap)
             run.command(command)
             return True
@@ -543,7 +587,9 @@ class ExternalMeasureService:
     # ─── backend life ───────────────────────────────────────────────────────
     def boot_reconcile(self) -> list[dict]:
         """Open sessions reconciled, interrupted runs closed. No engine is started: the
-        instrument is not opened."""
+        instrument is not opened. (Start-up: the probe lists again if an earlier shutdown of
+        this process closed it.)"""
+        self.probe.reopen()
         report = []
         base = cache.charts_root()
         for serial_dir in sorted(base.iterdir()) if base.is_dir() else []:
@@ -571,7 +617,14 @@ class ExternalMeasureService:
 
     def shutdown(self, budget: float = 4.0) -> Optional[dict]:
         """Pause the live run within ``budget`` seconds (prompt-aware pause, then the
-        graduated stop); returns how it ended."""
+        graduated stop); returns how it ended. Then no USB listing is started any more, and
+        the one running, if any, is killed."""
+        try:
+            return self._shutdown_run(budget)
+        finally:
+            self.probe.close()
+
+    def _shutdown_run(self, budget: float) -> Optional[dict]:
         with self._lock:
             act = self._active
         if act is None:

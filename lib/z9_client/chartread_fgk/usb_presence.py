@@ -31,6 +31,10 @@ Three outcomes are kept apart: the instrument is there (``present``), it is not
 (``absent``, ``other``, ``several``), or the list could not be read (``error``: a Flatpak
 without access to sysfs, ioreg missing…). An error is never reported as an absence.
 
+A listing can be slow (ioreg is a process, bounded by ``IOREG_TIMEOUT_S``): the backend asks
+through a :class:`PresenceProbe`, which lists on its own thread, one listing at a time, and
+lets each caller wait only as long as it can afford.
+
 The identifiers are ArgyllCMS 3.5.0's (``spectro/insttypes.c``, ``inst_usb_match``).
 """
 from __future__ import annotations
@@ -38,6 +42,8 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -74,6 +80,7 @@ MODEL_USB_IDS: dict[str, tuple[tuple[int, int], ...]] = {
 FAMILY_ONLY = frozenset({"i1pro3plus"})
 
 PRESENT, ABSENT, OTHER, SEVERAL, ERROR = "present", "absent", "other", "several", "error"
+CHECKING = "checking"               # the backend has no verdict yet: a listing is running
 
 
 class UsbScanError(RuntimeError):
@@ -98,7 +105,7 @@ class UsbDevice:
 
 @dataclass(frozen=True)
 class Presence:
-    status: str                    # present | absent | other | several | error
+    status: str                    # present | absent | other | several | error (| checking)
     model: str
     instruments: tuple[UsbDevice, ...] = ()     # every Argyll instrument seen
     family_only: bool = False      # present, but the identifier names a family, not the model
@@ -164,17 +171,49 @@ def parse_ioreg(text: str) -> list[UsbDevice]:
     return out
 
 
+_live: set = set()                    # ioreg processes running now
+_live_lock = threading.Lock()
+
+
+def run_ioreg() -> str:
+    """The IORegistry listing. Killed after ``IOREG_TIMEOUT_S``, or by :func:`abort_listings`."""
+    try:
+        p = subprocess.Popen(IOREG, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, text=True)
+    except OSError as e:
+        raise UsbScanError(f"ioreg failed: {e}") from None
+    with _live_lock:
+        _live.add(p)
+    try:
+        try:
+            out, _ = p.communicate(timeout=IOREG_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.communicate()
+            raise UsbScanError(f"ioreg did not answer within {IOREG_TIMEOUT_S:.0f} s") from None
+    finally:
+        with _live_lock:
+            _live.discard(p)
+    if p.returncode != 0:
+        raise UsbScanError(f"ioreg exited with {p.returncode}")
+    return out
+
+
+def abort_listings() -> int:
+    """Kill the ioreg listings still running (backend shutdown: none is left behind). Each
+    one's caller gets an error, never an absence."""
+    with _live_lock:
+        procs = list(_live)
+    for p in procs:
+        try:
+            p.kill()
+        except OSError:
+            pass
+    return len(procs)
+
+
 def scan_ioreg(run: Optional[Callable[[], str]] = None) -> list[UsbDevice]:
-    if run is None:
-        def run() -> str:
-            try:
-                p = subprocess.run(IOREG, capture_output=True, text=True, timeout=IOREG_TIMEOUT_S)
-            except (OSError, subprocess.SubprocessError) as e:
-                raise UsbScanError(f"ioreg failed: {e}") from None
-            if p.returncode != 0:
-                raise UsbScanError(f"ioreg exited with {p.returncode}")
-            return p.stdout
-    text = run()
+    text = (run or run_ioreg)()
     if "+-o " not in text:
         raise UsbScanError("ioreg printed no USB registry tree")
     return parse_ioreg(text)
@@ -215,3 +254,107 @@ def check_presence(model: str, devices: Optional[list[UsbDevice]] = None, *,
                         detail=f"connected: {argyll[0].argyll_name}, not the chart's instrument")
     return Presence(PRESENT, model, argyll, family_only=model in FAMILY_ONLY,
                     detail=f"{argyll[0].argyll_name} connected")
+
+
+# ─── one listing at a time, never on the caller's thread ────────────────────
+class PresenceProbe:
+    """Listings for the backend, off the caller's thread, one at a time; each caller waits
+    only as long as it can afford.
+
+    - A worker thread lists, then ends when nothing is queued. At most one listing runs and
+      at most one is queued per model: callers asking meanwhile share it. A listing that
+      hangs (until ioreg's own timeout) holds this thread only, never a caller's.
+    - :meth:`get` never raises: a failing provider gives ``error``, never an absence.
+    - :meth:`close` (backend shutdown): no new listing, the running ioreg is killed, and
+      waiting callers return at once, until :meth:`reopen` (the next start-up in the same
+      process: tests, a server started again).
+    """
+
+    def __init__(self, provider: Callable[[str], Presence], *, clock: Callable[[], float] = time.monotonic,
+                 abort: Callable[[], int] = abort_listings):
+        self._provider, self._clock, self._abort = provider, clock, abort
+        self._cond = threading.Condition()
+        self._done: dict[str, tuple[float, float, Presence]] = {}     # model → (started, finished, verdict)
+        self._queue: list[str] = []
+        self._running: Optional[tuple[str, float]] = None                # (model, started)
+        self._worker: Optional[threading.Thread] = None
+        self._closed = False
+        self.listings = 0                                                # finished, for tests and benches
+
+    def get(self, model: str, *, fresh_s: float = 0.0, since: Optional[float] = None,
+            wait_s: float = 0.0, stale_s: Optional[float] = None) -> Optional[Presence]:
+        """The verdict of a listing finished less than ``fresh_s`` ago or, with ``since``, of
+        a listing STARTED at or after ``since`` (an authoritative check). Without one, a
+        listing is started (unless the running one will do) and awaited up to ``wait_s``;
+        past that, the newest verdict finished less than ``stale_s`` ago, or None."""
+        t_call = self._clock()
+        deadline = t_call + wait_s
+
+        def good(hit) -> bool:
+            if hit is None:
+                return False
+            return hit[0] >= since if since is not None else hit[1] >= t_call - fresh_s
+
+        with self._cond:
+            while True:
+                hit = self._done.get(model)
+                if good(hit):
+                    return hit[2]
+                if self._closed:
+                    break
+                self._want(model, since)
+                left = deadline - self._clock()
+                if left <= 0:
+                    break
+                self._cond.wait(left)
+            if stale_s is not None and hit is not None and self._clock() - hit[1] <= stale_s:
+                return hit[2]
+            return None
+
+    @property
+    def running(self) -> Optional[str]:
+        with self._cond:
+            return self._running[0] if self._running else None
+
+    def close(self) -> None:
+        with self._cond:
+            self._closed = True
+            self._queue.clear()
+            running = self._running is not None
+            self._cond.notify_all()
+        if running:
+            self._abort()
+
+    def reopen(self) -> None:
+        with self._cond:
+            self._closed = False
+
+    def _want(self, model: str, since: Optional[float]) -> None:
+        r = self._running
+        if r is not None and r[0] == model and (since is None or r[1] >= since):
+            return                                       # the listing running now will do
+        if model in self._queue:
+            return
+        self._queue.append(model)
+        if self._worker is None:
+            self._worker = threading.Thread(target=self._work, name="usb-presence", daemon=True)
+            self._worker.start()
+
+    def _work(self) -> None:
+        while True:
+            with self._cond:
+                if self._closed or not self._queue:
+                    self._worker = None
+                    return
+                model = self._queue.pop(0)
+                started = self._clock()
+                self._running = (model, started)
+            try:
+                verdict = self._provider(model)
+            except Exception as e:                       # a listing problem is never an absence
+                verdict = Presence(ERROR, model, detail=f"USB listing failed: {e}")
+            with self._cond:
+                self._running = None
+                self._done[model] = (started, self._clock(), verdict)
+                self.listings += 1
+                self._cond.notify_all()

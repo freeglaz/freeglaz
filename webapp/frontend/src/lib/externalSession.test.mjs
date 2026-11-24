@@ -151,6 +151,8 @@ assert(fam.status === 'present' && fam.familyOnly && startBlock(fam) === null, '
 assert(shown(fresh('error'), { ok: true }) === 'error' && startBlock(presenceState(fresh('error'), { ok: true })) === null,
        'detection error: shown as such, not as present; start left to the backend');
 assert(shown(fresh('present'), { ok: false }) === 'error', 'a failed read is an error, never a presence (even over a "present" snapshot)');
+assert(shown(fresh('checking'), { ok: true }) === 'checking' && startBlock(presenceState(fresh('checking'), { ok: true })) === 'checking',
+       'the backend has no verdict yet (listing running): checking, start waits');
 assert(shown(fresh('present', { context: withPresence('plugged') }), { ok: true }) === 'error', 'an unknown status is an error');
 assert(shown(fresh('present', { context: { ...ctx, presence: null } }), { ok: true }) === 'error', 'no presence in the context: error');
 

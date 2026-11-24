@@ -41,6 +41,7 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
+from starlette.concurrency import run_in_threadpool
 
 from webapp.backend.services import external_measure as em
 
@@ -117,9 +118,13 @@ async def events(chart_id: str, request: Request, since: Optional[int] = None,
                  last_event_id: Optional[str] = Header(default=None)):
     """A snapshot at once (always, so a reconnection starts from the present state), then
     one per change of this chart; ``id`` is the seq, so EventSource resumes with
-    Last-Event-ID. A slow reader skips to the latest snapshot: nothing queues up."""
+    Last-Event-ID. A slow reader skips to the latest snapshot: nothing queues up.
+
+    Snapshots are built on the worker threads, as for the other routes, never on the event
+    loop, and without waiting for a USB listing (the last verdict is sent; the wizard's own
+    reads wait for a fresh one)."""
     svc = em.get_service()
-    first = _call(svc.snapshot, chart_id)
+    first = await run_in_threadpool(_call, svc.snapshot, chart_id, 0.0)
     try:
         resume = int(last_event_id) if last_event_id else since
     except ValueError:
@@ -138,7 +143,7 @@ async def events(chart_id: str, request: Request, since: Optional[int] = None,
                 yield {"event": "ping", "data": ""}
                 continue
             try:
-                snap = svc.snapshot(chart_id)
+                snap = await run_in_threadpool(svc.snapshot, chart_id, 0.0)
             except em.ExternalMeasureError:
                 break                                    # the chart was deleted
             yield {"event": "snapshot", "id": str(snap["seq"]), "data": json.dumps(snap)}

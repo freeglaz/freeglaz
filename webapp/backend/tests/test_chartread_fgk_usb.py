@@ -4,6 +4,8 @@ instruments, several instruments and a failed listing are kept apart."""
 import builtins
 import io
 import os
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -132,3 +134,176 @@ def test_identifiers_come_from_argyll_and_models_are_known():
         assert all(i in U.ARGYLL_USB_IDS for i in ids), model
     assert U.ARGYLL_USB_IDS[(0x0971, 0x2007)] == "ColorMunki"
     assert U.ARGYLL_USB_IDS[(0x0765, 0x6009)] == "i1Pro 3"
+
+
+# ─── the ioreg process: bounded, killable ───────────────────────────────────
+def fake_ioreg(tmp_path, monkeypatch, body):
+    """A stand-in for /usr/sbin/ioreg (a shell script; no device is touched)."""
+    exe = tmp_path / "ioreg"
+    exe.write_text("#!/bin/sh\n" + body)
+    exe.chmod(0o755)
+    monkeypatch.setattr(U, "IOREG", (str(exe),))
+    return exe
+
+
+def gone(pid, within=3.0):
+    end = time.monotonic() + within
+    while time.monotonic() < end:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_ioreg_process_is_read_like_the_listing(tmp_path, monkeypatch):
+    listing = tmp_path / "listing.txt"
+    listing.write_text(IOREG)
+    fake_ioreg(tmp_path, monkeypatch, f'cat "{listing}"\n')
+    assert U.check_presence("colormunki", scan=U.scan_ioreg).present
+    fake_ioreg(tmp_path, monkeypatch, "exit 3\n")
+    assert U.check_presence("colormunki", scan=U.scan_ioreg).status == "error"
+
+
+def test_ioreg_past_its_timeout_is_killed(tmp_path, monkeypatch):
+    pidfile = tmp_path / "pid"
+    fake_ioreg(tmp_path, monkeypatch, f'echo $$ > "{pidfile}"\nexec sleep 30\n')
+    monkeypatch.setattr(U, "IOREG_TIMEOUT_S", 0.5)
+    t0 = time.monotonic()
+    p = U.check_presence("colormunki", scan=U.scan_ioreg)
+    assert p.status == "error" and "did not answer" in p.detail and time.monotonic() - t0 < 2.0
+    assert gone(int(pidfile.read_text())) and not U._live
+
+
+def test_abort_listings_kills_a_running_ioreg(tmp_path, monkeypatch):
+    pidfile = tmp_path / "pid"
+    fake_ioreg(tmp_path, monkeypatch, f'echo $$ > "{pidfile}"\nexec sleep 30\n')
+    out = []
+    t = threading.Thread(target=lambda: out.append(U.check_presence("colormunki", scan=U.scan_ioreg)))
+    t.start()
+    end = time.monotonic() + 5
+    while not pidfile.exists() and time.monotonic() < end:
+        time.sleep(0.02)
+    assert U.abort_listings() == 1
+    t.join(3)
+    assert not t.is_alive() and out[0].status == "error"            # an error, never an absence
+    assert gone(int(pidfile.read_text())) and not U._live
+
+
+# ─── the probe: one listing at a time, never on the caller's thread ──────────
+class Gate:
+    """A provider the test drives: each listing waits until released (or answers at once)."""
+
+    def __init__(self, *statuses, hang=False):
+        self.statuses, self.hang, self.release = list(statuses) or ["present"], hang, threading.Event()
+        self.calls, self.active, self.max_active, self.models = 0, 0, 0, []
+        self._lock = threading.Lock()
+
+    def __call__(self, model):
+        with self._lock:
+            self.calls += 1
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            self.models.append(model)
+            status = self.statuses[min(self.calls, len(self.statuses)) - 1]
+        try:
+            if self.hang:
+                self.release.wait(10)
+            if status == "raise":
+                raise RuntimeError("listing broke")
+            return U.Presence(status, model)
+        finally:
+            with self._lock:
+                self.active -= 1
+
+
+def no_worker(within=2.0):
+    end = time.monotonic() + within
+    while time.monotonic() < end:
+        if not [t for t in threading.enumerate() if t.name == "usb-presence"]:
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def test_probe_callers_share_one_listing():
+    g = Gate(hang=True)
+    probe = U.PresenceProbe(g)
+    out = []
+    threads = [threading.Thread(target=lambda: out.append(probe.get("colormunki", fresh_s=1.0, wait_s=5.0)))
+               for _ in range(8)]
+    for t in threads:
+        t.start()
+    time.sleep(0.2)
+    assert g.calls == 1 and probe.running == "colormunki"
+    g.release.set()
+    for t in threads:
+        t.join(3)
+    assert len(out) == 8 and all(p.present for p in out) and g.calls == 1
+    assert probe.get("colormunki", fresh_s=1.0).present and g.calls == 1     # fresh: reused, no listing
+    assert no_worker()                                                       # the thread ends when idle
+
+
+def test_probe_waits_a_bounded_time_then_falls_back():
+    g = Gate()
+    probe = U.PresenceProbe(g)
+    assert probe.get("colormunki", wait_s=2.0).present
+    g.hang = True
+    t0 = time.monotonic()
+    assert probe.get("colormunki", wait_s=0.2) is None                       # late, no fallback asked
+    assert 0.15 < time.monotonic() - t0 < 0.6
+    p = probe.get("colormunki", wait_s=0.0, stale_s=5.0)
+    assert p is not None and p.present                                       # the last verdict
+    assert g.calls == 2 and g.max_active == 1                                # the late listing, not another
+    g.release.set()
+
+
+def test_probe_since_waits_for_a_listing_begun_after_the_call():
+    g = Gate("absent", "present", hang=True)
+    probe = U.PresenceProbe(g)
+    assert probe.get("colormunki", wait_s=0.0) is None                       # listing 1 starts, hangs
+    time.sleep(0.05)
+    out = []
+    t = threading.Thread(target=lambda: out.append(probe.get("colormunki", since=time.monotonic(), wait_s=5.0)))
+    t.start()
+    time.sleep(0.1)
+    g.release.set()                                                          # listing 1 answers "absent"…
+    t.join(3)
+    assert out[0].present and g.calls == 2 and g.max_active == 1             # …but only listing 2 counts
+
+
+def test_probe_lists_one_model_at_a_time_and_a_failure_is_an_error():
+    g = Gate("raise", "present", hang=True)
+    probe = U.PresenceProbe(g)
+    out = {}
+    ts = [threading.Thread(target=lambda m=m: out.__setitem__(m, probe.get(m, wait_s=5.0)))
+          for m in ("colormunki", "i1pro3plus")]
+    for t in ts:
+        t.start()
+    time.sleep(0.1)
+    g.release.set()
+    for t in ts:
+        t.join(3)
+    assert g.max_active == 1 and sorted(g.models) == ["colormunki", "i1pro3plus"]
+    assert sorted(p.status for p in out.values()) == ["error", "present"]   # the raising one: error
+    err = next(p for p in out.values() if p.status == "error")
+    assert "listing broke" in err.detail
+
+
+def test_probe_close_releases_waiters_and_lists_no_more():
+    g = Gate(hang=True)
+    aborted = []
+    probe = U.PresenceProbe(g, abort=lambda: aborted.append(1) or 1)
+    out = []
+    t = threading.Thread(target=lambda: out.append(probe.get("colormunki", wait_s=10.0)))
+    t.start()
+    time.sleep(0.1)
+    t0 = time.monotonic()
+    probe.close()
+    t.join(2)
+    assert not t.is_alive() and out == [None] and time.monotonic() - t0 < 0.5
+    assert aborted == [1]                                                    # the running listing killed
+    g.release.set()
+    assert no_worker()
+    assert probe.get("colormunki", wait_s=1.0) is None and g.calls == 1      # closed: no new listing

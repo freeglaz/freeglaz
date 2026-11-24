@@ -166,13 +166,14 @@ export function publishChecks(snap) {
 }
 
 // ─── instrument presence while the wizard is open ───────────────────────────
-// A change of presence alone publishes no SSE event (the backend computes it, passively, when it
-// builds a snapshot: context(), cached 2 s). So while the wizard is open on a chart without a live
+// A change of presence alone publishes no SSE event (the backend lists the USB devices, passively,
+// when it builds a snapshot: context()). So while the wizard is open on a chart without a live
 // run, it reads the snapshot again every PRESENCE_POLL_MS. During a run the engine itself watches
 // the instrument (instrument_lost); after a run, the watch resumes.
 
 export const PRESENCE_POLL_MS = 2000;
-const PRESENCE = new Set(['present', 'absent', 'other', 'several', 'error']);
+// What the backend reports (checking: it has no verdict yet, a USB listing is running).
+const PRESENCE = new Set(['checking', 'present', 'absent', 'other', 'several', 'error']);
 const NOT_THE_INSTRUMENT = new Set(['absent', 'other', 'several']);    // the backend refuses these
 
 /** Is the presence worth watching now? (no live run, and a session to create or to start) */

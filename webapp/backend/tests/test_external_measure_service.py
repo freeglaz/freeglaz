@@ -197,12 +197,12 @@ def test_i1pro3plus_context_offers_conditions_without_default(tmp_path, monkeypa
 def test_start_is_refused_without_the_chart_instrument(lab, status):
     """The backend's refusal stays the authority, whatever a window shows: no run, no engine,
     the session unchanged, start still offered. The snapshot that follows the refusal shows
-    the presence the start found, not the context cached before it (P1b, note 147 §16)."""
+    the presence the start found (P1b, note 147 §16)."""
     plugged = {"status": "present"}
     lab.service(presence=lambda m: Presence(plugged["status"], m, detail="test"))
     lab.engine(button_ms=20)
     s = lab.client.post(lab.base, json={}).json()
-    assert s["context"]["presence"]["status"] == "present"           # now cached for 2 s
+    assert s["context"]["presence"]["status"] == "present"
     plugged["status"] = status                                       # unplugged (or another one)
     r = post(lab, "/start", s)
     assert r.status_code == 409 and code(r) == f"instrument_{status}"
@@ -210,7 +210,7 @@ def test_start_is_refused_without_the_chart_instrument(lab, status):
     assert (after["state"], after["running"], after["state_seq"]) == ("idle", False, s["state_seq"])
     assert "start" in after["actions"] and after["session"]["runs"] == 0
     assert em.get_service().active_chart() is None
-    assert after["context"]["presence"]["status"] == status          # not the cached "present"
+    assert after["context"]["presence"]["status"] == status          # not the "present" shown before
     plugged["status"] = "present"                                    # plugged in again
     r = post(lab, "/start", after)
     assert r.status_code == 200 and r.json()["running"], r.text
@@ -223,6 +223,131 @@ def test_a_detection_error_does_not_refuse_the_start(lab):
     lab.service(presence=lambda m: Presence("error", m, detail="test"))
     s = create_and_start(lab, button_ms=20)
     assert s["running"] and s["context"]["presence"]["status"] == "error"
+
+
+class Listing:
+    """A presence provider the test controls: answers at once, fails, or hangs until released.
+    Counts the listings and how many ran at the same time."""
+
+    def __init__(self, status="present"):
+        self.status, self.hang, self.release = status, False, threading.Event()
+        self.calls = self.active = self.max_active = 0
+        self._lock = threading.Lock()
+
+    def __call__(self, model):
+        with self._lock:
+            self.calls += 1
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+        try:
+            if self.hang:
+                self.release.wait(30)
+            if self.status == "raise":
+                raise RuntimeError("listing broke")
+            return Presence(self.status, model, detail="test")
+        finally:
+            with self._lock:
+                self.active -= 1
+
+
+def test_a_hung_listing_blocks_neither_snapshots_nor_commands(lab):
+    """During a run the instrument is watched through the probe: a listing that hangs holds the
+    probe's thread only. Snapshots, the current run and pause answer at once; the pump goes on."""
+    lst = Listing()
+    svc = lab.service(presence=lst)
+    create_and_start(lab, button_ms=20)
+    wait(lab, lambda s: s["state"] == "calibration")
+    lst.hang = True                                                  # the next listing hangs
+    end = time.monotonic() + 6
+    while svc.probe.running is None and time.monotonic() < end:     # the run's watch starts one
+        time.sleep(0.02)
+    assert svc.probe.running == "colormunki"
+    try:
+        t0 = time.monotonic()
+        s = snap(lab)
+        assert time.monotonic() - t0 < 0.5 and s["running"]
+        t0 = time.monotonic()
+        assert lab.client.get("/api/external-measure/current").json()["chart_id"] == lab.chart.chart_id
+        assert time.monotonic() - t0 < 0.5
+        t0 = time.monotonic()
+        r = post(lab, "/command", s, command="pause")
+        assert r.status_code == 200, r.text
+        assert time.monotonic() - t0 < 1.0
+        s = run_to_end(lab)
+        assert s["session"]["last_stop"]["reason"] == "user_pause"
+        assert svc.probe.running == "colormunki" and lst.max_active == 1  # still hanging, never doubled
+    finally:
+        lst.release.set()
+
+
+def test_idle_snapshots_wait_a_bounded_time_and_share_one_listing(lab):
+    """Without a live run a snapshot waits at most SNAPSHOT_PRESENCE_WAIT_S for a listing; many
+    windows at once share it. Without any verdict yet the presence is "checking", never a guess;
+    with one, the last verdict is shown while the new listing is late."""
+    lst = Listing()
+    svc = lab.service(presence=lst)
+    lab.mp.setattr(em.ExternalMeasureService, "SNAPSHOT_PRESENCE_WAIT_S", 0.3)
+    lst.hang = True
+    out = []
+
+    def one():
+        t0 = time.monotonic()
+        s = lab.client.get(lab.base).json()
+        out.append((time.monotonic() - t0, s["context"]["presence"]["status"]))
+    try:
+        threads = [threading.Thread(target=one) for _ in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(10)
+        assert len(out) == 6 and all(took < 1.0 and st == "checking" for took, st in out), out
+        assert lst.calls == 1 and lst.max_active == 1
+    finally:
+        lst.release.set()
+    lst.hang = False
+    lst.release = threading.Event()
+    end = time.monotonic() + 3
+    while svc.probe.running and time.monotonic() < end:
+        time.sleep(0.01)
+    assert snap(lab)["context"]["presence"]["status"] == "present"
+    time.sleep(svc.PRESENCE_FRESH_S + 0.05)
+    lst.hang = True                                                  # now a late listing…
+    try:
+        t0 = time.monotonic()
+        s = snap(lab)
+        assert time.monotonic() - t0 < 1.0 and s["context"]["presence"]["status"] == "present"   # …shows the last verdict
+    finally:
+        lst.release.set()
+
+
+def test_shutdown_kills_a_hung_ioreg_and_stops_listing(lab, monkeypatch, tmp_path):
+    """Backend shutdown with an ioreg listing hanging: the process is killed, the probe lists no
+    more, and a snapshot taken afterwards does not wait."""
+    pidfile = tmp_path / "ioreg.pid"
+    fake = tmp_path / "ioreg"
+    fake.write_text(f'#!/bin/sh\necho $$ > "{pidfile}"\nexec sleep 30\n')
+    fake.chmod(0o755)
+    from lib.z9_client.chartread_fgk import usb_presence as U
+    monkeypatch.setattr(U, "IOREG", (str(fake),))
+    svc = lab.service(presence=lambda m: U.check_presence(m, scan=U.scan_ioreg))
+    assert snap(lab)["context"]["presence"]["status"] == "checking"   # the listing is still running
+    end = time.monotonic() + 5
+    while not pidfile.exists() and time.monotonic() < end:
+        time.sleep(0.02)
+    pid = int(pidfile.read_text())
+    t0 = time.monotonic()
+    svc.shutdown(3.0)
+    assert time.monotonic() - t0 < 1.0
+    end = time.monotonic() + 3
+    while svc.probe.running and time.monotonic() < end:
+        time.sleep(0.02)
+    assert svc.probe.running is None
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+    pidfile.unlink()
+    t0 = time.monotonic()
+    assert snap(lab)["context"]["presence"]["status"] in ("checking", "error")
+    assert time.monotonic() - t0 < 0.5 and not pidfile.exists()       # no new listing after shutdown
 
 
 # ─── commands ───────────────────────────────────────────────────────────────
@@ -282,6 +407,7 @@ def test_start_up_reconciles_and_never_opens_the_instrument(lab, monkeypatch):
         m.setattr(R.PtyProcess, "spawn", no_spawn)
         with TestClient(app):                                       # lifespan: start-up then shutdown
             pass
+    lab.service()                       # the next backend (a shut-down service lists USB no more)
     approved_engine(lab.tmp, lab.chart, lab.mp, button_ms=20, serial=SERIAL_SECRET)   # no button limit now
     after = S.Session.open(sess.dir)
     assert after.data["runs"][0]["end"] == "interrupted" and after.summary()["passes_saved"] == 2
@@ -552,6 +678,36 @@ def test_two_windows_and_a_reconnection_over_real_http(lab):
     assert a[-1]["id"] == b[-1]["id"]                                 # both windows end on the same state
     assert again[0]["resumed_from"] == last_id and again[0]["id"] >= last_id
     assert snap(lab)["seq"] >= a[-1]["id"]                            # polling gives the same present
+
+
+def test_a_hung_listing_never_blocks_the_event_loop(lab):
+    """The SSE route builds its snapshots on worker threads and does not wait for a listing:
+    with the USB listing hanging, a window connecting gets its first snapshot at once
+    ("checking") and every other route still answers (note 149 §14: ioreg on MainThread)."""
+    lst = Listing()
+    lab.service(presence=lst)
+    lst.hang = True
+    port = _free_port()
+    server, thread = backend_main.run_background("127.0.0.1", port)
+    try:
+        assert backend_main.wait_until_up("127.0.0.1", port, timeout=20)
+        first = []
+        t0 = time.monotonic()
+        sse = threading.Thread(target=_sse, args=(f"http://127.0.0.1:{port}{lab.base}/events", first, lambda e: True))
+        sse.start()
+        sse.join(5)
+        took_sse = time.monotonic() - t0
+        with httpx.Client(timeout=5.0) as c:
+            t0 = time.monotonic()
+            assert c.get(f"http://127.0.0.1:{port}/api/health").status_code == 200
+            took_health = time.monotonic() - t0
+        assert first and first[0]["context"]["presence"]["status"] == "checking"
+        assert took_sse < 1.0 and took_health < 0.5, (took_sse, took_health)
+        assert lst.max_active == 1
+    finally:
+        lst.release.set()
+        server.should_exit = True
+        thread.join(10)
 
 
 # ─── the hardware lock ──────────────────────────────────────────────────────

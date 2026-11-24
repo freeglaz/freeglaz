@@ -30,6 +30,9 @@ Consistency required for concatenation:
     - Identical spectral bands (wavelengths and count)
     - Same data_format columns (checked, otherwise automatic intersection)
     - Same physical paper, same printmode, same cartridges, same CLC
+    - Same measurement conditions: DEVCALSTD and INSTRUMENT_FILTER stated
+      identically by every source, or by none (CONDITION_KEYWORDS); kept in
+      the merged ti3, never guessed
 
 Duplicates:
     RGB patches duplicated across sources (typically the device cube
@@ -178,13 +181,20 @@ def extract_spectral_bands(data_format: list[str]) -> list[int]:
     return sorted(bands)
 
 
+# Conditions of the measurement itself, read back by measurement_identity: the calibration
+# standard (XRGA…) and the instrument filter (UVCUT = M2…; chartread writes none for M0/M1 or a
+# ColorMunki). A merged ti3 states one only when EVERY source states the same value: never
+# guessed, never taken from the first source alone.
+CONDITION_KEYWORDS = ('DEVCALSTD', 'INSTRUMENT_FILTER')
+
+
 def _parse_header_metadata(header_lines: list[str]) -> dict:
     """Extract the useful fields from the ti3 header."""
     meta = {}
     for line in header_lines:
         line = line.strip()
         for key in ('DESCRIPTOR', 'ORIGINATOR', 'CREATED',
-                    'TARGET_INSTRUMENT', 'INSTRUMENT_TYPE_SPECTRAL',
+                    'TARGET_INSTRUMENT', 'INSTRUMENT_TYPE_SPECTRAL', *CONDITION_KEYWORDS,
                     'ILLUMINANT', 'OBSERVER', 'MEASUREMENT_TYPE',
                     'SPECTRAL_BANDS', 'SPECTRAL_START_NM', 'SPECTRAL_END_NM',
                     'NORMALIZED_TO_Y_100'):
@@ -251,6 +261,25 @@ def load_source(
     )
 
 
+def shared_condition(sources: list[TI3Source], key: str) -> Optional[str]:
+    """The value of ``key`` (one of CONDITION_KEYWORDS) that the merged ti3 carries: the
+    value every source states, or None when no source states it.
+
+    :raises ValueError: the sources state different values, or only some of them state one
+        (the merged readings would then claim a condition some were never read in)."""
+    stated = [(s.label, s.metadata[key]) for s in sources if key in s.metadata]
+    if not stated:
+        return None
+    if len(stated) != len(sources):
+        missing = [s.label for s in sources if key not in s.metadata]
+        raise ValueError(f"{key} stated by {', '.join(l for l, _ in stated)} "
+                         f"but not by {', '.join(missing)}: ambiguous combination")
+    values = {v for _, v in stated}
+    if len(values) > 1:
+        raise ValueError(f"Different {key}: " + ", ".join(f"{l}={v}" for l, v in stated))
+    return stated[0][1]
+
+
 def check_sources_compatible(sources: list[TI3Source]) -> tuple[bool, list[str]]:
     """Check the compatibility of the sources for concatenation."""
     if len(sources) < 2:
@@ -283,6 +312,12 @@ def check_sources_compatible(sources: list[TI3Source]) -> tuple[bool, list[str]]
             warnings.append(
                 f"Different observer: {ref.label}={ref_obs} vs {src.label}={src_obs}"
             )
+
+    for key in CONDITION_KEYWORDS:
+        try:
+            shared_condition(sources, key)
+        except ValueError as e:
+            return (False, [str(e)])
 
     return (True, warnings)
 
@@ -447,6 +482,12 @@ def write_multipass_ti3(
         header.append('KEYWORD "TARGET_INSTRUMENT"')
         header.append(f'TARGET_INSTRUMENT "{ref_meta["TARGET_INSTRUMENT"]}"')
         header.append('')
+    for key in CONDITION_KEYWORDS:
+        value = shared_condition(sources, key)          # raises if the sources disagree
+        if value is not None:
+            header.append(f'KEYWORD "{key}"')
+            header.append(f'{key} "{value}"')
+            header.append('')
     if 'INSTRUMENT_TYPE_SPECTRAL' in ref_meta:
         header.append('KEYWORD "INSTRUMENT_TYPE_SPECTRAL"')
         header.append(f'INSTRUMENT_TYPE_SPECTRAL "{ref_meta["INSTRUMENT_TYPE_SPECTRAL"]}"')

@@ -354,10 +354,11 @@ def test_printtarg_options_come_from_the_whitelist(client, monkeypatch):
     assert o["media"] == list(P.SUPPORTED_MEDIA)
     for i in o["instruments"]:
         assert i["printtarg_selector"] == P.INSTRUMENTS[i["key"]].selector
-        (preset,) = i["presets"]
-        ref = P.PRESETS[(i["key"], "roll24")]
-        assert (preset["page_w_mm"], preset["page_h_mm"], preset["unlimited_strip"]) == \
-            (ref.page_w_mm, ref.page_h_mm, ref.unlimited_strip)
+        assert [p["media_key"] for p in i["presets"]] == [m for (k, m) in P.PRESETS if k == i["key"]]
+        for preset in i["presets"]:
+            ref = P.PRESETS[(i["key"], preset["media_key"])]
+            assert (preset["page_w_mm"], preset["page_h_mm"], preset["unlimited_strip"]) == \
+                (ref.page_w_mm, ref.page_h_mm, ref.unlimited_strip)
         assert i["measurement"]["method"] == "external"
     assert o["roll_layout"]["default"] == "transverse"
     assert o["binaries"] == {"printtarg": {"available": True},

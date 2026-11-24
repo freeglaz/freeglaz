@@ -14,7 +14,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { IDENTITY_CODES } from './measurementMethod.js';
+import { IDENTITY_CODES, MEDIA_BLOCKING } from './measurementMethod.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = join(here, '..');
@@ -94,9 +94,13 @@ assert(whitelist.length >= 2 && whitelist.every((k) => both(`measurement.instrum
 const notes = [...new Set(read(join(src, 'lib/measurementMethod.js')).split('\n')
   .filter((l) => l.includes('note:')).flatMap((l) => [...l.slice(l.indexOf('note:')).matchAll(/'([a-z0-9_]+)'/g)].map((m) => m[1])))];
 assert(notes.length === 7 && notes.every((n) => both(`measurement.note.${n}`)), `availability notes translated (${notes})`);
-for (const st of ['ok', 'unknown', 'sheet_loaded', 'roll_width', 'roll_source_unsupported'].filter((s) => s !== 'ok')) {
+for (const st of ['unknown', ...MEDIA_BLOCKING]) {
   assert(both(`measurement.media.${st}`), `media.${st}`);
 }
+// the media messages name formats given by the backend, never an instrument
+const instNames = [...new Set([...ptc.matchAll(/InstrumentSpec\("[a-z0-9]+", "([^"]+)"/g)].map((m) => m[1].replace(/^X-Rite /, '')))];
+const mediaText = JSON.stringify([fr.measurement.media, en.measurement.media]);
+assert(instNames.length >= 2 && instNames.every((n) => !mediaText.includes(n)), `no instrument name in measurement.media (${instNames})`);
 
 console.log('Test 4 — an external chart never reaches the SOL scan');
 const wiz = read(join(src, 'components/Charts/ArgyllProfileWizard.jsx'));

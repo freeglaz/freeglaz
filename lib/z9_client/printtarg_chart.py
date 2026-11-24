@@ -14,7 +14,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Charts for an EXTERNAL spectrophotometer: ArgyllCMS printtarg, composed for the roll.
+"""Charts for an EXTERNAL spectrophotometer: ArgyllCMS printtarg, composed for the roll
+or for a single sheet (one block of strips, within what the sheet takes centred).
 
 Second chart path, independent from the honeycomb + built-in spectrophotometer path
 (``sol_chart``)::
@@ -140,15 +141,95 @@ class LayoutPreset:
     unlimited_strip: bool         # printtarg -P (strip length follows the page height)
 
 
-# Default page per (instrument, media). NOT validated on the instruments yet:
-#  - i1Pro 3 Plus: -P and a 500 mm page (20 patches per strip). The real scan length
-#    on the ruler (X-Rite: 515 mm max) must be proven by a reading.
-#  - ColorMunki: 450 mm page (26 patches per strip), to be confirmed by hand reading.
+def is_sheet(media_key: str) -> bool:
+    return G.MEDIA[media_key].source == "sheet"
+
+
+def _margins(media_key: str) -> dict:
+    """Mechanical margins of the source the media is printed from (sheet = manual feed)."""
+    return MECHANICAL_MARGINS_MM["MANUALFEED" if is_sheet(media_key) else "ROLL"]
+
+
+def sheet_chart_limits(media_key: str) -> dict:
+    """Largest chart a SHEET can take with the print pipeline's placement (centred on the
+    sheet, print_geometry.compute_geometry), the sheet being taken as the Z9 measures it
+    (nominal height minus G.SHEET_HEIGHT_ALLOWANCE_MM): centred, the image keeps
+    max(top, bottom) on both sides vertically and max(left, right) horizontally.
+    The print route still checks the sheet actually loaded (the hard backstop)."""
+    media = G.MEDIA[media_key]
+    m = _margins(media_key)
+    length = media.height_mm - G.SHEET_HEIGHT_ALLOWANCE_MM
+    return {"sheet_w_mm": media.width_mm, "sheet_h_mm": media.height_mm,
+            "assumed_sheet_h_mm": length,
+            "max_w_mm": round(media.width_mm - 2 * max(m["left"], m["right"]), 3),
+            "max_h_mm": round(length - 2 * max(m["top"], m["bottom"]), 3)}
+
+
+def _sheet_block_mm(media_key: str) -> float:
+    """Longest block of strips a sheet takes (whole mm): where the transverse search starts
+    and stops on a sheet. Derived from the sheet and its margins, never typed in."""
+    return float(math.floor(sheet_chart_limits(media_key)["max_h_mm"]))
+
+
+# Default page per (instrument, media): the page width (where the transverse search starts)
+# and the page height, which becomes the STRIP LENGTH once the page is turned. Evidence:
+#  - ColorMunki on an A4 sheet (manual feed): 190 mm strips across the sheet. printtarg
+#    3.4.1 and 3.5.0 lay 8 ColorMunki patches on them (9 from 194 mm), the same patch size
+#    as on the roll; 8 strips need a 241 mm block, one block within sheet_chart_limits():
+#    64 patches = 8 strips of 8. READ for real once (Z9 24in, manual feed, 8 x 8, strips read
+#    right to left; private notes 153-156). Larger counts are refused (one block per sheet).
+#  - ColorMunki on the 24" roll: 450 mm strips (26 patches per strip), not read for real yet.
+#  - i1Pro 3 Plus on the 24" roll: -P and a 500 mm page (20 patches per strip). The real scan
+#    length on the ruler (X-Rite: 515 mm max) must be proven by a reading. Not offered on a
+#    sheet: its -P 500 mm strips cannot cross an A4.
+# A combination missing here is refused (unsupported_media), never approximated.
 PRESETS: dict[tuple[str, str], LayoutPreset] = {
     ("i1pro3plus", "roll24"): LayoutPreset(610.0, 500.0, True),
     ("colormunki", "roll24"): LayoutPreset(610.0, 450.0, False),
+    ("colormunki", "a4"): LayoutPreset(_sheet_block_mm("a4"), 190.0, False),
 }
-SUPPORTED_MEDIA = ("roll24",)
+SUPPORTED_MEDIA = ("roll24", "a4")
+
+# Loaded media accepted for a chart laid out for a given format (print route). A sheet chart
+# goes on a sheet of its format, a roll chart on a roll; the print pipeline's printable-area
+# check stays the hard backstop. Same tolerances as the interface (measurementMethod.js).
+SHEET_WIDTH_TOL_MM = 3.0
+SHEET_LENGTH_SHORT_MM = 10.0       # the Z9 measures sheets shorter than nominal (A4: ~293 mm)
+_SHEET_SOURCES = ("MANUAL_FEED", "SHEET")
+
+
+def loaded_media_mismatch(media_key: Optional[str], *, media_source: Optional[str],
+                          width_mm: Optional[float], height_mm: Optional[float]) -> Optional[str]:
+    """Why the loaded media cannot take a chart laid out for ``media_key``, or None.
+
+    - ``chart_format_unknown``: the chart names no format this version knows (never guessed).
+    - A SHEET chart goes only on a sheet the printer identifies: a sheet source (MANUAL_FEED,
+      SHEET) with both dimensions known and matching the format. Otherwise ``source`` (a roll),
+      ``source_unknown`` (no source, or one freeglaz does not know), ``sheet_unidentified``
+      (dimensions missing) or ``sheet_format`` (another size). A second roll (the Z9 Pro's
+      ROLL2) is left to the print pipeline, whose own guard refuses it.
+    - A ROLL chart: refused on a sheet source (``source``); unknown or ROLL2 sources and the roll
+      width stay with the print pipeline and the interface, as before."""
+    media = G.MEDIA.get(media_key) if isinstance(media_key, str) else None
+    if media is None:
+        return "chart_format_unknown"
+    src = (media_source or "").strip().upper()
+    if media.source == "roll":
+        return "source" if src in _SHEET_SOURCES else None
+    if src.startswith("ROLL") and src != "ROLL":
+        return None                    # ROLL2: the print pipeline's Z9 Pro guard refuses it
+    if src == "ROLL":
+        return "source"
+    if src not in _SHEET_SOURCES:
+        return "source_unknown"
+    if not (isinstance(width_mm, (int, float)) and isinstance(height_mm, (int, float))
+            and width_mm > 0 and height_mm > 0):
+        return "sheet_unidentified"
+    if (abs(width_mm - media.width_mm) > SHEET_WIDTH_TOL_MM
+            or height_mm > media.height_mm + SHEET_WIDTH_TOL_MM
+            or media.height_mm - height_mm > SHEET_LENGTH_SHORT_MM):
+        return "sheet_format"
+    return None
 
 
 def supported_options() -> dict:
@@ -1005,9 +1086,12 @@ class PrinttargChartResult:
 
 
 def printable_width_mm(media_key: str) -> float:
-    """Nominal media width minus the printer's mechanical side margins (ROLL)."""
+    """Media width the chart may cross: the nominal width minus the mechanical side margins
+    of its source (roll), or what a chart centred on the sheet may take (sheet)."""
+    if is_sheet(media_key):
+        return sheet_chart_limits(media_key)["max_w_mm"]
     media = G.MEDIA[media_key]
-    m = MECHANICAL_MARGINS_MM["ROLL"]
+    m = _margins(media_key)
     return media.width_mm - m["left"] - m["right"]
 
 
@@ -1058,6 +1142,13 @@ def orchestrate_printtarg_chart(
     if ref_icc is None or not ref_icc.is_file():
         raise PrinttargChartError("resident_profile_missing", str(reference_icc_path))
     transverse = roll_layout == ROLL_LAYOUT_TRANSVERSE
+    sheet = is_sheet(media_key)
+    if sheet and not transverse:
+        raise PrinttargChartError("invalid_roll_layout", "a sheet takes the transverse layout only")
+    limits = sheet_chart_limits(media_key) if sheet else None
+    if sheet:
+        # one block, no longer than the sheet takes: the page-length cap is the sheet's
+        max_page_length_mm = min(int(max_page_length_mm), int(_sheet_block_mm(media_key)))
     preset = PRESETS[(instrument, media_key)]
     nominal_w = preset.page_w_mm
     page_h = float(page_h_mm) if page_h_mm is not None else preset.page_h_mm
@@ -1108,8 +1199,13 @@ def orchestrate_printtarg_chart(
                                    instrument=instrument, page_h_mm=page_h,
                                    unlimited_strip=unlimited, random_start=seed,
                                    margin_in_tiff=True, timeout=timeout)
-            plan = plan_transverse_pages(prober, int(round(nominal_w)),
+            plan = plan_transverse_pages(prober, min(int(round(nominal_w)), int(max_page_length_mm)),
                                          max_page_mm=int(max_page_length_mm))
+            if sheet and plan["pages"] != 1:
+                raise PrinttargChartError(
+                    "too_many_strips_for_sheet",
+                    f"{plan['strips_total']} strips need {plan['pages']} blocks; a sheet takes one "
+                    f"of at most {limits['max_h_mm']:.1f} mm: fewer patches")
             page_w = float(plan["page_w_mm"])
             rows_at_w = prober.rows(plan["page_w_mm"])
             layout_search = {**plan, "rows_per_page": rows_at_w,
@@ -1183,6 +1279,9 @@ def orchestrate_printtarg_chart(
         if tiff_w_mm > printable_w:
             raise PrinttargChartError("page_too_wide",
                                       f"{tiff_w_mm:.2f} mm > printable {printable_w:.1f} mm")
+        if sheet and tiff_h_mm > limits["max_h_mm"]:
+            raise PrinttargChartError("too_many_strips_for_sheet",
+                                      f"{tiff_h_mm:.2f} mm > {limits['max_h_mm']:.1f} mm on the sheet")
 
         # 5. The FINAL chart, checked in its own pixels (orientation, order, presence).
         chart = _open_page(tiff_path)
@@ -1205,7 +1304,7 @@ def orchestrate_printtarg_chart(
         write_preview(tiff_path, preview)
 
         spec = INSTRUMENTS[instrument]
-        roll_margins = MECHANICAL_MARGINS_MM["ROLL"]
+        margins = _margins(media_key)
         located = sum(p["located"] for p in per_page)
         warnings = []
         if located < len(ti1_patches):
@@ -1222,9 +1321,11 @@ def orchestrate_printtarg_chart(
                            "printtarg_selector": spec.selector,
                            "ti2_target_instrument": spec.ti2_target_instrument},
             "media": {"format_key": media_key, "source": G.MEDIA[media_key].source,
-                      "width_mm": G.MEDIA[media_key].width_mm, "height_mm": None,
+                      "width_mm": G.MEDIA[media_key].width_mm,
+                      "height_mm": G.MEDIA[media_key].height_mm if sheet else None,
                       "dpi": dpi, "printable_width_mm": printable_w,
-                      "mechanical_margins_mm": dict(roll_margins)},
+                      "mechanical_margins_mm": dict(margins),
+                      **({"sheet_limits": limits} if sheet else {})},
             "paper": paper or {},
             "printtarg": {
                 **run,
@@ -1252,8 +1353,9 @@ def orchestrate_printtarg_chart(
                 "page_resolution_unit": metas[0]["resolution_unit"],
                 "tiff_w_px": stacked["width_px"], "tiff_h_px": stacked["height_px"],
                 "tiff_w_mm": round(tiff_w_mm, 3), "tiff_h_mm": round(tiff_h_mm, 3),
-                "roll_length_mm": round(tiff_h_mm + roll_margins["top"]
-                                        + roll_margins["bottom"], 1),
+                # a sheet is not cut to length: no roll consumed
+                "roll_length_mm": None if sheet else round(tiff_h_mm + margins["top"]
+                                                           + margins["bottom"], 1),
             },
             "composition": {
                 "roll_layout": roll_layout, "rotation": rot,

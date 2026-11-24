@@ -8,6 +8,14 @@ export const METHOD_EXTERNAL = 'external';
 export const LAYOUT_BY_METHOD = { [METHOD_INTEGRATED]: 'honeycomb', [METHOD_EXTERNAL]: 'printtarg' };
 // Tolerance on a roll width, same as the chart format default (_defaultFormatKey).
 const ROLL_WIDTH_TOL_MM = 15;
+// A loaded sheet matches a sheet format of its width (±SHEET_WIDTH_TOL_MM) and of its height or
+// at most SHEET_LENGTH_SHORT_MM shorter: the Z9 measures sheets shorter than their nominal size
+// (an A4 reads ~293 mm). Same values as the print route (printtarg_chart.loaded_media_mismatch),
+// which checks the sheet actually loaded and refuses a chart on media of another format.
+const SHEET_WIDTH_TOL_MM = 3;
+const SHEET_LENGTH_SHORT_MM = 10;
+// Sources a sheet is identified on (as the print route: printtarg_chart._SHEET_SOURCES).
+const SHEET_SOURCES = ['MANUAL_FEED', 'SHEET'];
 
 /** Which methods can be offered for a printer family ('z9' | 'z9pro' | 'designjet' | null).
  *  integrated: proven on the Z9 only. Unknown family (null: status not loaded or printer
@@ -52,29 +60,73 @@ export function resolveInstrument(choice, options) {
   return list.some((i) => i.key === choice) ? choice : (list[0]?.key ?? null);
 }
 
-/** Media accepted for an external chart (from the backend) and the matching chart formats. */
-export function externalFormats(options, formats) {
-  const keys = options?.media || [];
-  return (formats || []).filter((f) => keys.includes(f.key));
+/** Media accepted for an external chart and the matching chart formats, in the BACKEND's order
+ *  (its first medium stays the default); with an instrument, only the media the backend has a
+ *  preset for with it. No instrument or medium is named here. */
+export function externalFormats(options, formats, instrument = null) {
+  let keys = options?.media || [];
+  const inst = instrument ? (options?.instruments || []).find((i) => i.key === instrument) : null;
+  if (inst) keys = keys.filter((k) => (inst.presets || []).some((p) => p.media_key === k));
+  return keys.map((k) => (formats || []).find((f) => f.key === k)).filter(Boolean);
 }
 
-/** Can the LOADED media take an external chart? {status, ...}:
- *  ok | unknown (nothing known about the loaded paper) | sheet_loaded |
- *  roll_source_unsupported (a source freeglaz does not print on, e.g. ROLL2) |
- *  roll_width (a roll of another width). Informative before creation, blocks printing. */
-export function externalMediaCheck(loadedPaper, options, formats) {
-  const fmts = externalFormats(options, formats);
-  const expected = fmts.map((f) => f.width_mm);
-  if (!loadedPaper) return { status: 'unknown', expected };
+/** Can the LOADED media take an external chart? {status, key?, ...}:
+ *  ok (key = the matching chart format) | unknown (nothing known about the loaded paper) |
+ *  sheet_loaded (a sheet of no accepted format) | sheet_unidentified (a sheet whose source or
+ *  dimensions are not reported: no sheet format can be confirmed) | roll_source_unsupported (a
+ *  source freeglaz does not print on, e.g. ROLL2) | roll_width (a roll of another width). `expected` = the
+ *  accepted roll widths, `accepted` = the names of every accepted format (for the messages).
+ *  Informative before creation, blocks printing. */
+export function externalMediaCheck(loadedPaper, options, formats, instrument = null) {
+  const fmts = externalFormats(options, formats, instrument);
+  const rolls = fmts.filter((f) => f.is_roll);
+  const sheets = fmts.filter((f) => !f.is_roll);
+  const expected = rolls.map((f) => f.width_mm);
+  const base = { expected, accepted: fmts.map((f) => f.name || f.key) };
+  if (!loadedPaper) return { status: 'unknown', ...base };
   const src = (loadedPaper.media_source || '').toUpperCase();
-  if (src && src !== 'ROLL' && src.startsWith('ROLL')) return { status: 'roll_source_unsupported', source: src, expected };
-  if (loadedPaper.kind !== 'roll') return { status: 'sheet_loaded', expected };
+  if (src && src !== 'ROLL' && src.startsWith('ROLL')) return { status: 'roll_source_unsupported', source: src, ...base };
   const w = loadedPaper.width_mm;
-  if (typeof w !== 'number' || !(w > 0)) return { status: 'unknown', expected };
-  if (!fmts.length) return { status: 'unknown', expected };
-  return fmts.some((f) => Math.abs(f.width_mm - w) <= ROLL_WIDTH_TOL_MM)
-    ? { status: 'ok', width_mm: w, expected }
-    : { status: 'roll_width', width_mm: w, expected };
+  if (loadedPaper.kind !== 'roll') {
+    const h = loadedPaper.height_mm;
+    const dims = typeof w === 'number' && typeof h === 'number' && w > 0 && h > 0;
+    if (!SHEET_SOURCES.includes(src) || !dims) return { status: 'sheet_unidentified', ...base };
+    const hit = sheets.find((f) => f.height_mm
+      && Math.abs(f.width_mm - w) <= SHEET_WIDTH_TOL_MM
+      && h <= f.height_mm + SHEET_WIDTH_TOL_MM && f.height_mm - h <= SHEET_LENGTH_SHORT_MM);
+    return hit ? { status: 'ok', key: hit.key, width_mm: w, ...base }
+      : { status: 'sheet_loaded', sheets: sheets.map((f) => f.key), ...base };
+  }
+  if (typeof w !== 'number' || !(w > 0)) return { status: 'unknown', ...base };
+  if (!rolls.length) return { status: 'roll_width', width_mm: w, ...base };
+  const hit = rolls.find((f) => Math.abs(f.width_mm - w) <= ROLL_WIDTH_TOL_MM);
+  return hit ? { status: 'ok', key: hit.key, width_mm: w, ...base }
+    : { status: 'roll_width', width_mm: w, ...base };
+}
+
+/** Statuses of externalMediaCheck / externalPrintBlock that block printing an external chart. */
+export const MEDIA_BLOCKING = ['sheet_loaded', 'sheet_unidentified', 'roll_width', 'roll_source_unsupported',
+  'media_mismatch'];
+
+/** What blocks printing a CREATED external chart on the loaded media, or null: a blocking status
+ *  of `check` (externalMediaCheck for the chart's instrument), or `media_mismatch` when the loaded
+ *  media is accepted but is not the format the chart was laid out for (an A4 chart and a roll
+ *  loaded since, for example). A chart laid out for a SHEET also needs the sheet identified: when
+ *  nothing is known about the loaded paper, `sheet_unidentified`. The print route refuses the same
+ *  cases (chart_media_mismatch); for a roll chart an unknown paper stays the route's to check. */
+export function externalPrintBlock(result, check, formats = []) {
+  if (!result || result.layout !== 'printtarg' || !check) return null;
+  const sheetChart = result.media_source ? result.media_source === 'sheet'
+    : (formats || []).some((f) => f.key === result.media_key && !f.is_roll);
+  if (MEDIA_BLOCKING.includes(check.status)) return check;
+  if (check.status === 'ok' && check.key && result.media_key && check.key !== result.media_key) {
+    const name = (k) => (formats || []).find((f) => f.key === k)?.name || k;
+    return { ...check, status: 'media_mismatch', chart: name(result.media_key), loaded: name(check.key) };
+  }
+  if (sheetChart && !(check.status === 'ok' && check.key === result.media_key)) {
+    return { ...check, status: 'sheet_unidentified' };
+  }
+  return null;
 }
 
 /** How a chart is measured, from a library item or a chart detail identity. Charts without
@@ -112,6 +164,9 @@ export function printtargSummary(result) {
     widthMm: result.tiff_w_mm,
     lengthMm: result.tiff_h_mm,
     rollLengthMm: result.roll_length_mm ?? null,
+    // a sheet is not cut from a roll: the preview and the confirmation say "sheet"
+    onSheet: result.media_source === 'sheet',
+    mediaKey: result.media_key || null,
     stripsCrossTheRoll: comp.strips_cross_the_roll ?? (result.roll_layout === 'transverse'),
     stripOrder: comp.strip_order || null,
     patch1Side: comp.patch_1_side || null,

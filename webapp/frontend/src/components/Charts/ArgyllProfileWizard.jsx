@@ -26,7 +26,8 @@ import { useBuildPreview, buildWithPreview } from '../../hooks/useBuildPreview.j
 import { buildRequestBody, chartStateStamp, classifyBuildError, summarizePreview } from '../../lib/buildPreview.js';
 import { errorText } from '../../lib/errorText.js';
 import {
-  METHOD_EXTERNAL, METHOD_INTEGRATED, chartMeasurement, externalFormats, externalMediaCheck, instrumentLabel,
+  METHOD_EXTERNAL, METHOD_INTEGRATED, chartMeasurement, externalFormats, externalMediaCheck, externalPrintBlock,
+  instrumentLabel,
   methodAvailability, printtargSummary, resolveInstrument, resolveMethod, validationIdentityNotice,
 } from '../../lib/measurementMethod.js';
 import { openInLibrary } from '../../lib/libraryLink.js';
@@ -338,11 +339,14 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
   const method = resolveMethod(methodChoice, availability, printerFamily);
   const external = method === METHOD_EXTERNAL;
   const instrument = resolveInstrument(instrumentChoice, ptOptions || null);
-  const extFormats = useMemo(() => externalFormats(ptOptions || null, formats), [ptOptions, formats]);
-  const mediaCheck = externalMediaCheck(loadedPaper, ptOptions || null, formats);
-  // External charts: the media the generator supports (roll 24" today); the honeycomb choice
-  // (mediaKey) is kept untouched for a switch back.
-  const effMediaKey = external ? (extFormats[0]?.key || (ptOptions?.media || [])[0] || null) : mediaKey;
+  const extFormats = useMemo(() => externalFormats(ptOptions || null, formats, instrument),
+    [ptOptions, formats, instrument]);
+  const mediaCheck = externalMediaCheck(loadedPaper, ptOptions || null, formats, instrument);
+  // External charts: the format matching the loaded paper among those the backend has a preset
+  // for with this instrument, else its first one (the roll: nothing is chosen from an unknown
+  // paper); the honeycomb choice (mediaKey) is kept untouched for a switch back.
+  const effMediaKey = external ? (mediaCheck.key || extFormats[0]?.key || (ptOptions?.media || [])[0] || null)
+    : mediaKey;
   const fmt = useMemo(() => formats.find((f) => f.key === effMediaKey), [formats, effMediaKey]);
   // honeycomb capacity only: the printtarg generator lays out any count on the roll
   const maxPatches = external ? null : (fmt?.max_patches ?? null);
@@ -632,9 +636,11 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
   // The selected chart is measured outside freeglaz (printtarg): never the SOL screens.
   const selectedExternal = chartMeasurement(selected).external;
   const resultExternal = result?.layout === 'printtarg';
-  // Printing an external chart needs the media the generator supports (roll 24", roll 1).
-  const printBlockedBy = resultExternal && ['sheet_loaded', 'roll_width', 'roll_source_unsupported'].includes(mediaCheck.status)
-    ? mediaCheck : null;
+  // Printing an external chart needs loaded media of the format it was laid out for (checked
+  // for the chart's own instrument); the print route refuses the same cases.
+  const printBlockedBy = resultExternal
+    ? externalPrintBlock(result, externalMediaCheck(loadedPaper, ptOptions || null, formats, result.instrument), formats)
+    : null;
   const activeDeltaChartId = concordanceDelta?._chartId || selected?.chart_id;
   // Number of KEPT scans (the toggle excludes) → drives the base selector + the average.
   const nKeptScanned = chartDetail ? chartDetail.scans.filter((s) => s.kept).length : nScans;
@@ -686,7 +692,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
               validate={isValidate}
               method={method} availability={availability} onMethod={setMethodChoice}
               ptOptions={ptOptions} instrument={instrument} onInstrument={setInstrumentChoice}
-              extFormats={extFormats} mediaCheck={mediaCheck}/>
+              extFormats={extFormats} mediaCheck={mediaCheck} extKey={effMediaKey}/>
           )}
 
           {phase === 'preview' && result && !resultExternal && (
@@ -920,8 +926,13 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
           icon={<AlertTriangle size={18} className="text-warn"/>}
           title={t('chart_create.print_confirm_title')}
           message={resultExternal
-            ? t('measurement.print_confirm', { paper: paperName, instrument: instrumentLabel(t, result?.instrument),
-                                              ge: _geLabel(geStr), mm: Math.round(result?.roll_length_mm ?? result?.tiff_h_mm ?? 0) })
+            ? (result?.media_source === 'sheet'
+              ? t('measurement.print_confirm_sheet', { paper: paperName, instrument: instrumentLabel(t, result?.instrument),
+                                                      ge: _geLabel(geStr),
+                                                      format: formats.find((f) => f.key === result?.media_key)?.name || result?.media_key,
+                                                      w: Math.round(result?.tiff_w_mm ?? 0), h: Math.round(result?.tiff_h_mm ?? 0) })
+              : t('measurement.print_confirm', { paper: paperName, instrument: instrumentLabel(t, result?.instrument),
+                                                ge: _geLabel(geStr), mm: Math.round(result?.roll_length_mm ?? result?.tiff_h_mm ?? 0) }))
             : t('chart_create.print_confirm', { paper: paperName, format: mediaKey.toUpperCase(), ge: _geLabel(geStr) })}
           confirmLabel={t('chart_create.print_confirm_btn')}
           cancelLabel={t('common.cancel')}
@@ -1113,23 +1124,24 @@ function ComposeView({
   geStr, cChoice, setCChoice, cCustom, setCCustom, residentCurrent, customs, dev,
   validate = false,
   method, availability, onMethod, ptOptions, instrument, onInstrument, extFormats = [], mediaCheck,
+  extKey = null,
 }) {
   const external = method === METHOD_EXTERNAL;
   return (
     <>
       <Section n="1" title={t('measurement.method_title')}>
         <MethodChooser t={t} method={method} availability={availability} onMethod={onMethod}
-                       ptOptions={ptOptions} instrument={instrument} onInstrument={onInstrument}/>
+                       ptOptions={ptOptions} instrument={instrument} onInstrument={onInstrument} mediaKey={extKey}/>
       </Section>
 
       <Section n="2" title={t('chart_create.layer_format')}>
         {external ? (
           <div className="space-y-1.5" data-format-external="1">
             <div className="flex items-center gap-3 flex-wrap">
-              <NSelect value={extFormats[0]?.key || ''} onChange={() => {}} disabled
+              <NSelect value={extKey || extFormats[0]?.key || ''} onChange={() => {}} disabled
                        options={extFormats.length ? extFormats.map((f) => ({ value: f.key, label: f.name }))
                                                   : [{ value: '', label: '—' }]}/>
-              <span className="text-tiny text-text-faint">{t('measurement.media.only')}</span>
+              <span className="text-tiny text-text-faint">{t('measurement.media.only', { formats: extFormats.map((f) => f.name || f.key).join(' / ') || '—' })}</span>
             </div>
             <MediaNotice t={t} check={mediaCheck}/>
             <p className="text-tiny text-text-faint leading-snug">{t('measurement.dims_after_creation')}</p>
@@ -1251,14 +1263,15 @@ function ComposeView({
 
 // Measurement method: two cards (built-in HP / external) + the instrument list of the backend.
 // An unavailable method stays visible, disabled, with its reason (never silently dropped).
-function MethodChooser({ t, method, availability, onMethod, ptOptions, instrument, onInstrument }) {
+function MethodChooser({ t, method, availability, onMethod, ptOptions, instrument, onInstrument, mediaKey = null }) {
   const cards = [
     { value: METHOD_INTEGRATED, title: t('measurement.method.integrated'), desc: t('measurement.method.integrated_desc') },
     { value: METHOD_EXTERNAL, title: t('measurement.method.external'), desc: t('measurement.method.external_desc') },
   ];
   const instruments = (ptOptions && ptOptions.instruments) || [];
   const current = instruments.find((i) => i.key === instrument);
-  const preset = current?.presets?.[0];
+  // the preset of the format the chart will be made for (the loaded paper's), else the first
+  const preset = current?.presets?.find((p) => p.media_key === mediaKey) || current?.presets?.[0];
   return (
     <div className="space-y-2" data-method={method || ''}>
       <div className="grid grid-cols-2 gap-2">
@@ -1319,7 +1332,8 @@ function MediaNotice({ t, check }) {
       <AlertTriangle size={12} className="mt-0.5 flex-shrink-0"/>
       <span>{t(`measurement.media.${check.status}`, {
         width: Math.round(check.width_mm || 0), source: check.source || '',
-        expected: (check.expected || []).map((w) => Math.round(w)).join(' / ') || '610' })}</span>
+        expected: (check.expected || []).map((w) => Math.round(w)).join(' / ') || '610',
+        formats: (check.accepted || []).join(' / ') || '—', chart: check.chart || '', loaded: check.loaded || '' })}</span>
     </div>
   );
 }
@@ -1407,10 +1421,11 @@ function PrinttargPreviewView({ t, result, family, printBlockedBy, dev }) {
         {row(t('measurement.preview.instrument'), instrumentLabel(t, p.instrument), 'instrument')}
         {row(t('chart_create.r_patches'), p.nPatches, 'n_patches')}
         {row(t('measurement.preview.strips'), t('measurement.preview.strips_value', { count: p.nStrips, per: p.patchesPerStrip }), 'strips')}
-        {row(t('measurement.preview.layout'),
-             p.stripsCrossTheRoll
-               ? t('measurement.preview.layout_transverse', { side: t(`measurement.side.${p.patch1Side || 'right'}`) })
-               : t('measurement.preview.layout_pages'), 'roll_layout')}
+        {row(p.onSheet ? t('measurement.preview.layout_sheet') : t('measurement.preview.layout'),
+             !p.stripsCrossTheRoll ? t('measurement.preview.layout_pages')
+               : p.onSheet ? t('measurement.preview.layout_transverse_sheet', { side: t(`measurement.side.${p.patch1Side || 'right'}`) })
+                 : t('measurement.preview.layout_transverse', { side: t(`measurement.side.${p.patch1Side || 'right'}`) }),
+             'roll_layout')}
         {p.nBlocks > 1 && row(t('measurement.preview.blocks'), p.nBlocks, 'blocks')}
         {row(t('measurement.preview.size'), t('measurement.preview.size_value', { w: Math.round(p.widthMm), h: Math.round(p.lengthMm) }), 'size')}
         {p.rollLengthMm != null && row(t('measurement.preview.roll'), t('measurement.preview.roll_value', { mm: Math.round(p.rollLengthMm) }), 'roll_length')}

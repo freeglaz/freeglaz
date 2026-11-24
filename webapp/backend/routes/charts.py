@@ -435,6 +435,7 @@ def create_chart(request: Request, body: CreateChartBody,
             # computed by the generator: the UI shows them before printing, never recomputes
             "roll_length_mm": (desc.get("geometry") or {}).get("roll_length_mm"),
             "media_key": body.media_key,
+            "media_source": (desc.get("media") or {}).get("source"),     # "sheet" | "roll"
             "composition": {k: (desc.get("composition") or {}).get(k) for k in
                             ("rotation", "strips_cross_the_roll", "strip_order", "patch_1_side")},
             "purpose": body.purpose,
@@ -700,6 +701,27 @@ def print_chart(chart_id: str, body: PrintChartBody, request: Request,
     if loaded is None:
         raise HTTPException(409, detail="no paper loaded on the Z9")
 
+    # An external-instrument chart is laid out for ONE format (a sheet size, or a roll): it goes
+    # on that media, never on another one it happens to fit (an A4 chart would print on a
+    # roll, but would no longer be the chart its descriptor describes).
+    if desc.get("layout") == _ptc.LAYOUT:
+        chart_media = (desc.get("media") or {}).get("format_key")
+        loaded_w = loaded.sheet_width_mm if loaded.sheet_width_mm is not None else loaded.roll_width_mm
+        why = _ptc.loaded_media_mismatch(chart_media, media_source=loaded.media_source,
+                                         width_mm=loaded_w, height_mm=loaded.sheet_height_mm)
+        if why == "chart_format_unknown":
+            raise HTTPException(422, detail={
+                "code": "chart_format_unknown", "chart_media": chart_media,
+                "message": f"The chart names no known format ({chart_media!r}): not printed."})
+        if why:
+            raise HTTPException(409, detail={
+                "code": "chart_media_mismatch", "reason": why, "chart_media": chart_media,
+                "loaded": {"media_source": loaded.media_source, "width_mm": loaded_w,
+                           "height_mm": loaded.sheet_height_mm},
+                "message": (f"This chart is laid out for {chart_media}; the loaded paper "
+                            f"({loaded.media_source or 'unknown source'}) is not identified as "
+                            f"that format ({why}).")})
+
     # ── UNIQUE placement : EXACTLY the print screen pipeline ──
     # We do NOT reinvent placement (the old inline top-anchored one overflowed in GE).
     # The chart TIFF is treated like any other image : compute_geometry
@@ -741,6 +763,9 @@ def print_chart(chart_id: str, body: PrintChartBody, request: Request,
         desc["print_placement"] = {
             "offset_x_mm": geometry.image_x_mm, "offset_y_mm": geometry.image_y_mm,
             "media_source": geometry.media_source, "mode": "print_pipeline",
+            # printed size (the TIFF's own: no scaling) and the media it was placed on
+            "image_w_mm": geometry.image_width_mm, "image_h_mm": geometry.image_height_mm,
+            "sheet_w_mm": geometry.sheet_width_mm, "sheet_h_mm": geometry.sheet_height_mm,
         }
     else:
         # ── CRITICAL scan consistency : the scanLayout MUST reflect the EFFECTIVE placement

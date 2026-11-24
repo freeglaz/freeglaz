@@ -4,7 +4,7 @@
  */
 import {
   METHOD_EXTERNAL, METHOD_INTEGRATED, chartBadge, chartMeasurement, defaultMethod, describeValue,
-  externalMediaCheck, identityRefusal, methodAvailability, previewCompatibility, printtargSummary,
+  externalFormats, externalMediaCheck, externalPrintBlock, identityRefusal, methodAvailability, previewCompatibility, printtargSummary,
   resolveInstrument, resolveMethod, scanIdentityLine, untrackedSourceProfiles, validationIdentityNotice,
 } from './measurementMethod.js';
 import { classifyBuildError } from './buildPreview.js';
@@ -61,10 +61,61 @@ assert(media({ kind: 'roll', width_mm: 610, media_source: 'ROLL' }) === 'ok', '2
 assert(media({ kind: 'roll', width_mm: 609.6, media_source: 'ROLL' }) === 'ok', '24" roll (inch rounding)');
 assert(media({ kind: 'roll', width_mm: 1118, media_source: 'ROLL' }) === 'roll_width', '44" roll refused');
 assert(media({ kind: 'roll', width_mm: 432, media_source: 'ROLL' }) === 'roll_width', '17" roll refused');
-assert(media({ kind: 'sheet', width_mm: 297, media_source: 'MANUAL_FEED' }) === 'sheet_loaded', 'sheet refused');
+assert(media({ kind: 'sheet', width_mm: 297, height_mm: 420, media_source: 'MANUAL_FEED' }) === 'sheet_loaded', 'sheet refused');
+assert(media({ kind: 'sheet', width_mm: 297, media_source: 'MANUAL_FEED' }) === 'sheet_unidentified', 'sheet without its length: not identified');
 assert(media({ kind: 'sheet', width_mm: null, media_source: 'ROLL2' }) === 'roll_source_unsupported', 'ROLL2 refused');
 assert(media(null) === 'unknown' && media({ kind: 'roll', media_source: 'ROLL' }) === 'unknown', 'unknown media: checked at print');
 assert(externalMediaCheck({ kind: 'roll', width_mm: 914, media_source: 'ROLL' }, OPTIONS, FORMATS).expected[0] === 610, 'expected width from the formats');
+
+console.log('Test 3b — an A4 sheet for the ColorMunki (manual feed)');
+const OPTIONS_A4 = { ...OPTIONS, media: ['roll24', 'a4'], instruments: [
+  OPTIONS.instruments[0],
+  { ...OPTIONS.instruments[1], presets: [...OPTIONS.instruments[1].presets,
+    { media_key: 'a4', page_w_mm: 257, page_h_mm: 190, unlimited_strip: false }] }] };
+const FORMATS_A4 = [{ key: 'a4', width_mm: 210, height_mm: 297, is_roll: false },
+                    { key: 'a3', width_mm: 297, height_mm: 420, is_roll: false }, ...FORMATS.slice(1)];
+const A4_LOADED = { kind: 'sheet', width_mm: 210.52, height_mm: 292.74, media_source: 'MANUAL_FEED' };
+const cm = externalMediaCheck(A4_LOADED, OPTIONS_A4, FORMATS_A4, 'colormunki');
+assert(cm.status === 'ok' && cm.key === 'a4', 'A4 as the Z9 measures it, ColorMunki: accepted, format a4');
+assert(externalMediaCheck({ ...A4_LOADED, height_mm: 297 }, OPTIONS_A4, FORMATS_A4, 'colormunki').key === 'a4', 'nominal A4 accepted');
+assert(externalMediaCheck(A4_LOADED, OPTIONS_A4, FORMATS_A4, 'i1pro3plus').status === 'sheet_loaded', 'A4 refused for the i1Pro 3 Plus (no preset)');
+assert(externalMediaCheck({ ...A4_LOADED, height_mm: 270 }, OPTIONS_A4, FORMATS_A4, 'colormunki').status === 'sheet_loaded', 'a sheet much shorter than A4 refused');
+assert(externalMediaCheck({ kind: 'sheet', width_mm: 297, height_mm: 420, media_source: 'MANUAL_FEED' }, OPTIONS_A4, FORMATS_A4, 'colormunki').status === 'sheet_loaded', 'A3 sheet refused (no A3 preset)');
+const r24 = externalMediaCheck({ kind: 'roll', width_mm: 610, media_source: 'ROLL' }, OPTIONS_A4, FORMATS_A4, 'colormunki');
+assert(r24.status === 'ok' && r24.key === 'roll24' && r24.expected.join() === '610', '24" roll still accepted for the ColorMunki, format roll24');
+assert(externalMediaCheck({ kind: 'roll', width_mm: 1118, media_source: 'ROLL' }, OPTIONS_A4, FORMATS_A4, 'colormunki').status === 'roll_width', '44" roll still refused');
+assert(externalFormats(OPTIONS_A4, FORMATS_A4, 'colormunki').map((f) => f.key).join() === 'roll24,a4', 'ColorMunki formats: roll24 and a4, in the backend order');
+assert(externalFormats(OPTIONS_A4, FORMATS_A4, 'i1pro3plus').map((f) => f.key).join() === 'roll24', 'i1Pro 3 Plus formats: roll24 only');
+assert(externalFormats(OPTIONS_A4, FORMATS_A4).map((f) => f.key).join() === 'roll24,a4', 'no instrument: every format the backend lists, its order');
+// nothing known about the loaded media: the default stays the backend's first medium (the roll),
+// never a sheet because of the order of GET /formats (a4 comes first there)
+const unk = externalMediaCheck(null, OPTIONS_A4, FORMATS_A4, 'colormunki');
+assert(unk.status === 'unknown' && !unk.key && externalFormats(OPTIONS_A4, FORMATS_A4, 'colormunki')[0].key === 'roll24', 'unknown media → roll24 stays the default format');
+assert(externalMediaCheck({ kind: 'roll', media_source: 'ROLL' }, OPTIONS_A4, FORMATS_A4, 'colormunki').status === 'unknown', 'roll of unknown width → unknown, no sheet format chosen');
+assert(cm.accepted.join() === 'roll24,a4' && externalMediaCheck(A4_LOADED, OPTIONS_A4, FORMATS_A4, 'i1pro3plus').accepted.join() === 'roll24', 'accepted formats named for the messages');
+
+console.log('Test 3c — printing a created external chart: the loaded media must be its format');
+const A4_RESULT = { layout: 'printtarg', media_key: 'a4', media_source: 'sheet', instrument: 'colormunki' };
+const R24_RESULT = { layout: 'printtarg', media_key: 'roll24', media_source: 'roll', instrument: 'colormunki' };
+const ROLL_LOADED = { kind: 'roll', width_mm: 610, media_source: 'ROLL' };
+const chk = (loaded, res) => externalPrintBlock(res, externalMediaCheck(loaded, OPTIONS_A4, FORMATS_A4, res.instrument), FORMATS_A4);
+assert(chk(A4_LOADED, A4_RESULT) === null, 'A4 chart, A4 loaded: printable');
+assert(chk(ROLL_LOADED, R24_RESULT) === null, 'roll chart, 24" roll loaded: printable');
+const mm = chk(ROLL_LOADED, A4_RESULT);
+assert(mm?.status === 'media_mismatch' && mm.chart === 'a4' && mm.loaded === 'roll24', 'A4 chart, roll loaded since: blocked (media_mismatch)');
+assert(chk(A4_LOADED, R24_RESULT)?.status === 'media_mismatch', 'roll chart, A4 loaded: blocked (media_mismatch)');
+assert(chk({ kind: 'sheet', width_mm: 297, height_mm: 420, media_source: 'MANUAL_FEED' }, A4_RESULT)?.status === 'sheet_loaded', 'A4 chart, A3 loaded: blocked');
+// a sheet chart needs the sheet identified: nothing known, no length, an unknown source → blocked
+assert(chk(null, A4_RESULT)?.status === 'sheet_unidentified', 'A4 chart, nothing known about the paper: blocked');
+assert(chk({ ...A4_LOADED, height_mm: null }, A4_RESULT)?.status === 'sheet_unidentified', 'A4 chart, sheet length not reported: blocked');
+assert(chk({ kind: 'sheet', width_mm: 210.52, height_mm: 292.74, media_source: '?' }, A4_RESULT)?.status === 'sheet_unidentified', 'A4 chart, unknown source: blocked');
+assert(chk({ ...A4_LOADED, media_source: '' }, A4_RESULT)?.status === 'sheet_unidentified', 'A4 chart, no source: blocked');
+assert(chk({ ...A4_LOADED, media_source: 'ROLL2' }, A4_RESULT)?.status === 'roll_source_unsupported', 'A4 chart, ROLL2: blocked (as before)');
+assert(chk({ ...A4_LOADED, media_source: 'SHEET' }, A4_RESULT) === null, 'A4 chart, A4 on the SHEET source: printable');
+// a roll chart: unchanged, an unknown paper stays the print route's to check
+assert(chk(null, R24_RESULT) === null && chk({ kind: 'roll', media_source: 'ROLL' }, R24_RESULT) === null, 'roll chart, unknown paper: not blocked here (as before)');
+assert(externalPrintBlock({ layout: 'printtarg', media_key: 'a4', instrument: 'colormunki' }, externalMediaCheck(null, OPTIONS_A4, FORMATS_A4, 'colormunki'), FORMATS_A4)?.status === 'sheet_unidentified', 'sheet chart recognised from the formats when media_source is absent');
+assert(externalPrintBlock({ layout: 'honeycomb' }, mm, FORMATS_A4) === null && externalPrintBlock(null, mm) === null, 'honeycomb / no result: never blocked here');
 
 console.log('Test 4 — how a chart is measured (library items and detail identities)');
 assert(chartMeasurement({ chart_id: 'CHT-old' }).integrated && chartMeasurement({}).layout === 'honeycomb', 'historical chart without layout = honeycomb, built-in');
@@ -88,6 +139,8 @@ assert(ps.stripsCrossTheRoll && ps.stripOrder === 'top_to_bottom' && ps.patch1Si
 assert(ps.iccName === 'Resident GE OFF' && ps.ge === 'OFF', 'resident and GE');
 assert(ps.generatorWarnings[0].code === 'patches_not_located' && ps.generatorWarnings[0].count === 8, 'generator findings as codes');
 assert(printtargSummary({ chart_id: 'x', cols: 18, nrows: 4 }) === null, 'honeycomb result → no printtarg summary (no fake strips)');
+assert(ps.onSheet === false && printtargSummary({ ...created, media_key: 'a4', media_source: 'sheet', roll_length_mm: null }).onSheet === true,
+       'a sheet chart is presented as a sheet (no roll consumed)');
 assert(!('cols' in ps) && !('nrows' in ps), 'no columns / rows in the printtarg summary');
 
 console.log('Test 6 — structured identity refusals');

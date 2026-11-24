@@ -87,7 +87,9 @@ def test_argv_refusals(kw, code):
 def test_only_studied_instruments_are_offered():
     assert set(P.INSTRUMENTS) == {"i1pro3plus", "colormunki"}
     assert {k[0] for k in P.PRESETS} == set(P.INSTRUMENTS)
-    assert P.SUPPORTED_MEDIA == ("roll24",)
+    assert P.SUPPORTED_MEDIA == ("roll24", "a4")
+    # an A4 sheet for the ColorMunki only (test_printtarg_a4.py)
+    assert {k for k in P.PRESETS if k[1] == "a4"} == {("colormunki", "a4")}
 
 
 def test_strip_labels_default_pattern():

@@ -6,7 +6,8 @@
  *     run states, problems, durability kinds, calibration kinds, warning prompts, presence,
  *     events, engine origins, and every error code the service and the engine resolver send;
  *  4. the components never send a key to chartread nor offer a reading trigger;
- *  5. the presence watch runs only while the wizard is open, and "Start" waits for the instrument.
+ *  5. the presence watch runs only while the wizard is open, and "Start" waits for the instrument:
+ *     every reason it may wait for has its text, and so has every refusal of the backend.
  * Run: node webapp/frontend/src/lib/externalSession.i18n.test.mjs
  */
 import { readFileSync } from 'node:fs';
@@ -54,7 +55,9 @@ assert(states.every((s) => both(`external_measure.state.${s}`)), `every state tr
 const svcCodes = [...service.matchAll(/ExternalMeasureError\(\d{3}, "([a-z_]+)"/g)].map((m) => m[1]);
 const engCodes = [...engine.matchAll(/_fail\("([a-z_]+)"/g)].map((m) => m[1]);
 const sessCodes = [...session.matchAll(/SessionError\("([a-z_]+)"/g)].map((m) => m[1]).filter((c) => c !== 'internal');
-const presCodes = ['absent', 'other', 'several'].map((s) => `instrument_${s}`);
+// start() refuses with instrument_<status> for every status but present (usb_presence + the probe)
+const presStatuses = ['absent', 'other', 'several', 'error'];
+const presCodes = presStatuses.map((s) => `instrument_${s}`);
 const errs = [...new Set([...svcCodes, ...engCodes, ...sessCodes, ...presCodes, 'measurement_empty', 'measurement_not_spectral'])];
 const untranslated = errs.filter((c) => !both(`errors.${c}`));
 assert(svcCodes.length > 10 && engCodes.length > 8, `${svcCodes.length} service and ${engCodes.length} engine codes found`);
@@ -75,8 +78,15 @@ const waitPrompts = /WAIT_PROMPTS = \{([^}]*)\}/s.exec(run)[1].match(/"([a-z_]+)
 assert(waitPrompts.every((k) => both(`external_measure.warning.${k}`)), `every warning prompt translated (${waitPrompts})`);
 assert(/def _calibration_kind/.test(promptsSrc) && ['sensor_position', 'white_reference', 'white_calibration'].every((k) => promptsSrc.includes(`"${k}"`)),
        'calibration kinds mirror prompts.py');
-for (const s of ['present', 'present_family', 'absent', 'other', 'several', 'error', 'checking']) assert(both(`external_measure.presence.${s}`), `presence ${s}`);
-for (const s of ['checking', 'absent', 'other', 'several']) assert(both(`external_measure.start_blocked.${s}`), `start_blocked ${s}`);
+const blockReasons = ['checking', 'absent', 'other', 'several', 'error', 'unreachable'];   // every non-present state
+for (const s of ['present', 'present_family', ...blockReasons]) assert(both(`external_measure.presence.${s}`), `presence ${s}`);
+for (const s of blockReasons) assert(both(`external_measure.start_blocked.${s}`), `start_blocked ${s}`);
+const usbPresence = read(join(repo, 'lib/z9_client/chartread_fgk/usb_presence.py'));
+const pyStatuses = /PRESENT, ABSENT, OTHER, SEVERAL, ERROR = ([^\n]*)/.exec(usbPresence)[1].match(/"([a-z]+)"/g).map((x) => x.replaceAll('"', ''));
+assert(pyStatuses.filter((x) => x !== 'present').every((x) => presStatuses.includes(x)) && /CHECKING = "checking"/.test(usbPresence),
+       `every backend presence status known here (${pyStatuses}, checking)`);
+assert(/if not pres\.present:\s*raise ExternalMeasureError\(409, f"instrument_\{pres\.status\}"/.test(service),
+       'the backend refuses every start without a confirmed presence, with instrument_<status>');
 for (const o of ['approved', 'development', 'test']) assert(both(`external_measure.origin.${o}`), `origin ${o}`);
 
 console.log('Test 4 — no key to chartread, no reading trigger');

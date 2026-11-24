@@ -19,9 +19,11 @@ import {
  *
  * Instrument presence: while the window is open on a chart without a live run, the snapshot is
  * read again every 2 s (createPresenceWatch), so plugging or unplugging shows without a reload.
- * "Start" waits while the chart's instrument is confirmed absent (or another one, or several are
- * plugged in) and comes back by itself once it is detected; the backend still decides and
- * refuses a start without it. The watch stops when the window closes or a run starts.
+ * "Start" is offered only while the chart's instrument is confirmed present (startBlock): it
+ * waits while it is absent, another one or several are plugged in, the USB devices cannot be
+ * listed or freeglaz does not answer, and comes back by itself once it is detected. The backend
+ * still decides and refuses a start without it. The watch stops when the window closes or a run
+ * starts.
  *
  * Props: open, onClose, chartId, session (useExternalSession result).
  */
@@ -215,7 +217,8 @@ function Row({ label, children }) {
 
 function PresenceRow({ t, instrument, presence }) {
   const s = presence.status;
-  const color = s === 'present' ? 'text-success' : s === 'error' || s === 'checking' ? 'text-text-muted' : 'text-danger';
+  const color = s === 'present' ? 'text-success'
+    : s === 'error' || s === 'checking' || s === 'unreachable' ? 'text-text-muted' : 'text-danger';
   return (
     <Row label={t('external_measure.prepare.presence_label')}>
       <span className={`inline-flex items-center gap-1.5 ${color}`} data-presence={s}>

@@ -1095,6 +1095,7 @@
     "instrument_absent": "No instrument detected: plug it in, then try again.",
     "instrument_other": "The instrument plugged in is not the chart's.",
     "instrument_several": "Several instruments are plugged in: leave only one.",
+    "instrument_error": "The instrument cannot be detected: freeglaz does not start a measurement without seeing the chart's instrument.",
     "session_not_found": "No open session for this chart.",
     "session_exists": "A session is already open for this chart.",
     "session_busy": "Another window or another freeglaz is creating a session on this chart: try again in a moment.",
@@ -2108,14 +2109,17 @@
       "several": "several instruments plugged in: leave only one",
       "error": "cannot be checked here (check the cable)",
       "present_family": "an i1Pro 3 is plugged in (the exact model is confirmed by the reading)",
-      "checking": "checking…"
+      "checking": "checking…",
+      "unreachable": "freeglaz is not answering"
     },
-    "presence_unchecked": "freeglaz cannot list the instruments here: you can still start, and the engine will say if it does not find the instrument.",
+    "presence_unchecked": "freeglaz cannot list the USB devices: without this check the engine could open another instrument, so starting stays blocked.",
     "start_blocked": {
       "checking": "Checking the instrument…",
       "absent": "Plug in the {{instrument}}: the start button comes back as soon as it is detected.",
       "other": "The instrument plugged in is not the chart's {{instrument}}: the start button comes back as soon as the right one is detected.",
-      "several": "Several instruments are plugged in: leave only the {{instrument}} and the start button will come back."
+      "several": "Several instruments are plugged in: leave only the {{instrument}} and the start button will come back.",
+      "error": "The instrument cannot be detected: the start button comes back as soon as the {{instrument}} is detected.",
+      "unreachable": "freeglaz is not answering: the instrument cannot be checked for now. The start button comes back as soon as the {{instrument}} is detected again."
     },
     "engine": {
       "ok": "chartread-fgK (ArgyllCMS {{argyll}}, per-strip saving v{{patch}})",

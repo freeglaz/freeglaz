@@ -1095,6 +1095,7 @@
     "instrument_absent": "Aucun instrument détecté : branche-le, puis recommence.",
     "instrument_other": "L'instrument branché n'est pas celui de la charte.",
     "instrument_several": "Plusieurs instruments sont branchés : n'en laisse qu'un.",
+    "instrument_error": "Détection de l'instrument impossible : freeglaz ne démarre pas une mesure sans avoir vu l'instrument de la charte.",
     "session_not_found": "Aucune séance ouverte pour cette charte.",
     "session_exists": "Une séance est déjà ouverte pour cette charte.",
     "session_busy": "Une autre fenêtre ou un autre freeglaz crée une séance sur cette charte : réessaie dans un instant.",
@@ -2108,14 +2109,17 @@
       "several": "plusieurs instruments branchés : n'en laisse qu'un",
       "error": "détection impossible ici (vérifie le branchement)",
       "present_family": "un i1Pro 3 est branché (le modèle exact se confirme à la lecture)",
-      "checking": "vérification…"
+      "checking": "vérification…",
+      "unreachable": "freeglaz ne répond pas"
     },
-    "presence_unchecked": "freeglaz ne peut pas lister les instruments ici : le démarrage reste possible, et le moteur dira s'il ne trouve pas l'instrument.",
+    "presence_unchecked": "freeglaz ne peut pas lister les périphériques USB : sans cette vérification, le moteur pourrait ouvrir un autre instrument, donc le démarrage reste bloqué.",
     "start_blocked": {
       "checking": "Vérification de l'instrument en cours…",
       "absent": "Branche le {{instrument}} : le bouton de démarrage se réactive dès qu'il est détecté.",
       "other": "L'instrument branché n'est pas le {{instrument}} de la charte : le bouton de démarrage se réactive dès que le bon est détecté.",
-      "several": "Plusieurs instruments sont branchés : laisse seulement le {{instrument}} et le bouton de démarrage se réactivera."
+      "several": "Plusieurs instruments sont branchés : laisse seulement le {{instrument}} et le bouton de démarrage se réactivera.",
+      "error": "Détection de l'instrument impossible : le bouton de démarrage se réactive dès que le {{instrument}} est détecté.",
+      "unreachable": "freeglaz ne répond pas : l'instrument ne peut pas être vérifié pour l'instant. Le bouton de démarrage se réactive dès que le {{instrument}} est de nouveau détecté."
     },
     "engine": {
       "ok": "chartread-fgK (ArgyllCMS {{argyll}}, sauvegarde par rangée v{{patch}})",

@@ -193,36 +193,28 @@ def test_i1pro3plus_context_offers_conditions_without_default(tmp_path, monkeypa
     assert ctx["presence"]["status"] == "absent"
 
 
-@pytest.mark.parametrize("status", ["absent", "other", "several"])
+@pytest.mark.parametrize("status", ["absent", "other", "several", "error"])
 def test_start_is_refused_without_the_chart_instrument(lab, status):
     """The backend's refusal stays the authority, whatever a window shows: no run, no engine,
-    the session unchanged, start still offered. The snapshot that follows the refusal shows
-    the presence the start found (P1b, note 147 §16)."""
+    the session unchanged, start still offered. A device list that cannot be read (error) is
+    refused too: chartread -c 1 would open whichever instrument ArgyllCMS finds first. The
+    snapshot that follows the refusal shows the presence the start found (P1b, note 147 §16)."""
     plugged = {"status": "present"}
     lab.service(presence=lambda m: Presence(plugged["status"], m, detail="test"))
     lab.engine(button_ms=20)
     s = lab.client.post(lab.base, json={}).json()
     assert s["context"]["presence"]["status"] == "present"
-    plugged["status"] = status                                       # unplugged (or another one)
+    plugged["status"] = status                                       # unplugged (or another one…)
     r = post(lab, "/start", s)
     assert r.status_code == 409 and code(r) == f"instrument_{status}"
     after = snap(lab)
     assert (after["state"], after["running"], after["state_seq"]) == ("idle", False, s["state_seq"])
-    assert "start" in after["actions"] and after["session"]["runs"] == 0
+    assert "start" in after["actions"] and after["session"]["runs"] == 0       # chartread never started
     assert em.get_service().active_chart() is None
     assert after["context"]["presence"]["status"] == status          # not the "present" shown before
     plugged["status"] = "present"                                    # plugged in again
     r = post(lab, "/start", after)
     assert r.status_code == 200 and r.json()["running"], r.text
-
-
-def test_a_detection_error_does_not_refuse_the_start(lab):
-    """A device list that cannot be read (a Flatpak without sysfs…) is not an absence: the
-    start goes on, without presence monitoring; the engine finds the instrument or says so.
-    The wizard therefore never disables the start on "error" (and never shows it as present)."""
-    lab.service(presence=lambda m: Presence("error", m, detail="test"))
-    s = create_and_start(lab, button_ms=20)
-    assert s["running"] and s["context"]["presence"]["status"] == "error"
 
 
 class Listing:
@@ -248,6 +240,50 @@ class Listing:
         finally:
             with self._lock:
                 self.active -= 1
+
+
+def test_a_failed_or_late_listing_refuses_the_start(lab):
+    """A listing that raises, or does not answer within START_PRESENCE_WAIT_S, is a detection
+    error: 409 instrument_error, no engine. The late listing is not repeated by a second click:
+    one listing at a time."""
+    lst = Listing()
+    lab.service(presence=lst)
+    lab.mp.setattr(em.ExternalMeasureService, "START_PRESENCE_WAIT_S", 0.4)
+    lab.engine(button_ms=20)
+    s = lab.client.post(lab.base, json={}).json()
+    lst.status = "raise"
+    r = post(lab, "/start", s)
+    assert (r.status_code, code(r)) == (409, "instrument_error")
+    lst.status, lst.hang = "present", True
+    calls = lst.calls
+    t0 = time.monotonic()
+    r = post(lab, "/start", s)
+    took = time.monotonic() - t0
+    assert (r.status_code, code(r)) == (409, "instrument_error") and "did not answer" in r.json()["detail"]["message"]
+    assert 0.3 < took < 1.5
+    r = post(lab, "/start", s)                                       # clicked again while it hangs
+    assert code(r) == "instrument_error"
+    assert lst.calls == calls + 1 and lst.max_active == 1            # the same listing, not a second one
+    assert snap(lab)["session"]["runs"] == 0 and em.get_service().active_chart() is None
+    lst.release.set()
+    lst.hang = False
+    r = post(lab, "/start", snap(lab))
+    assert r.status_code == 200, r.text
+
+
+def test_detection_lost_between_display_and_click(lab):
+    """The presence shown (even a fraction of a second old) is not what a start relies on: it
+    waits for a listing begun after the click."""
+    lst = Listing()
+    lab.service(presence=lst)
+    lab.engine(button_ms=20)
+    s = lab.client.post(lab.base, json={}).json()
+    assert snap(lab)["context"]["presence"]["status"] == "present"   # shown just now
+    calls = lst.calls
+    lst.status = "error"                                             # the listing starts failing
+    r = post(lab, "/start", s)
+    assert (r.status_code, code(r)) == (409, "instrument_error")
+    assert lst.calls == calls + 1 and snap(lab)["session"]["runs"] == 0
 
 
 def test_a_hung_listing_blocks_neither_snapshots_nor_commands(lab):

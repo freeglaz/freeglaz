@@ -174,7 +174,6 @@ export function publishChecks(snap) {
 export const PRESENCE_POLL_MS = 2000;
 // What the backend reports (checking: it has no verdict yet, a USB listing is running).
 const PRESENCE = new Set(['checking', 'present', 'absent', 'other', 'several', 'error']);
-const NOT_THE_INSTRUMENT = new Set(['absent', 'other', 'several']);    // the backend refuses these
 
 /** Is the presence worth watching now? (no live run, and a session to create or to start) */
 export function watchesPresence(snap) {
@@ -182,27 +181,29 @@ export function watchesPresence(snap) {
 }
 
 /**
- * Presence as the wizard shows it: checking | present | absent | other | several | error.
- * `check` is the watch's last answer since it started ({ok}), or null while the first one is
- * awaited: until then the presence carried by an older snapshot is not shown as current. An
- * answer that failed, or a status the interface does not know, is "error": never a presence.
+ * Presence as the wizard shows it: checking | present | absent | other | several | error |
+ * unreachable. `check` is the watch's last answer since it started ({ok}), or null while the
+ * first one is awaited: until then the presence carried by an older snapshot is not shown as
+ * current. A read that failed is "unreachable" (freeglaz did not answer: nothing is known of
+ * the instrument, which is not an absence); "error" is the backend's own verdict that the USB
+ * devices could not be listed, or a status the interface does not know. Neither is a presence.
  */
 export function presenceState(snap, check) {
   if (!snap || !check) return { status: 'checking', familyOnly: false };
+  if (!check.ok) return { status: 'unreachable', familyOnly: false };
   const p = snap.context?.presence;
-  if (!check.ok || !p || !PRESENCE.has(p.status)) return { status: 'error', familyOnly: false };
+  if (!p || !PRESENCE.has(p.status)) return { status: 'error', familyOnly: false };
   return { status: p.status, familyOnly: p.status === 'present' && !!p.family_only };
 }
 
 /**
- * Why "Start" is not offered, or null. Absent, another instrument, several: refused by the
- * backend anyway, so the button waits and comes back by itself when the chart's instrument is
- * detected. Checking: the first answer is on its way. A detection error does not block: the
- * backend starts without presence monitoring and the engine finds the instrument or says so.
+ * Why "Start" is not offered, or null: only a confirmed presence of the chart's instrument
+ * offers it. chartread-fgK opens the first instrument ArgyllCMS finds, so the backend refuses
+ * every other case (absent, another instrument, several, detection error); the button waits
+ * and comes back by itself once the instrument is detected. Checking: an answer is on its way.
  */
 export function startBlock(presence) {
-  if (presence.status === 'checking') return 'checking';
-  return NOT_THE_INSTRUMENT.has(presence.status) ? presence.status : null;
+  return presence.status === 'present' ? null : presence.status;
 }
 
 /**

@@ -148,13 +148,19 @@ assert(shown(fresh('present'), { ok: true }) === 'present' && startBlock(presenc
        'present: start offered');
 const fam = presenceState(fresh('present', { context: withPresence('present', { family_only: true }) }), { ok: true });
 assert(fam.status === 'present' && fam.familyOnly && startBlock(fam) === null, 'i1Pro 3 family: present (family only), start offered');
-assert(shown(fresh('error'), { ok: true }) === 'error' && startBlock(presenceState(fresh('error'), { ok: true })) === null,
-       'detection error: shown as such, not as present; start left to the backend');
-assert(shown(fresh('present'), { ok: false }) === 'error', 'a failed read is an error, never a presence (even over a "present" snapshot)');
+assert(shown(fresh('error'), { ok: true }) === 'error' && startBlock(presenceState(fresh('error'), { ok: true })) === 'error',
+       'detection error: shown as such, not as present; start disabled (the backend refuses it too)');
+assert(shown(fresh('present'), { ok: false }) === 'unreachable' && startBlock(presenceState(fresh('present'), { ok: false })) === 'unreachable',
+       'a failed read: freeglaz unreachable, never a presence (even over a "present" snapshot); start disabled');
+assert(shown(fresh('absent'), { ok: false }) === 'unreachable', 'a failed read is not an absence either (not even over an "absent" snapshot)');
 assert(shown(fresh('checking'), { ok: true }) === 'checking' && startBlock(presenceState(fresh('checking'), { ok: true })) === 'checking',
        'the backend has no verdict yet (listing running): checking, start waits');
 assert(shown(fresh('present', { context: withPresence('plugged') }), { ok: true }) === 'error', 'an unknown status is an error');
 assert(shown(fresh('present', { context: { ...ctx, presence: null } }), { ok: true }) === 'error', 'no presence in the context: error');
+for (const s of ['checking', 'absent', 'other', 'several', 'error', 'unreachable', 'plugged']) {
+  const st = presenceState(fresh('present', { context: withPresence(s) }), { ok: s !== 'unreachable' });
+  assert(startBlock(st) !== null, `start offered only on a confirmed presence: not on ${s}`);
+}
 
 console.log('Test 11 — the presence is watched only where it matters');
 assert(watchesPresence(fresh('absent')) && watchesPresence(snap()), 'a session to start or to resume: watched');
@@ -258,6 +264,37 @@ console.log('Test 14 — plug, unplug, plug again while the wizard is open');
   w.stop();
   await tm.advance(20_000);
   assert(reads === 4, `closed: the reads stop (${reads} in all, one per 2 s while open)`);
+}
+
+console.log('Test 15 — detection lost between display and click, then back');
+{
+  const tm = fakeTimers();
+  let backend = 'present', current = null, check = null, reads = 0, down = false;
+  const reader = createSnapshotReader(async () => {
+    reads++;
+    if (down) throw new Error('503');
+    return fresh(backend);
+  }, (s) => { current = newer(current, s); });
+  const w = createPresenceWatch({ check: () => reader.shared(), onResult: (ok) => { check = { ok }; }, timers: tm });
+  const button = () => (startBlock(presenceState(current, check)) ? 'disabled' : 'enabled');
+  w.start();
+  await flush();
+  assert(button() === 'enabled', 'present: start offered');
+  backend = 'error';                 // the USB listing starts failing; the click is refused by the backend (409)
+  const refusedSnap = fresh('error');  // the wizard reads the snapshot again after the refusal
+  current = newer(current, refusedSnap);
+  assert(shown(current, check) === 'error' && button() === 'disabled', 'after the refusal: detection error shown, start disabled');
+  await tm.advance(2000);
+  assert(shown(current, check) === 'error' && button() === 'disabled', 'still failing: stays disabled');
+  down = true;                       // now freeglaz itself does not answer
+  await tm.advance(2000);
+  assert(shown(current, check) === 'unreachable' && button() === 'disabled', 'freeglaz unreachable: not shown as an absence, start disabled');
+  down = false; backend = 'present';
+  await tm.advance(2000);
+  assert(shown(current, check) === 'present' && button() === 'enabled', 'detection back: start comes back by itself');
+  w.stop();
+  await tm.advance(10_000);
+  assert(reads === 4, `closed: the reads stop (${reads})`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

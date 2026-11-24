@@ -392,9 +392,10 @@ class ExternalMeasureService:
     def start(self, chart_id: str, expect_state: Optional[str], seq: Optional[int]) -> dict:
         """Start (or resume, -r -N -K) the engine for the chart's open session.
 
-        The presence is a listing begun after the request, awaited before the session lock is
-        taken; the state is checked again under it. Absent, another model or several are
-        refused (409 ``instrument_<status>``)."""
+        Only with the chart's instrument confirmed: chartread-fgK opens the first instrument
+        ArgyllCMS finds (-c 1), so absent, another model, several, and a listing that fails
+        or does not answer in time are all refused (409 ``instrument_<status>``). The listing
+        is awaited before the session lock is taken; the state is checked again under it."""
         self._refuse_if_active()
         self._check(chart_id, "start", expect_state, seq)
         model = self._open_session(chart_id).model
@@ -404,7 +405,7 @@ class ExternalMeasureService:
             raise ExternalMeasureError(409, e.code, e.message) from None
         pres = self._confirm_presence(model)
         self._presence_note[chart_id] = pres.status
-        if pres.status in ("absent", "other", "several"):
+        if not pres.present:
             raise ExternalMeasureError(409, f"instrument_{pres.status}", pres.detail)
         with self._ops:
             self._refuse_if_active()
@@ -412,8 +413,7 @@ class ExternalMeasureService:
             s = self._open_session(chart_id)
             locks = self.locks_provider()
             try:
-                run = Run.start(s, spec, lock=locks, env=env,
-                                presence=(lambda: self._run_presence(s.model)) if pres.present else None)
+                run = Run.start(s, spec, lock=locks, env=env, presence=lambda: self._run_presence(s.model))
             except LockBusy as e:
                 holder = e.info.get("holder") or {}
                 raise ExternalMeasureError(409, "instrument_busy", "another measurement holds the instrument",

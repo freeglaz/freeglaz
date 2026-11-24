@@ -124,13 +124,14 @@ class InstrumentSpec:
     ti2_target_instrument: str    # TARGET_INSTRUMENT printtarg writes in the .ti2
 
 
-# Whitelist: only the instruments actually studied. Nothing else is offered.
+# Whitelist: only the instruments actually studied. Nothing else is offered. The order is the
+# interface's: the first one is offered by default, the ColorMunki, the only one read for real.
 INSTRUMENTS: dict[str, InstrumentSpec] = {
+    "colormunki": InstrumentSpec("colormunki", "X-Rite ColorMunki", "CM",
+                                 "X-Rite ColorMunki"),
     # printtarg 3.4.1 and 3.5.0 write the i1 Pro family name for -i3p.
     "i1pro3plus": InstrumentSpec("i1pro3plus", "X-Rite i1Pro 3 Plus", "3p",
                                  "GretagMacbeth i1 Pro"),
-    "colormunki": InstrumentSpec("colormunki", "X-Rite ColorMunki", "CM",
-                                 "X-Rite ColorMunki"),
 }
 
 

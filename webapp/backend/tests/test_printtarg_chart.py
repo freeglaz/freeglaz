@@ -86,6 +86,9 @@ def test_argv_refusals(kw, code):
 
 def test_only_studied_instruments_are_offered():
     assert set(P.INSTRUMENTS) == {"i1pro3plus", "colormunki"}
+    # the interface offers the first one by default: the ColorMunki, the only one read for real
+    assert list(P.INSTRUMENTS)[0] == "colormunki"
+    assert [i["key"] for i in P.supported_options()["instruments"]] == list(P.INSTRUMENTS)
     assert {k[0] for k in P.PRESETS} == set(P.INSTRUMENTS)
     assert P.SUPPORTED_MEDIA == ("roll24", "a4")
     # an A4 sheet for the ColorMunki only (test_printtarg_a4.py)

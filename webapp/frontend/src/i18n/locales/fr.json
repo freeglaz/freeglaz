@@ -1085,6 +1085,8 @@
     "too_many_strips_for_sheet": "Trop de patches pour une seule feuille de ce format avec cet instrument : réduis le nombre de patches ou choisis un rouleau.",
     "chart_media_mismatch": "Cette charte est composée pour un autre format que le papier chargé, ou ce papier n'est pas identifié : charge le support prévu, ou crée une charte pour ce format.",
     "chart_format_unknown": "Cette charte n'indique aucun format connu : elle n'est pas imprimée.",
+    "unsupported_instrument": "Cet instrument n'est pas proposé pour les chartes externes.",
+    "unsupported_media": "Ce support n'est pas prévu pour cet instrument : choisis un autre format, ou un autre instrument.",
     "instrument_identity_unconfirmed": "L'instrument ne s'est pas encore identifié : aucune commande n'est envoyée.",
     "measurement_empty": "Le fichier de mesure ne contient aucune lecture.",
     "measurement_not_spectral": "Une mesure externe doit contenir ses spectres (colonnes SPEC_) : celle-ci n'en a pas, ou pas sur une grille régulière.",
@@ -2116,8 +2118,8 @@
       "absent": "aucun instrument détecté",
       "other": "un autre instrument est branché",
       "several": "plusieurs instruments branchés : n'en laisse qu'un",
-      "error": "détection impossible ici (vérifie le branchement)",
-      "present_family": "un i1Pro 3 est branché (le modèle exact se confirme à la lecture)",
+      "error": "liste des périphériques USB illisible ici : ce n'est pas une absence, le démarrage reste bloqué",
+      "present_family": "un i1Pro 3 ou 3 Plus est branché : le modèle exact est vérifié à l'ouverture, avant toute mesure",
       "checking": "vérification…",
       "unreachable": "freeglaz ne répond pas"
     },
@@ -2136,7 +2138,7 @@
       "development": "Moteur de développement : la séance fonctionne, mais sa mesure ne pourra pas être publiée comme acquisition réelle."
     },
     "origin": {
-      "approved": "moteur livré avec freeglaz",
+      "approved": "moteur approuvé (build reconnue par freeglaz)",
       "development": "moteur de développement",
       "test": "moteur de test"
     },

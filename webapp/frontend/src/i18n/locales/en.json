@@ -1085,6 +1085,8 @@
     "too_many_strips_for_sheet": "Too many patches for a single sheet of this format with this instrument: reduce the patch count or choose a roll.",
     "chart_media_mismatch": "This chart is laid out for another format than the loaded paper, or that paper is not identified: load the intended media, or create a chart for this format.",
     "chart_format_unknown": "This chart names no known format: it is not printed.",
+    "unsupported_instrument": "This instrument is not offered for external charts.",
+    "unsupported_media": "This media is not provided for this instrument: choose another format, or another instrument.",
     "instrument_identity_unconfirmed": "The instrument has not identified itself yet: no command is sent.",
     "measurement_empty": "The measurement file holds no reading.",
     "measurement_not_spectral": "An external measurement must carry its spectra (SPEC_ columns): this one has none, or not on a regular grid.",
@@ -2116,8 +2118,8 @@
       "absent": "no instrument detected",
       "other": "another instrument is plugged in",
       "several": "several instruments plugged in: leave only one",
-      "error": "cannot be checked here (check the cable)",
-      "present_family": "an i1Pro 3 is plugged in (the exact model is confirmed by the reading)",
+      "error": "the USB device list cannot be read here: this is not an absence, the start stays blocked",
+      "present_family": "an i1Pro 3 or 3 Plus is plugged in: the exact model is checked when it is opened, before any measurement",
       "checking": "checking…",
       "unreachable": "freeglaz is not answering"
     },
@@ -2136,7 +2138,7 @@
       "development": "Development engine: the session works, but its measurement cannot be published as a real acquisition."
     },
     "origin": {
-      "approved": "engine shipped with freeglaz",
+      "approved": "approved engine (a build freeglaz recognises)",
       "development": "development engine",
       "test": "test engine"
     },

@@ -34,8 +34,10 @@ snapshot, so two windows both receive every update; a slow one just skips to the
 latest snapshot; the snapshot route is the polling fallback; ``Last-Event-ID`` (or
 ``?since=``) resumes after a reconnection.
 
-**What leaves the backend** (snapshots, events, logs): never the instrument serial number
-(only a fingerprint stays in the session files), never the engine path, never a store path.
+**What leaves the backend** (snapshots, events, logs): never the instrument serial number,
+never the engine path, never a store path. The serial number itself stays in the session
+folder (``session.json``, to tell one unit from another between runs; masked in the run
+logs); a published record carries only a fingerprint of it.
 
 **Publication** goes through ``measurement_publish.publish_measurement`` only, and only for
 a complete session whose engine origin is ``approved`` (a trusted build found where freeglaz

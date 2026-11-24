@@ -17,6 +17,8 @@ instrument, or a controlled injection (strace) on the engine's own system calls.
 """
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
 import hashlib
 import json
 import math
@@ -34,6 +36,7 @@ from fastapi.testclient import TestClient
 
 from lib.z9_client import measurement_identity as mi
 from lib.z9_client.chartread_fgk import engine as E
+from lib.z9_client.chartread_fgk import pty_process as P
 from lib.z9_client.chartread_fgk import run as R
 from lib.z9_client.chartread_fgk import session as S
 from lib.z9_client.chartread_fgk.prompts import KeyGate, PromptParser
@@ -97,12 +100,17 @@ def go(s, eng, env, tmp, *, on=None, timeout=240, press=None, until=None, **run_
 
 
 def group_gone(pgid, wait=3.0):
+    """No process left in the group within ``wait`` seconds. A member that died but is not
+    reaped yet (re-parented to init/launchd) is a zombie: Linux answers killpg(pgid, 0) with
+    success, macOS with EPERM (note 144). Both mean "not reaped yet": keep waiting."""
     end = time.monotonic() + wait
     while time.monotonic() < end:
         try:
             os.killpg(pgid, 0)
         except ProcessLookupError:
             return True
+        except PermissionError:
+            pass
         time.sleep(0.02)
     return False
 
@@ -175,6 +183,18 @@ def strace_engine(tmp, *args, binary=None):
 
 
 def rss_kb(pid):
+    """Resident memory of ``pid`` in KiB, or None when it cannot be read.
+    Linux: VmRSS of /proc/<pid>/status. macOS (no /proc): ri_resident_size of
+    proc_pid_rusage, the call freeglaz already uses there for CPU time (pty_process)."""
+    if sys.platform == "darwin":
+        try:
+            lib = ctypes.CDLL(ctypes.util.find_library("System") or "/usr/lib/libSystem.B.dylib")
+            info = P._RusageInfoV0()
+            if lib.proc_pid_rusage(ctypes.c_int(pid), ctypes.c_int(0), ctypes.byref(info)) != 0:
+                return None
+            return info.ri_resident_size // 1024
+        except (OSError, AttributeError):
+            return None
     try:
         for line in Path(f"/proc/{pid}/status").read_text().splitlines():
             if line.startswith("VmRSS:"):
@@ -182,6 +202,12 @@ def rss_kb(pid):
     except OSError:
         return None
     return None
+
+
+def test_resident_memory_is_readable_here():
+    """The two memory tests below need it: on a platform where it cannot be read they would
+    fail on arithmetic instead of saying why (note 144: macOS has no /proc)."""
+    assert (rss_kb(os.getpid()) or 0) > 1000
 
 
 # ─── acquisition ────────────────────────────────────────────────────────────
@@ -1067,6 +1093,7 @@ def test_long_session_many_interruptions_bounded_memory_and_logs(tmp_path):
     assert len(logs) == 9 and all(p.stat().st_size < (1 << 20) + (128 << 10) for p in logs)
     s2 = S.Session.open(s.dir)
     assert len(s2.data["reconciliations"]) <= S.RECONCILIATIONS_KEPT
+    assert None not in rss, f"resident memory unreadable: {rss}"
     growth = rss[-1] - rss[1]
     print(f"\n[5000, 8 interruptions] driver RSS kB per run: {rss}; growth after run 2: {growth} kB; "
           f"session.json {s2.json_path.stat().st_size} B; logs {[p.stat().st_size for p in logs]}")

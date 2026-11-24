@@ -38,6 +38,25 @@ def test_repeats_beyond_the_threshold_are_counted_not_forwarded(tmp_path):
     assert [l.split(None, 1)[1] for l in log[:4]] == ["A", "[x49 more, 0.0 s] A", "B", "A"]
 
 
+@pytest.mark.parametrize("size", [1024, 4095, 65536])
+def test_flood_accounting_does_not_depend_on_the_read_size(size):
+    """macOS hands the PTY over in reads of at most 1 KiB (note 144): nearly every read ends
+    inside a line, whose first bytes go to the parser at once (a prompt may end without a
+    newline). Such a repeat is still never logged and counts as suppressed; how many were
+    partly forwarded is reported apart, at most one per read."""
+    n = 20_000
+    data = (USB + "\n").encode() * n
+    tr = Transcript(None, repeat_threshold=5)
+    out = feed_all(tr, data, [size] * (len(data) // size))
+    st = tr.close(1.0)
+    assert (st.lines_in, st.lines_suppressed) == (n, n - 5)
+    assert st.repeats_forwarded <= -(-len(data) // size)                 # at most one per read
+    assert out.count("\n") == 5 + st.repeats_forwarded                  # exactly what reached the parser
+    assert st.lines_suppressed > 0.98 * st.lines_in                      # the PTY flood test's criterion
+    if size == 1024:   # the former count ("neither forwarded nor logged") fell to ~94 % here
+        assert st.lines_suppressed - st.repeats_forwarded < 0.95 * st.lines_in
+
+
 def test_every_byte_is_forwarded_at_most_once_whatever_the_chunks():
     rnd = random.Random(7)
     lines = []
@@ -165,6 +184,7 @@ def test_three_million_lines_through_the_pty(tmp_path):
     rep = proc.terminate(on_output=lambda b: pump.transcript.feed(b, time.monotonic()))
     st = pump.transcript.close(time.monotonic())
     assert rep.group_empty and rep.elapsed < 2.8
+    print(f"\n[flood] {st}")         # repeats_forwarded: ~1.5 % on Linux, ~5.5 % on macOS (note 144)
     assert st.lines_in > 1_500_000 and st.lines_suppressed > 0.98 * st.lines_in
     assert os.path.getsize(tmp_path / "flood.log") < 8192
     assert time.process_time() - c0 < 20
@@ -210,7 +230,8 @@ def test_monitor_spinning_and_silence():
     assert idle.verdict(5.0).status == "ok"                   # no expectation: never silent
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="CPU time from /proc")
+@pytest.mark.skipif(not sys.platform.startswith(("linux", "darwin")),
+                    reason="CPU time: /proc (Linux) or proc_pid_rusage (macOS)")
 def test_a_spinning_engine_is_detected(tmp_path):
     proc, _ = spawn_fake(tmp_path, [{"say": "Instrument Type:   ColorMunki\n"}, {"spin": 10}])
     pump = Pump(proc, monitor=ActivityMonitor(spin_cpu_ratio=0.5, spin_seconds=1.5))

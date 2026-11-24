@@ -85,12 +85,16 @@ class FloodState:
 class TranscriptStats:
     bytes_in: int
     lines_in: int
-    lines_suppressed: int   # repeats counted, neither forwarded nor logged
+    lines_suppressed: int   # repeats beyond the threshold: counted, never logged
     log_bytes: int
     log_capped: bool
     notes_dropped: int
     longest_run: int
     peak_lines_per_s: int
+    # Among lines_suppressed, those a read ended inside: their first bytes had already gone
+    # to the parser (prompts end without a newline), so the rest follows them. At most one
+    # per read: ~1.5 % with Linux PTY reads, ~5.5 % with macOS's 1 KiB ones (note 144).
+    repeats_forwarded: int = 0
 
 
 class Transcript:
@@ -111,7 +115,7 @@ class Transcript:
         self._run_since = 0.0
         self._recent: deque[str] = deque(maxlen=recent)
         self._buckets: deque[list] = deque(maxlen=16)    # [second, lines, bytes]
-        self._bytes_in = self._lines_in = self._suppressed = 0
+        self._bytes_in = self._lines_in = self._suppressed = self._repeats_forwarded = 0
         self._log_bytes = self._notes_dropped = self._longest = self._peak = 0
         self._capped = False
 
@@ -173,8 +177,9 @@ class Transcript:
         if line == self._run_line:
             self._run += 1
             if self._run > self._threshold:
-                if not forwarded:
-                    self._suppressed += 1
+                self._suppressed += 1                # never logged, whatever the read size
+                if forwarded:
+                    self._repeats_forwarded += 1
                 return False
             return True
         self._end_run()
@@ -244,7 +249,7 @@ class Transcript:
     def stats(self) -> TranscriptStats:
         return TranscriptStats(self._bytes_in, self._lines_in, self._suppressed, self._log_bytes,
                                self._capped, self._notes_dropped,
-                               max(self._longest, self._run), self._peak)
+                               max(self._longest, self._run), self._peak, self._repeats_forwarded)
 
     def close(self, now: Optional[float] = None) -> TranscriptStats:
         if now is not None:

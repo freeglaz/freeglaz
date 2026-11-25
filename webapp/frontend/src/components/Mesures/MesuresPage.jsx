@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ScanLine, FileSearch, Search, X, ChevronRight, ChevronDown, Archive, Trash2, CheckCircle2 } from 'lucide-react';
+import { ScanLine, FileSearch, Search, X, ChevronRight, ChevronDown, Archive, Trash2, CheckCircle2, Printer } from 'lucide-react';
 import * as api from '../../api/client.js';
 import ConfirmModal from '../ui/ConfirmModal.jsx';
 import ChartCard from '../Charts/ChartCard.jsx';
@@ -88,6 +88,7 @@ export default function MesuresPage({ offline }) {
   const [defaultFlags, setDefaultFlags] = useState('-v -qh');     // the wizard's default line
   const [presetSources, setPresetSources] = useState(null);       // two-pass final: variant → sources
   const [pass2Wizard, setPass2Wizard] = useState(null);           // {paper, ge, run, buildId}
+  const [printWizard, setPrintWizard] = useState(null);           // {paper, ge, chartId}: print (again)
   const [previewNonce, setPreviewNonce] = useState(0);
   const [confirmKey, setConfirmKey] = useState(null);
   const [comparePair, setComparePair] = useState(null);   // {a, b} build ids being compared
@@ -590,6 +591,18 @@ export default function MesuresPage({ offline }) {
 
               {/* Actions — scan DELEGATES to the wizard (isLoaded); disk management (DESTRUCTIVE) here */}
               <section className="pt-2 border-t border-border-soft space-y-2">
+                {/* print (again): the creation's own preview, checks and confirmation (wizard) */}
+                {!id.lightened && (
+                  <div className="space-y-1">
+                    <button type="button" data-action="print-existing-chart" disabled={busy}
+                            onClick={() => setPrintWizard({ paper: { mediaid: id.paper_media_id, name: id.paper },
+                                                            ge: id.gloss_enhancer, chartId: id.chart_id })}
+                            className="inline-flex items-center gap-1.5 text-xs2 font-medium border border-border-soft text-text-strong px-3 py-1.5 rounded-md hover:bg-sunken disabled:opacity-50">
+                      <Printer size={14}/> {id.printed_at ? t('mesures.reprint_chart') : t('mesures.print_chart')}
+                    </button>
+                    {!id.printed_at && <p className="text-tiny text-text-faint">{t('mesures.print_chart_hint')}</p>}
+                  </div>
+                )}
                 {idMeasurement.external ? (
                   // External instrument: the built-in scan is never offered; the measurement is the
                   // chartread-fgK session (panel + wizard), driven by the backend's state.
@@ -675,6 +688,11 @@ export default function MesuresPage({ offline }) {
         <ArgyllProfileWizard open mode="print" paper={pass2Wizard.paper} ge={pass2Wizard.ge}
           strategyContinuation={{ run: pass2Wizard.run, buildId: pass2Wizard.buildId }}
           onClose={() => { setPass2Wizard(null); reload(); loadDetail(selected); }}/>
+      )}
+      {printWizard && (
+        <ArgyllProfileWizard open mode="print" paper={printWizard.paper} ge={printWizard.ge}
+          printChartId={printWizard.chartId}
+          onClose={() => { setPrintWizard(null); reload(); loadDetail(selected); }}/>
       )}
       {scanWizard && (
         <ArgyllProfileWizard open mode="scan" paper={scanWizard.paper} ge={scanWizard.ge}

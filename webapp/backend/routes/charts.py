@@ -806,6 +806,73 @@ def _printtarg_generator_warnings(desc: dict) -> list:
     return []
 
 
+def _chart_print_summary(chart_id: str, d: Path, desc: dict) -> dict:
+    """An EXISTING chart in the shape of the creation response, rebuilt from its chart.json, so
+    that printing it later goes through the creation's own preview, checks and confirmation.
+    ``existing`` says what the creation could not: when it was printed, its measurements, and
+    whether it can still be printed (a lightened chart has no image any more)."""
+    cm = desc.get("color_management") or {}
+    geom = desc.get("geometry") or {}
+    media = desc.get("media") or {}
+    tag = {"icc_name": cm.get("icc_name"), "gloss_enhancer": cm.get("gloss_enhancer")}
+
+    def _mm(v):
+        return round(v, 1) if isinstance(v, (int, float)) else None
+    if desc.get("layout") == _ptc.LAYOUT:
+        inst = desc.get("instrument")
+        comp, pt = desc.get("composition") or {}, desc.get("printtarg") or {}
+        out = {
+            "chart_id": chart_id, "chart_dir": str(d),
+            "n_patches": geom.get("patch_count"), "layout": _ptc.LAYOUT,
+            "instrument": inst.get("key") if isinstance(inst, dict) else inst,
+            "roll_layout": desc.get("roll_layout"),
+            "n_pages": geom.get("n_pages"), "steps_in_pass": geom.get("steps_in_pass"),
+            "total_strips": geom.get("total_strips"),
+            "tiff_w_mm": _mm(geom.get("tiff_w_mm")), "tiff_h_mm": _mm(geom.get("tiff_h_mm")),
+            "roll_length_mm": geom.get("roll_length_mm"),
+            "media_key": media.get("format_key"), "media_source": media.get("source"),
+            "composition": {k: comp.get(k) for k in
+                            ("rotation", "strips_cross_the_roll", "strip_order", "patch_1_side")},
+            "patch_scale": pt.get("patch_scale", 1.0), "high_density": bool(pt.get("high_density")),
+            "patch_geometry": desc.get("patch_geometry"),
+            "purpose": desc.get("purpose", "profiling"), "tag": tag,
+            "warnings": [], "generator_warnings": _printtarg_generator_warnings(desc),
+        }
+    else:
+        feas = desc.get("feasibility") or {}
+        gap = feas.get("gap_mm")
+        out = {
+            "chart_id": chart_id, "chart_dir": str(d),
+            "n_patches": geom.get("patch_count"), "cols": geom.get("cols"), "nrows": geom.get("nrows"),
+            "purpose": desc.get("purpose", "profiling"),
+            "feasibility": {"ok": feas.get("ok"), "gap_mm": round(gap, 2) if isinstance(gap, (int, float)) else None},
+            "tag": tag, "warnings": [],
+            "media_key": media.get("format_key"),
+        }
+    st = desc.get("strategy") or {}
+    if st.get("id"):
+        out["strategy"] = {"id": st["id"], "pass": st.get("pass"), "role": st.get("role"), "run": st.get("run"),
+                           "lines": st.get("lines"), "precondition": desc.get("precondition"),
+                           "notices": [], "targen_argv": None}
+    files = desc.get("files") or {}
+    tiff = d / files["tiff"] if files.get("tiff") else None
+    if desc.get("lightened"):
+        why = "lightened"
+    elif tiff is None or not tiff.is_file():
+        why = "tiff_missing"
+    elif cm.get("tag_source") != "resident-live":
+        why = "not_resident_tagged"
+    else:
+        why = None
+    out["existing"] = {
+        "created_at": desc.get("created_at"), "printed_at": desc.get("printed_at"),
+        "n_prints": len(desc.get("print_history") or []) + (1 if desc.get("printed_at") else 0),
+        "n_scans": len(_raw_ti3_paths(d)),
+        "printable": why is None, "not_printable": why,
+    }
+    return out
+
+
 # ─── POST print (hardware act, guided path) ──────────────────────────────────
 def _chart_dir(chart_id: str) -> Path:
     """Locates ``charts/<serial>/<chart_id>/`` by FS enumeration (client-free) :
@@ -1122,6 +1189,16 @@ def _strategy_print_check(desc: dict, pp: dict, confirmed: bool) -> list:
     return warns
 
 
+@router.get("/{chart_id}/print-summary")
+def chart_print_summary(chart_id: str) -> dict:
+    """An existing chart, to print (or print again): the creation response's shape plus
+    ``existing``. Read only, no Z9: the print route checks everything again."""
+    import json
+    d = _chart_dir(chart_id)
+    desc = json.loads((d / "chart.json").read_text(encoding="utf-8"))
+    return _chart_print_summary(chart_id, d, desc)
+
+
 @router.post("/{chart_id}/print")
 def print_chart(chart_id: str, body: PrintChartBody, request: Request,
                 z9=Depends(get_chart_z9)) -> dict:
@@ -1257,8 +1334,12 @@ def print_chart(chart_id: str, body: PrintChartBody, request: Request,
                     "scanLayout recomputed consistently with this real placement",
         }
 
-    # printed_at : the chart enters the library (printed only)
+    # printed_at : the chart enters the library (printed only). Printed again: the previous
+    # print is kept in print_history (its measurements stay those of that print).
     from datetime import datetime
+    if desc.get("printed_at"):
+        prev = desc.get("print_params") or {"printed_at": desc["printed_at"]}
+        desc["print_history"] = [*(desc.get("print_history") or []), prev]
     desc["printed_at"] = datetime.now().isoformat(timespec="seconds")
     desc["print_params"] = {**print_params, "printed_at": desc["printed_at"]}
     (d / "chart.json").write_text(json.dumps(desc, indent=2, ensure_ascii=False) + "\n",
@@ -2909,12 +2990,18 @@ def chart_detail(chart_id: str) -> dict:
             for m in (s.get("scans") or []):
                 sess_scans[m.get("ti3")] = m
     state = _read_scan_state(d)
-    _printed_dt = None
-    if desc.get("printed_at"):
+    # print times (a chart printed again keeps the previous ones in print_history): a scan's
+    # delay counts from the last print before it, never from a later reprint
+    _print_dts = []
+    for _pa in [*((h or {}).get("printed_at") for h in (desc.get("print_history") or [])), desc.get("printed_at")]:
         try:
-            _printed_dt = datetime.fromisoformat(desc["printed_at"])
-        except ValueError:
-            _printed_dt = None
+            _print_dts.append(datetime.fromisoformat(_pa))
+        except (TypeError, ValueError):
+            pass
+
+    def _printed_before(sa):
+        before = [t for t in _print_dts if t <= sa]
+        return max(before) if before else (min(_print_dts) if _print_dts else None)
     rej_map = state.get("rejected_readings") or {}
     scans = []
     for p in _raw_ti3_paths(d):
@@ -2927,8 +3014,8 @@ def chart_detail(chart_id: str) -> dict:
             "role": role,                                        # included | excluded (durable sidecar)
             "kept": role == "included",                         # backward-compat (kept = included)
             "scanned_at": (sa.isoformat(timespec="seconds") if sa else None),
-            "delay_seconds": (int((sa - _printed_dt).total_seconds())
-                              if (sa and _printed_dt) else None),  # None if delay unknown
+            "delay_seconds": (int((sa - _printed_before(sa)).total_seconds())
+                              if (sa and _print_dts) else None),  # None if delay unknown
             "rejected_readings": list(rej_map.get(p.name) or []),  # rejected SAMPLE_ID
             "size_bytes": p.stat().st_size,
             # intrinsic QC summary ONLY if a valid cached report exists (never computed here)

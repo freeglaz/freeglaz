@@ -109,7 +109,7 @@ function NSelect({ value, onChange, options, disabled = false }) {
 }
 
 export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: modeProp = 'print', onDone, profile, initialChart = null,
-                                              strategyContinuation = null }) {
+                                              strategyContinuation = null, printChartId = null }) {
   const { t } = useTranslation();
   // A scan-mode wizard switches to composition for pass 2 of a two-pass profiling ("Prepare
   // pass 2" on a scanned first pass): the effective mode, reset at each opening.
@@ -241,7 +241,10 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
     // stage (bypasses the list's printed:true filter, without touching it).
     // ADDITIVE path: without initialChart, behavior UNCHANGED (select + list).
     const directScan = modeProp === 'scan' && !!initialChart;
-    setPhase(directScan ? 'scanready' : (modeProp === 'scan' || isValidate) ? 'select' : 'compose');
+    // DIRECT opening on an existing chart to print it (again): its summary loads, then the
+    // creation's own preview → confirmation → print (Measurements, or a pass never printed).
+    const directPrint = modeProp === 'print' && !!printChartId;
+    setPhase(directScan ? 'scanready' : directPrint ? 'loading' : (modeProp === 'scan' || isValidate) ? 'select' : 'compose');
     setError(null); setBusy(false); setSelected(directScan ? initialChart : null); setResult(null);
     setScanInfo(null); setProfInfo(null); setPrintInfo(null); setConfirmPrint(false);
     setScanProg(null); setCooldownSec(0); setNScans(0);
@@ -262,7 +265,17 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
     // Editable. The non-overlap vs creation is cross-checked in the report.
     if (modeProp === 'validate') setFlags('-q -f 64');
     // eslint-disable-next-line react-hooks/exhaustive-deps -- isValidate follows modeProp
-  }, [open, modeProp, initialChart, strategyContinuation]);
+  }, [open, modeProp, initialChart, strategyContinuation, printChartId]);
+
+  // Existing chart to print (see the reset above): the same result object as a creation.
+  useEffect(() => {
+    if (!open || modeProp !== 'print' || !printChartId) return undefined;
+    let cancelled = false;
+    api.getChartPrintSummary(printChartId)
+      .then((summary) => { if (!cancelled) { setResult(summary); setPhase('preview'); } })
+      .catch((e) => { if (!cancelled) setError(errorText(e, t)); });
+    return () => { cancelled = true; };
+  }, [open, modeProp, printChartId, t]);
 
   // Default chart format = the loaded media's REAL width (roll 17"→44" derived from
   // status.paper.width_mm, matched against the roll formats' physical width), never a
@@ -536,6 +549,16 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
     setResult(null); setSelected(null); setError(null); setFallbackOffer(false);
     formatDefaultedRef.current = false;
     setPhase('compose');
+  }
+
+  // A chart already created (resume card: a pass never printed): its preview, then printing.
+  async function printExisting(chartId) {
+    if (mode !== 'print') setModeOverride('print');
+    setResult(null); setSelected(null); setError(null); setFallbackOffer(false); setPhase('loading');
+    try {
+      const summary = await api.getChartPrintSummary(chartId);
+      setResult(summary); setPhase('preview');
+    } catch (e) { setError(errorText(e, t)); }
   }
 
   async function doCreate(formOverride = null) {
@@ -825,6 +848,10 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
       startPass2({ run: r.run, buildId: r.first.intermediate.build_id }); return;
     }
     const last = r.later?.length ? r.later[r.later.length - 1].chart_id : null;
+    if (action === 'print_first' || action === 'print_last') {
+      const toPrint = action === 'print_first' ? r.first?.chart_id : last;
+      if (toPrint) { printExisting(toPrint); return; }
+    }
     const target = action === 'open_first' ? (r.first?.chart_id || last) : (last || r.first?.chart_id);
     handleClose();
     if (target) openInLibrary(target);
@@ -927,7 +954,9 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
               strategyNode={strategyNode} twoPassNode={twoPassNode} methodLocked={!!continuation && twoPassActive}/>
           )}
 
-          {phase === 'preview' && result?.strategy && <StrategyCreatedNote t={t} strategy={result.strategy}/>}
+          {phase === 'loading' && !error && <Spinner t={t} label={t('chart_print.loading')}/>}
+          {phase === 'preview' && result?.existing && <ExistingChartNote t={t} result={result}/>}
+          {phase === 'preview' && result?.strategy && !result.existing && <StrategyCreatedNote t={t} strategy={result.strategy}/>}
           {phase === 'preview' && result && !resultExternal && (
             <PreviewView t={t} result={result} mediaKey={mediaKey} geStr={geStr} dev={DEV}/>
           )}
@@ -1106,11 +1135,19 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
           <div className="px-6 py-4 border-t border-border-soft flex items-center justify-end gap-2">
             <button type="button" onClick={handleClose}
                     className="text-xs2 text-text-muted hover:text-text-strong px-3 py-1.5">{t('common.cancel')}</button>
-            <button type="button" onClick={() => setConfirmPrint(true)} disabled={busy || !!printBlockedBy}
+            <button type="button" onClick={() => setConfirmPrint(true)}
+                    disabled={busy || !!printBlockedBy || (!!result?.existing && !result.existing.printable)}
                     data-action="print-chart"
                     className="flex items-center gap-1.5 text-xs2 font-semibold bg-accent text-on-accent px-4 py-1.5 rounded-md hover:bg-accent-press disabled:opacity-50">
-              <Printer size={14}/>{t('chart_create.print_btn')}
+              <Printer size={14}/>{result?.existing?.printed_at ? t('chart_print.reprint_btn') : t('chart_create.print_btn')}
             </button>
+          </div>
+        )}
+
+        {phase === 'loading' && (
+          <div className="px-6 py-4 border-t border-border-soft flex items-center justify-end gap-2">
+            <button type="button" onClick={handleClose}
+                    className="text-xs2 text-text-muted hover:text-text-strong px-3 py-1.5">{t('common.cancel')}</button>
           </div>
         )}
 
@@ -1175,7 +1212,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
                                                       w: Math.round(result?.tiff_w_mm ?? 0), h: Math.round(result?.tiff_h_mm ?? 0) })
               : t('measurement.print_confirm', { paper: paperName, instrument: instrumentLabel(t, result?.instrument),
                                                 ge: _geLabel(geStr), mm: Math.round(result?.roll_length_mm ?? result?.tiff_h_mm ?? 0) }))
-            : t('chart_create.print_confirm', { paper: paperName, format: mediaKey.toUpperCase(), ge: _geLabel(geStr) })}
+            : t('chart_create.print_confirm', { paper: paperName, format: (result?.media_key || mediaKey).toUpperCase(), ge: _geLabel(geStr) })}
           confirmLabel={t('chart_create.print_confirm_btn')}
           cancelLabel={t('common.cancel')}
           confirmKind="primary"
@@ -1404,6 +1441,34 @@ function StrategyCreatedNote({ t, strategy }) {
       {argv.length > 0 && (
         <p className="text-text-faint"><span>{t('strategy.created.argv')}</span>{' '}
           <code className="font-mono break-all" data-line="targen_argv">{argv.join(' ')}</code></p>
+      )}
+    </div>
+  );
+}
+
+// An existing chart about to be printed (again): when it was made and printed, and its
+// measurements, which a new print never replaces.
+function ExistingChartNote({ t, result }) {
+  const ex = result.existing || {};
+  const when = (iso) => (iso ? String(iso).replace('T', ' ').slice(0, 16) : '—');
+  return (
+    <div className="rounded-md border border-border-soft bg-sunken/50 px-3 py-2 text-tiny leading-snug space-y-1"
+         data-existing-chart={ex.printed_at ? 'printed' : 'never_printed'}>
+      <div className="flex items-center gap-2 text-xs2 font-semibold text-text-strong">
+        {result.strategy && <StrategyBadge strategy={result.strategy}/>}
+        <span>{t('chart_print.created_at', { date: when(ex.created_at) })}</span>
+      </div>
+      <p className="text-text-muted">
+        {ex.printed_at ? t('chart_print.printed_at', { count: ex.n_prints || 1, date: when(ex.printed_at) })
+          : t('chart_print.never_printed')}
+      </p>
+      {ex.printed_at && ex.n_scans > 0 && (
+        <p className="text-text-muted" data-existing-scans={ex.n_scans}>{t('chart_print.scans_kept', { count: ex.n_scans })}</p>
+      )}
+      {!ex.printable && (
+        <p className="text-danger" data-not-printable={ex.not_printable}>
+          {t(`chart_print.not_printable.${ex.not_printable}`, { defaultValue: ex.not_printable })}
+        </p>
       )}
     </div>
   );
@@ -1821,7 +1886,7 @@ function PreviewView({ t, result, mediaKey, geStr, dev }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 text-ok">
-        <CheckCircle2 size={18}/><span className="font-semibold">{t('chart_create.created')}</span>
+        <CheckCircle2 size={18}/><span className="font-semibold">{result.existing ? t('chart_print.title') : t('chart_create.created')}</span>
       </div>
       <img src={api.chartPreviewUrl(result.chart_id)} alt="preview"
            className="w-full max-h-[42vh] object-contain rounded-md border border-border-soft bg-white"
@@ -1832,7 +1897,7 @@ function PreviewView({ t, result, mediaKey, geStr, dev }) {
         <dt className="text-text-muted">{t('chart_create.r_patches')}</dt>
         <dd>{result.n_patches} · {result.cols} {t('chart_create.cols_short')} × {result.nrows}</dd>
         <dt className="text-text-muted">{t('chart_create.gloss')}</dt>
-        <dd>{mediaKey.toUpperCase()} · GE {_geLabel(geStr)}</dd>
+        <dd>{(result.media_key || mediaKey).toUpperCase()} · GE {_geLabel(geStr)}</dd>
         {dev && (
           <>
             <dt className="text-text-muted">{t('chart_create.r_feasibility')}</dt>
@@ -1868,7 +1933,7 @@ function PrinttargPreviewView({ t, result, family, printBlockedBy, dev }) {
   return (
     <div className="space-y-3" data-preview-layout="printtarg">
       <div className="flex items-center gap-2 text-ok">
-        <CheckCircle2 size={18}/><span className="font-semibold">{t('chart_create.created')}</span>
+        <CheckCircle2 size={18}/><span className="font-semibold">{result.existing ? t('chart_print.title') : t('chart_create.created')}</span>
         <MeasurementBadge chart={result}/>
       </div>
       <img src={api.chartPreviewUrl(result.chart_id)} alt="preview"

@@ -106,5 +106,24 @@ for (const k of ['start_built', 'start_built_desc']) {
   assert(has(fr, `chart_create.${k}`) && has(en, `chart_create.${k}`), `chart_create.${k} translated`);
 }
 
+console.log('6. printing an existing chart (never printed, or again)');
+const cpFr = new Set(flat(fr.chart_print)), cpEn = new Set(flat(en.chart_print));
+assert(cpFr.size > 0 && [...cpFr].every((k) => cpEn.has(k)) && [...cpEn].every((k) => cpFr.has(k)), 'chart_print: same keys fr/en');
+for (const k of ['printed_at_one', 'printed_at_other', 'scans_kept_one', 'scans_kept_other']) {
+  assert(cpFr.has(k), `chart_print.${k}: plural form present`);
+}
+const summaryFn = charts.slice(charts.indexOf('def _chart_print_summary'), charts.indexOf('# ─── POST print (hardware act'));
+const whys = [...summaryFn.matchAll(/why = "([a-z_]+)"/g)].map((m) => m[1]);
+assert(whys.length === 3 && whys.every((w) => has(fr, `chart_print.not_printable.${w}`) && has(en, `chart_print.not_printable.${w}`)),
+  `every reason a chart cannot be printed is worded (${whys.join(', ')})`);
+for (const k of ['print_chart', 'reprint_chart', 'print_chart_hint']) {
+  assert(has(fr, `mesures.${k}`) && has(en, `mesures.${k}`), `mesures.${k} translated`);
+}
+assert(mesures.includes('printChartId={printWizard.chartId}') && wizard.includes('api.getChartPrintSummary('),
+  'Measurements prints through the wizard (same preview, checks and confirmation)');
+assert(wizard.includes("action === 'print_first' || action === 'print_last'") && wizard.includes('printExisting(toPrint)'),
+  'the resume card prints a pass never printed (no dead end)');
+assert(wizard.includes('(!!result?.existing && !result.existing.printable)'), 'a chart that cannot be printed keeps the print button disabled');
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

@@ -99,7 +99,9 @@ export function strategyBadge(strategy) {
 /** What the resume card offers for a run's next step. */
 export function stepAction(step) {
   if (step === 'pass2_create') return 'create_pass2';
-  if (step === 'pass1_print' || step === 'pass1_measure' || step === 'intermediate_build') return 'open_first';
+  if (step === 'pass1_print') return 'print_first';     // created, never printed: print it now
+  if (step === 'pass2_print') return 'print_last';
+  if (step === 'pass1_measure' || step === 'intermediate_build') return 'open_first';
   return 'open_last';
 }
 

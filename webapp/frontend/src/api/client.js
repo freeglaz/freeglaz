@@ -1311,6 +1311,11 @@ export async function getCharts({ paper, printed, scanned, purpose } = {}) {
 export function chartPreviewUrl(chartId) {
   return `${BASE}/api/charts/${encodeURIComponent(chartId)}/preview`;
 }
+/** An existing chart, to print (again): the creation response's shape + `existing`
+ *  {created_at, printed_at, n_prints, n_scans, printable, not_printable}. Read only. */
+export async function getChartPrintSummary(chartId) {
+  return http(`/api/charts/${encodeURIComponent(chartId)}/print-summary`);
+}
 export async function printChart(chartId, body) {
   return http(`/api/charts/${encodeURIComponent(chartId)}/print`,
               { method: 'POST', body: JSON.stringify(body || {}) });

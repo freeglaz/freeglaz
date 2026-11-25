@@ -55,7 +55,9 @@ assert(eq(strategyBadge({ id: STRATEGY_TWO_PASS, pass: 'pass2', role: 'final', r
 assert(strategyBadge(null) === null, 'nothing for a one-pass chart');
 assert(stepAction('pass2_create') === 'create_pass2', 'creating pass 2 opens its composition');
 assert(stepAction('intermediate_build') === 'open_first', 'the intermediate profile is built on the first chart');
-assert(stepAction('final_build') === 'open_last' && stepAction('pass2_print') === 'open_last', 'later steps go to the last chart');
+assert(stepAction('final_build') === 'open_last' && stepAction('pass2_measure') === 'open_last', 'later steps go to the last chart');
+assert(stepAction('pass1_print') === 'print_first' && stepAction('pass2_print') === 'print_last',
+       'a pass created but never printed is printed from the resume card (no dead end)');
 assert(eq(activeRuns([{ next_step: 'done' }, { next_step: 'pass2_print', run: 'A' }, { next_step: 'first_pass_missing' }]).map((r) => r.run), ['A']),
   'resume card: runs still waiting only');
 assert(lastLater({ later: [{ chart_id: 'a' }, { chart_id: 'b' }] }).chart_id === 'b' && lastLater({}) === null, 'newest later chart');

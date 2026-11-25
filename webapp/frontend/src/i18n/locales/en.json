@@ -1435,7 +1435,10 @@
     "build_done_not_ranged": "Profile built, but not filed (unknown printer) — not installable.",
     "loading": "Loading…",
     "no_charts": "No chart.",
-    "profile_conflict_body_build": "A profile “{{name}}” already exists in this paper's library. “Replace” puts the new profile in its place; the old file is kept, with its tags and notes, in the paper's backups (.replaced folder, not listed). Tags and notes are not carried over to the new profile. “Keep both” adds the new profile under another name and leaves the old one untouched. Every version built from this chart stays in its history."
+    "profile_conflict_body_build": "A profile “{{name}}” already exists in this paper's library. “Replace” puts the new profile in its place; the old file is kept, with its tags and notes, in the paper's backups (.replaced folder, not listed). Tags and notes are not carried over to the new profile. “Keep both” adds the new profile under another name and leaves the old one untouched. Every version built from this chart stays in its history.",
+    "print_chart": "Print the chart",
+    "reprint_chart": "Print the chart again",
+    "print_chart_hint": "This chart was never printed. Printing goes through the wizard's preview, checks and confirmation."
   },
   "chart_create": {
     "kicker": "FREE CHART",
@@ -2583,6 +2586,22 @@
       "instrument_not_supported": "Disabled: ArgyllCMS has no lamp model for this instrument.",
       "condition_unknown": "Disabled: the measurement condition is not known, it is not presumed to be M0.",
       "condition_not_m0": "Disabled: measured under another condition than M0."
+    }
+  },
+  "chart_print": {
+    "loading": "Reading the chart…",
+    "title": "Chart to print",
+    "reprint_btn": "Print again",
+    "created_at": "Created on {{date}}",
+    "never_printed": "Not printed yet.",
+    "printed_at_one": "Already printed on {{date}}: this will be a new print.",
+    "printed_at_other": "Already printed {{count}} times, last on {{date}}: this will be a new print.",
+    "scans_kept_one": "Its measurement stays: those of the new print are added to it, and you can exclude the old one in Measurements.",
+    "scans_kept_other": "Its {{count}} measurements stay: those of the new print are added to them, and you can exclude the old ones in Measurements.",
+    "not_printable": {
+      "lightened": "Lightened chart: its image was deleted, it can no longer be printed.",
+      "tiff_missing": "This chart's image cannot be found: it cannot be printed.",
+      "not_resident_tagged": "Chart in an older format, without the paper's resident profile: create a new chart to print."
     }
   }
 }

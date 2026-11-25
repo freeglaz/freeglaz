@@ -1435,7 +1435,10 @@
     "build_done_not_ranged": "Profil construit, mais non rangé (imprimante inconnue) — non installable.",
     "loading": "Chargement…",
     "no_charts": "Aucune charte.",
-    "profile_conflict_body_build": "Un profil « {{name}} » existe déjà dans la bibliothèque de ce papier. « Remplacer » y met le nouveau profil à sa place ; l'ancien fichier est conservé, avec ses tags et ses notes, dans les sauvegardes du papier (dossier .replaced, hors des listes). Les tags et notes ne sont pas reportés sur le nouveau profil. « Garder les deux » ajoute le nouveau profil sous un autre nom et laisse l'ancien intact. Les versions construites depuis cette charte restent toutes dans son historique."
+    "profile_conflict_body_build": "Un profil « {{name}} » existe déjà dans la bibliothèque de ce papier. « Remplacer » y met le nouveau profil à sa place ; l'ancien fichier est conservé, avec ses tags et ses notes, dans les sauvegardes du papier (dossier .replaced, hors des listes). Les tags et notes ne sont pas reportés sur le nouveau profil. « Garder les deux » ajoute le nouveau profil sous un autre nom et laisse l'ancien intact. Les versions construites depuis cette charte restent toutes dans son historique.",
+    "print_chart": "Imprimer la charte",
+    "reprint_chart": "Réimprimer la charte",
+    "print_chart_hint": "Cette charte n'a jamais été imprimée. L'impression passe par l'aperçu, les vérifications et la confirmation de l'assistant."
   },
   "chart_create": {
     "kicker": "CHARTE LIBRE",
@@ -2583,6 +2586,22 @@
       "instrument_not_supported": "Désactivé : ArgyllCMS n'a pas de modèle de lampe pour cet instrument.",
       "condition_unknown": "Désactivé : la condition de mesure n'est pas connue, elle n'est pas présumée M0.",
       "condition_not_m0": "Désactivé : mesures faites dans une autre condition que M0."
+    }
+  },
+  "chart_print": {
+    "loading": "Lecture de la charte…",
+    "title": "Charte à imprimer",
+    "reprint_btn": "Réimprimer",
+    "created_at": "Créée le {{date}}",
+    "never_printed": "Pas encore imprimée.",
+    "printed_at_one": "Déjà imprimée le {{date}} : ce sera une nouvelle impression.",
+    "printed_at_other": "Déjà imprimée {{count}} fois, la dernière le {{date}} : ce sera une nouvelle impression.",
+    "scans_kept_one": "Sa mesure reste en place : celles de la nouvelle impression s'y ajouteront, tu pourras exclure l'ancienne dans Mesures.",
+    "scans_kept_other": "Ses {{count}} mesures restent en place : celles de la nouvelle impression s'y ajouteront, tu pourras exclure les anciennes dans Mesures.",
+    "not_printable": {
+      "lightened": "Charte allégée : son image a été supprimée, elle ne peut plus être imprimée.",
+      "tiff_missing": "L'image de cette charte est introuvable : elle ne peut pas être imprimée.",
+      "not_resident_tagged": "Charte d'un ancien format, sans le profil résident du papier : crée une nouvelle charte pour imprimer."
     }
   }
 }

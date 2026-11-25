@@ -226,17 +226,10 @@ def test_a_valid_manifest_is_not_trust(monkeypatch, tmp_path):
     assert E.trusted_build(st.binary_sha256) is False
 
 
-def test_only_the_approved_builds_are_trusted():
-    """Guard: exactly the approved reproducible builds, with their provenance in engine.py.
-    Adding, changing or removing one is a reviewed change of the list AND of this test."""
-    assert E.TRUSTED_BUILDS == {
-        ("darwin", "arm64"): frozenset({
-            "6406192585406eaebab05e1d30072bf9849b6c620e1e9fa735d68ea846b424cf"}),
-    }
-    assert not E.trusted_build("6406192585406eaebab05e1d30072bf9849b6c620e1e9fa735d68ea846b424cf",
-                               "linux", "x86_64")
-    assert not E.trusted_build("6406192585406eaebab05e1d30072bf9849b6c620e1e9fa735d68ea846b424cf",
-                               "darwin", "x86_64")
+def test_no_build_is_trusted_before_one_is_approved():
+    """Guard: nothing is approved until a reproducible build is (distribution, D1). Adding an
+    entry is a reviewed change of this list, with the build's provenance."""
+    assert E.TRUSTED_BUILDS == {}
 
 
 def test_binary_changed_after_its_manifest(monkeypatch, tmp_path):

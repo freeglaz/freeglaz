@@ -45,10 +45,9 @@ comes from: whoever can write the binary can write its manifest, and a shipped l
 only a folder. So an engine is a TRUSTED BUILD only when the sha256 of its bytes is listed in
 :data:`TRUSTED_BUILDS`, which is part of freeglaz's own code (replacing it means replacing
 freeglaz). The origin derived from it (``approved`` only for a trusted build found where
-freeglaz ships it) is decided in :class:`~.session.EngineSpec`. The list holds only the
-reproducible builds that were approved, one per platform (macOS on Apple Silicon so far):
-any other engine is a development one and nothing measured with it is published. Tests
-inject entries by monkeypatching the list, in their own process only; no environment
+freeglaz ships it) is decided in :class:`~.session.EngineSpec`. The list is empty until a
+reproducible build is approved: until then no engine is approved and nothing is published.
+Tests inject entries by monkeypatching the list, in their own process only; no environment
 variable, configuration key or file can add one.
 """
 from __future__ import annotations
@@ -103,25 +102,9 @@ PLATFORM_MARKERS = {
 }
 
 # The builds freeglaz trusts as its own, by (platform, arch) → sha256 of the binary. Part of
-# freeglaz's code: the trust anchor, independent of any manifest (see the module doc). One
-# value per platform, the engine shipped with this version of freeglaz; changing it is a
-# reviewed change of this list and of the test that names it.
-#
-# darwin/arm64: chartread-fgK 3.5.0-fg3.1 (official ArgyllCMS 3.5.0 source zip f8576ce5…,
-# checkpoint patch v3.1 7c3dcdc6…, USB instruments only), built by build-chartread-fgK.sh with
-# the Command Line Tools 27.2 (Apple clang 21.0.0 clang-2100.4.1.1, ld-27106.1),
-# MACOSX_DEPLOYMENT_TARGET 14.0, then signed ad hoc ALONE (`codesign -s - --force`, no -i)
-# before bundling. Two builds in separate folders gave these bytes, unchanged by PyInstaller
-# and by the bundle's `codesign --deep` (2026-11-23). Corresponding Source:
-# chartread-fgK-3.5.0-fg3.1-src.tar.gz, sha256 f066305c…, shipped next to the engine. The
-# sha256 also depends on the signing sequence (padding left by the linker signature): the
-# release build re-measures it inside the signed app and is refused if it differs.
-# No Linux build is listed yet: the Flatpak does not ship the engine.
-TRUSTED_BUILDS: dict[tuple[str, str], frozenset[str]] = {
-    ("darwin", "arm64"): frozenset({
-        "6406192585406eaebab05e1d30072bf9849b6c620e1e9fa735d68ea846b424cf",
-    }),
-}
+# freeglaz's code: the trust anchor, independent of any manifest (see the module doc). Empty
+# until a reproducible build is approved (distribution work, D1).
+TRUSTED_BUILDS: dict[tuple[str, str], frozenset[str]] = {}
 
 # chartread port: the engine is built for USB instruments only, so port 1 is the first USB
 # instrument and never a serial port. Which instrument is plugged in is checked elsewhere,

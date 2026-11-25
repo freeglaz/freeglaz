@@ -59,7 +59,7 @@ jobs:
           PY
           mkdir rel
           while read -r _ file; do
-            src=$(find _ci -type f -name "$file" | head -1)
+            src=$(find _ci -type f -name "$file" | sed -n 1p)
             [ -n "$src" ] || { echo "::error::$file not found in the artifacts"; exit 1; }
             cp "$src" "rel/$file"
           done < _ci/qualification/SHA256SUMS
@@ -81,7 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           id=$(gh api "repos/$GH_REPO/releases?per_page=50" \
-               --jq ".[] | select(.draft and .tag_name == \"$TAG\") | .id" | head -1)
+               --jq ".[] | select(.draft and .tag_name == \"$TAG\") | .id" | sed -n 1p)
           [ -n "$id" ] || { echo "::error::draft release $TAG not found"; exit 1; }
           mkdir back
           gh api "repos/$GH_REPO/releases/$id/assets?per_page=100" --jq '.[] | "\(.id) \(.name)"' |

@@ -117,8 +117,10 @@ jobs:
           mkdir -p "${S}/webapp/frontend/dist"
           cp -R webapp/frontend/dist/. "${S}/webapp/frontend/dist/"
           tar -czf "$RUNNER_TEMP/out/${S}.tar.gz" "${S}"
-          tar -tzf "$RUNNER_TEMP/out/${S}.tar.gz" | grep -q "/webapp/frontend/dist/index.html"
-          tar -tzf "$RUNNER_TEMP/out/${S}.tar.gz" | grep -q "/webapp/frontend/dist/assets/"
+          # (a listing file, not tar | grep -q: under pipefail tar fails when grep stops early)
+          tar -tzf "$RUNNER_TEMP/out/${S}.tar.gz" > "$RUNNER_TEMP/tarball.list"
+          grep -q "/webapp/frontend/dist/index.html" "$RUNNER_TEMP/tarball.list"
+          grep -q "/webapp/frontend/dist/assets/" "$RUNNER_TEMP/tarball.list"
 
       # chartread-fgK's Corresponding Source (deterministic tarball, with the unmodified
       # official ArgyllCMS source zip inside), and that zip on its own: the source of the
@@ -141,7 +143,7 @@ jobs:
             --set argyll_source.file=Argyll_V3.5.0_src.zip \
             --set argyll_source.sha256="$(sha "$O/Argyll_V3.5.0_src.zip")" \
             --set toolchain.node="$(node --version)" --set toolchain.npm="$(npm --version)" \
-            --set toolchain.tar="$(tar --version | head -1)" --set toolchain.gzip="$(gzip --version | head -1)" \
+            --set toolchain.tar="$(tar --version | sed -n 1p)" --set toolchain.gzip="$(gzip --version | sed -n 1p)" \
             --set toolchain.runner_image="${ImageOS:-?} ${ImageVersion:-?}"
           test "$(git -C _fgk rev-parse HEAD)" = "${{ needs.prepare.outputs.fgk_commit }}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -208,8 +210,8 @@ jobs:
             echo "TC_IMAGE=${ImageOS:-?} ${ImageVersion:-?}"
             echo "TC_MACOS=$(sw_vers -productVersion) ($(sw_vers -buildVersion))"
             echo "TC_XCODE=$XCODE_VERSION ($XCODE_BUILD)"
-            echo "TC_CLANG=$(clang --version | head -1)"
-            echo "TC_LD=$(ld -v 2>&1 | head -1)"
+            echo "TC_CLANG=$(clang --version | sed -n 1p)"
+            echo "TC_LD=$(ld -v 2>&1 | sed -n 1p)"
             echo "TC_SDK=$(xcrun --show-sdk-version)"
           } | tee -a "$GITHUB_ENV"
 

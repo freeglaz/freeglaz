@@ -64,7 +64,8 @@ def test_argv_colormunki_preset_has_no_unlimited_strip():
                                   page_w_mm=pre.page_w_mm, page_h_mm=pre.page_h_mm,
                                   unlimited_strip=pre.unlimited_strip, dpi=300,
                                   random_start=0, base="b")
-    assert "-iCM" in argv and "-P" not in argv and argv[-2] == "-p610x450"
+    assert "-iCM" in argv and "-P" not in argv and argv[-2] == "-p610x580"
+    assert "-a" not in argv and "-h" not in argv           # defaults: the argv charts always had
 
 
 @pytest.mark.parametrize("kw, code", [
@@ -634,13 +635,13 @@ def test_real_i1pro3plus_standard_short_strips(tmp_path, ti1_800):
 
 
 @argyll
-def test_real_colormunki_450mm(tmp_path, ti1_800):
+def test_real_colormunki_580mm(tmp_path, ti1_800):
     res = _orch(ti1_800, tmp_path / "charts", instrument="colormunki")
     desc = _check_common(res, ti1_800)
     _check_transverse(desc)
     g = desc["geometry"]
-    assert (g["steps_in_pass"], g["total_strips"], g["n_pages"]) == (26, 31, 1)
-    assert g["padding_count"] == 6 and abs(g["tiff_w_mm"] - 450) < 0.3
+    assert (g["steps_in_pass"], g["total_strips"], g["n_pages"]) == (34, 24, 1)
+    assert g["padding_count"] == 16 and abs(g["tiff_w_mm"] - 580) < 0.3
     assert desc["instrument"]["ti2_target_instrument"] == "X-Rite ColorMunki"
     assert "-P" not in desc["printtarg"]["argv"]
 

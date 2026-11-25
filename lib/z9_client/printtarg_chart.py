@@ -122,17 +122,34 @@ class InstrumentSpec:
     name: str                     # instrument name (log / descriptor, not UI text)
     selector: str                 # printtarg -i value
     ti2_target_instrument: str    # TARGET_INSTRUMENT printtarg writes in the .ti2
+    # printtarg's own patch geometry at -a 1.0 (ArgyllCMS 3.5.0 printtarg.c, per instrument):
+    # patch length along the strip, spacer between patches, patch width (= strip pitch: the
+    # strips touch), and the width printtarg -h uses (ColorMunki only). For display: the chart
+    # itself is printtarg's and is checked from its pixels.
+    patch_mm: tuple = (0.0, 0.0, 0.0)
+    high_density_width_mm: Optional[float] = None
+    # Layout options offered (server-side whitelist): printtarg -a factors, the first one being
+    # the default, and whether printtarg -h (high density, staggered strips) is offered.
+    patch_scales: tuple = (1.0,)
+    high_density: bool = False
 
 
 # Whitelist: only the instruments actually studied. Nothing else is offered. The order is the
 # interface's: the first one is offered by default, the ColorMunki, the only one read for real.
 INSTRUMENTS: dict[str, InstrumentSpec] = {
+    # -a 0.9 / 0.8 and -h: printtarg's geometry, NOT read with the instrument yet. -h is not
+    # combined with a reduced size (the choices are exclusive, see check_layout_options).
     "colormunki": InstrumentSpec("colormunki", "X-Rite ColorMunki", "CM",
-                                 "X-Rite ColorMunki"),
-    # printtarg 3.4.1 and 3.5.0 write the i1 Pro family name for -i3p.
+                                 "X-Rite ColorMunki", patch_mm=(14.0, 1.0, 28.0),
+                                 high_density_width_mm=13.7, patch_scales=(1.0, 0.9, 0.8),
+                                 high_density=True),
+    # printtarg 3.4.1 and 3.5.0 write the i1 Pro family name for -i3p. Size kept at 1.0 until
+    # reference charts are compared (X-Rite: 16 x 16 mm minimum with the ruler, 20 x 16 in M3);
+    # printtarg ignores -h for it, freeglaz refuses it.
     "i1pro3plus": InstrumentSpec("i1pro3plus", "X-Rite i1Pro 3 Plus", "3p",
-                                 "GretagMacbeth i1 Pro"),
+                                 "GretagMacbeth i1 Pro", patch_mm=(20.0, 2.0, 16.0)),
 }
+PATCH_SCALE_DEFAULT = 1.0
 
 
 @dataclass(frozen=True)
@@ -179,14 +196,17 @@ def _sheet_block_mm(media_key: str) -> float:
 #    as on the roll; 8 strips need a 241 mm block, one block within sheet_chart_limits():
 #    64 patches = 8 strips of 8. READ for real once (Z9 24in, manual feed, 8 x 8, strips read
 #    right to left; private notes 153-156). Larger counts are refused (one block per sheet).
-#  - ColorMunki on the 24" roll: 450 mm strips (26 patches per strip), not read for real yet.
+#  - ColorMunki on the 24" roll: 580 mm strips across the 600 mm printable width (34 patches
+#    per strip at -a 1.0, 38 at 0.9, 43 at 0.8, 34 with -h; printtarg 3.4.1 and 3.5.0). The
+#    ColorMunki driver records a sweep for up to 20 s (munki_imp.c MAXSCANTIME); the hand
+#    sweep over 58 cm is NOT read for real yet. Was 450 mm (a cautious first guess, note 128).
 #  - i1Pro 3 Plus on the 24" roll: -P and a 500 mm page (20 patches per strip). The real scan
 #    length on the ruler (X-Rite: 515 mm max) must be proven by a reading. Not offered on a
 #    sheet: its -P 500 mm strips cannot cross an A4.
 # A combination missing here is refused (unsupported_media), never approximated.
 PRESETS: dict[tuple[str, str], LayoutPreset] = {
     ("i1pro3plus", "roll24"): LayoutPreset(610.0, 500.0, True),
-    ("colormunki", "roll24"): LayoutPreset(610.0, 450.0, False),
+    ("colormunki", "roll24"): LayoutPreset(610.0, 580.0, False),
     ("colormunki", "a4"): LayoutPreset(_sheet_block_mm("a4"), 190.0, False),
 }
 SUPPORTED_MEDIA = ("roll24", "a4")
@@ -246,7 +266,18 @@ def supported_options() -> dict:
              "presets": [{"media_key": media, "page_w_mm": p.page_w_mm, "page_h_mm": p.page_h_mm,
                           "unlimited_strip": p.unlimited_strip}
                          for (inst, media), p in PRESETS.items()
-                         if inst == spec.key and media in SUPPORTED_MEDIA]}
+                         if inst == spec.key and media in SUPPORTED_MEDIA],
+             # printtarg -a / -h as offered; the geometry is printtarg's, the size reductions and
+             # the high density are not read with the instrument yet (physically_validated)
+             "layout_options": {
+                 "patch_scales": list(spec.patch_scales),
+                 "default_patch_scale": PATCH_SCALE_DEFAULT,
+                 "high_density": spec.high_density,
+                 "combine_high_density_and_scale": False,
+                 "geometry": {"standard": {f"{v:g}": patch_geometry(spec.key, v) for v in spec.patch_scales},
+                              **({"high_density": patch_geometry(spec.key, 1.0, True)}
+                                 if spec.high_density else {})},
+                 "physically_validated": False}}
             for spec in INSTRUMENTS.values()],
         # The API always composes with the default; "pages" stays a library option.
         "roll_layout": {"default": ROLL_LAYOUT_TRANSVERSE, "selectable": False,
@@ -255,6 +286,43 @@ def supported_options() -> dict:
         "dpi": DEFAULT_DPI,
         "max_page_length_mm": MAX_PAGE_LENGTH_MM,
     }
+
+
+def check_layout_options(instrument: str, patch_scale=None, high_density=None) -> tuple[float, bool]:
+    """The printtarg -a factor and -h flag a chart may use (server-side whitelist per
+    instrument; None = the default). -h is offered alone: never with a reduced size."""
+    spec = INSTRUMENTS.get(instrument)
+    if spec is None:
+        raise PrinttargChartError("unsupported_instrument", str(instrument))
+    s = PATCH_SCALE_DEFAULT if patch_scale is None else float(patch_scale)
+    match = next((v for v in spec.patch_scales if abs(v - s) < 1e-9), None)
+    if match is None:
+        raise PrinttargChartError("unsupported_patch_scale",
+                                  f"{s:g} not offered for {instrument} ({list(spec.patch_scales)})")
+    hd = bool(high_density)
+    if hd and not spec.high_density:
+        raise PrinttargChartError("unsupported_high_density", f"printtarg -h is not offered for {instrument}")
+    if hd and match != PATCH_SCALE_DEFAULT:
+        raise PrinttargChartError("unsupported_option_combination",
+                                  "high density is not combined with a reduced patch size")
+    return match, hd
+
+
+def patch_geometry(instrument: str, patch_scale: float = PATCH_SCALE_DEFAULT,
+                   high_density: bool = False) -> dict:
+    """Nominal patch geometry printtarg lays out (mm): -a scales the patch length, its width
+    (= the strip pitch) and the spacer, not the lead-in or the run-off; -h narrows the strip and
+    shifts every other one by half a step. From ArgyllCMS 3.5.0 printtarg.c."""
+    spec = INSTRUMENTS[instrument]
+    length, spacer, width = spec.patch_mm
+    if high_density:
+        width = spec.high_density_width_mm
+    s = float(patch_scale)
+    length, spacer, width = length * s, spacer * s, width * s
+    return {"patch_length_mm": round(length, 2), "spacer_mm": round(spacer, 2),
+            "patch_width_mm": round(width, 2), "strip_pitch_mm": round(width, 2),
+            "step_mm": round(length + spacer, 2),
+            "stagger_mm": round(0.5 * (length + 0.5 * spacer), 2) if high_density else 0.0}
 
 
 class PrinttargChartError(Exception):
@@ -520,13 +588,17 @@ def check_ti2(ti1_patches: list, ti2_path: str | Path, *, instrument: str,
 def build_printtarg_argv(printtarg_path: str, *, instrument: str, page_w_mm: float,
                          page_h_mm: float, unlimited_strip: bool, dpi: Optional[int],
                          random_start: int, base: str,
-                         margin_in_tiff: bool = False) -> list[str]:
+                         margin_in_tiff: bool = False, patch_scale: Optional[float] = None,
+                         high_density: bool = False) -> list[str]:
     """printtarg argv (never a shell). ``base`` is a bare file name, run in its folder.
 
     ``dpi=None`` builds a layout PROBE: no TIFF (printtarg writes PostScript), same
-    layout options otherwise. ``margin_in_tiff`` adds ``-M <margin>``."""
+    layout options otherwise. ``margin_in_tiff`` adds ``-M <margin>``. ``patch_scale``
+    (-a) and ``high_density`` (-h) are checked against the instrument's whitelist; at their
+    defaults the argv is the one charts were always made with."""
     if instrument not in INSTRUMENTS:
         raise PrinttargChartError("unsupported_instrument", str(instrument))
+    scale, hd = check_layout_options(instrument, patch_scale, high_density)
     if not _SAFE_BASE.match(base or ""):
         raise PrinttargChartError("invalid_base_name", repr(base))
     if not (0 < page_w_mm <= _PROBE_MAX_PAGE_MM and 0 < page_h_mm <= _PROBE_MAX_PAGE_MM):
@@ -538,6 +610,10 @@ def build_printtarg_argv(printtarg_path: str, *, instrument: str, page_w_mm: flo
     argv = [printtarg_path, "-v", f"-i{INSTRUMENTS[instrument].selector}", "-L"]
     if unlimited_strip:
         argv.append("-P")
+    if hd:
+        argv.append("-h")
+    if scale != PATCH_SCALE_DEFAULT:
+        argv += ["-a", f"{scale:g}"]
     if margin_in_tiff:
         argv += ["-M", _fmt_mm(PRINTTARG_MARGIN_MM)]
     if dpi is not None:
@@ -575,15 +651,19 @@ class _LayoutProber:
 
     def __init__(self, exe: str, folder: Path, ti1: Path, *, instrument: str,
                  page_h_mm: float, unlimited_strip: bool, random_start: int,
-                 margin_in_tiff: bool, timeout: float):
+                 margin_in_tiff: bool, timeout: float, patch_scale: Optional[float] = None,
+                 high_density: bool = False):
         self.exe, self.folder, self.ti1 = exe, folder, ti1
+        # the SAME layout options as the run that counts (build_printtarg_argv)
         self.kw = dict(instrument=instrument, page_h_mm=page_h_mm,
                        unlimited_strip=unlimited_strip, random_start=random_start,
-                       margin_in_tiff=margin_in_tiff)
+                       margin_in_tiff=margin_in_tiff, patch_scale=patch_scale,
+                       high_density=high_density)
         self.timeout = timeout
         self.cache: dict[int, int] = {}
         self.log: list[dict] = []
         self.total_strips: Optional[int] = None
+        self.steps_in_pass: Optional[int] = None
         self.last_error = ""
 
     def rows(self, page_w_mm: int) -> int:
@@ -609,6 +689,7 @@ class _LayoutProber:
             kw, _, _ = _read_cgats(self.folder / f"{base}.ti2")
             try:
                 self.total_strips = sum(int(x) for x in kw["PASSES_IN_STRIPS2"].split(","))
+                self.steps_in_pass = int(kw["STEPS_IN_PASS"])
             except (KeyError, ValueError):
                 pass
         self.cache[page_w_mm] = rows
@@ -897,9 +978,15 @@ def verify_page_patches(page, page_patches: list[dict], page_labels: list[str], 
     col_x = [float(np.mean([cx for _, cx, _ in col])) for col in columns]
     if len(col_x) > 1 and min(np.diff(col_x)) <= 0.5 * mw:
         raise PrinttargChartError("patch_map_strip_count", "strip columns overlap")
+    # Where the patches of each strip lie. Aligned strips (every layout but printtarg -h) share
+    # one span; staggered strips (-h: every other strip shifted by about half a step) each keep
+    # their own, from their own patches.
     a0 = float(np.median(intercepts))
-    top = a0 - mh / 2
-    bottom = a0 + pitch * (steps - 1) + mh / 2
+    staggered = len(intercepts) > 1 and max(abs(a - a0) for a in intercepts) > 0.1 * abs(pitch)
+    starts = intercepts if staggered else [a0] * len(intercepts)
+    areas = [(a - mh / 2, a + pitch * (steps - 1) + mh / 2) for a in starts]
+    top = min(t for t, _ in areas)
+    bottom = max(b for _, b in areas)
     return {
         "strips": len(page_labels),
         "patches_on_page": len(page_patches),
@@ -915,12 +1002,15 @@ def verify_page_patches(page, page_patches: list[dict], page_labels: list[str], 
         "patch_h_mm": round(_mm(mh, dpi), 1),
         "patch_area_top_mm": round(_mm(top, dpi), 1),
         "patch_area_bottom_mm": round(_mm(bottom, dpi), 1),
-        "strip_patch_span_mm": round(_mm(bottom - top, dpi), 1),
+        "strip_patch_span_mm": round(_mm(areas[0][1] - areas[0][0], dpi), 1),
+        "staggered": staggered,
+        "strip_stagger_mm": round(_mm(max(intercepts) - min(intercepts), dpi), 2) if staggered else 0.0,
         "sampling_step_px": step,
         # page pixels, for the composed-chart geometry (not rounded)
         "_strip_centers_px": col_x,
         "_strip_pitch_px": float(np.median(np.diff(col_x))) if len(col_x) > 1 else mw,
         "_patch_area_px": [top, bottom],
+        "_strip_areas_px": areas,
     }
 
 
@@ -1038,8 +1128,8 @@ def strips_in_chart(blocks: list[dict], page_reports: list[dict],
     out = []
     for blk, rep, labels, hp in zip(blocks, page_reports, pages_labels, page_h_px):
         half = rep["_strip_pitch_px"] / 2
-        top, bottom = rep["_patch_area_px"]
-        for lab, cx in zip(labels, rep["_strip_centers_px"]):
+        areas = rep.get("_strip_areas_px") or [rep["_patch_area_px"]] * len(labels)
+        for lab, cx, (top, bottom) in zip(labels, rep["_strip_centers_px"], areas):
             if blk["rotation"] == "cw":
                 y, x0, x1 = blk["y_px"] + cx, hp - 1 - bottom, hp - 1 - top
                 side = "right"
@@ -1100,6 +1190,124 @@ def _public(report: dict) -> dict:
     return {k: v for k, v in report.items() if not k.startswith("_")}
 
 
+def _plan_transverse(exe: str, probe_dir: Path, ti1: Path, *, instrument: str, page_h: float,
+                     unlimited: bool, seed: int, nominal_w: float, max_page_length_mm: int,
+                     sheet_limits: Optional[dict], timeout: float, patch_scale: float,
+                     high_density: bool) -> tuple[dict, _LayoutProber]:
+    """The transverse plan (page width, pages, strips per page) from printtarg's own probes,
+    with the chart's layout options. Shared by the generator and the estimate."""
+    prober = _LayoutProber(exe, probe_dir, ti1, instrument=instrument, page_h_mm=page_h,
+                           unlimited_strip=unlimited, random_start=seed, margin_in_tiff=True,
+                           timeout=timeout, patch_scale=patch_scale, high_density=high_density)
+    plan = plan_transverse_pages(prober, min(int(round(nominal_w)), int(max_page_length_mm)),
+                                 max_page_mm=int(max_page_length_mm))
+    if sheet_limits is not None and plan["pages"] != 1:
+        raise PrinttargChartError(
+            "too_many_strips_for_sheet",
+            f"{plan['strips_total']} strips need {plan['pages']} blocks; a sheet takes one "
+            f"of at most {sheet_limits['max_h_mm']:.1f} mm: fewer patches")
+    rows_at_w = prober.rows(plan["page_w_mm"])
+    return ({**plan, "rows_per_page": rows_at_w, "start_page_w_mm": nominal_w,
+             "max_page_length_mm": max_page_length_mm, "probes": prober.log}, prober)
+
+
+MAX_ESTIMATE_PATCHES = 10000
+
+
+def _write_layout_ti1(path: Path, n: int) -> None:
+    """A .ti1 of ``n`` patches with targen's three tables, ONLY to ask printtarg how it would
+    lay ``n`` patches out: its strip and page counts depend on the count and the geometry, not
+    on the colours (printtarg.c computes them before placing any patch). Never printed."""
+    def tables(kind: str, rows: list[tuple]) -> list[str]:
+        return ["CTI1   ", 'DESCRIPTOR "freeglaz layout estimate (never printed)"',
+                *([f'{kind} "{len(rows)}"'] if kind else
+                  ['COLOR_REP "iRGB"', 'APPROX_WHITE_POINT "95.045592 100.000000 108.905781"']),
+                "NUMBER_OF_FIELDS 7", "BEGIN_DATA_FORMAT",
+                ("SAMPLE_ID" if not kind else "INDEX") + " RGB_R RGB_G RGB_B XYZ_X XYZ_Y XYZ_Z",
+                "END_DATA_FORMAT", f"NUMBER_OF_SETS {len(rows)}", "BEGIN_DATA",
+                *[" ".join(str(v) for v in r) for r in rows], "END_DATA", ""]
+    patches = []
+    for i in range(n):
+        r, g, b = (i * 37) % 101, (i * 59) % 101, (i * 83) % 101
+        patches.append((i + 1, f"{r:.4f}", f"{g:.4f}", f"{b:.4f}", f"{0.2 + 0.4 * r:.4f}",
+                        f"{0.2 + 0.4 * g:.4f}", f"{0.2 + 0.4 * b:.4f}"))
+    corners = [(100, 100, 100), (0, 100, 100), (100, 0, 100), (100, 100, 0), (100, 0, 0),
+               (0, 100, 0), (0, 0, 100), (0, 0, 0)]
+    extremes = [(i, *(f"{v:.4f}" for v in c), "1.0", "1.0", "1.0") for i, c in enumerate(corners)]
+    combos = extremes + [(8, "50.0000", "50.0000", "50.0000", "1.0", "1.0", "1.0")]
+    lines = (tables("", patches) + tables("DENSITY_EXTREME_VALUES", extremes)
+             + tables("DEVICE_COMBINATION_VALUES", combos))
+    Path(path).write_text("\n".join(lines), encoding="ascii")
+
+
+def estimate_printtarg_layout(*, instrument: str, media_key: str, n_patches: Optional[int] = None,
+                              ti1_path: Optional[str | Path] = None,
+                              patch_scale: Optional[float] = None, high_density: bool = False,
+                              printtarg_path: str = "printtarg",
+                              max_page_length_mm: int = MAX_PAGE_LENGTH_MM,
+                              timeout: float = PRINTTARG_TIMEOUT_S) -> dict:
+    """What orchestrate_printtarg_chart would lay out, BEFORE any TIFF: the same preset, the
+    same printtarg options and the same transverse plan, from printtarg layout probes
+    (PostScript, in a throw-away folder). From the user's .ti1 when given, else from a count.
+    Returns strips, blocks, chart size and roll consumed; nothing is kept on disk."""
+    import tempfile
+    from .argyll import ArgyllNotFound, resolve_argyll_binary
+
+    if instrument not in INSTRUMENTS:
+        raise PrinttargChartError("unsupported_instrument", str(instrument))
+    if media_key not in SUPPORTED_MEDIA or (instrument, media_key) not in PRESETS:
+        raise PrinttargChartError("unsupported_media", str(media_key))
+    scale, hd = check_layout_options(instrument, patch_scale, high_density)
+    if ti1_path is None and (n_patches is None or not 1 <= int(n_patches) <= MAX_ESTIMATE_PATCHES):
+        raise PrinttargChartError("unsupported_patch_count",
+                                  f"{n_patches!r}: 1 to {MAX_ESTIMATE_PATCHES} patches")
+    sheet = is_sheet(media_key)
+    limits = sheet_chart_limits(media_key) if sheet else None
+    if sheet:
+        max_page_length_mm = min(int(max_page_length_mm), int(_sheet_block_mm(media_key)))
+    preset = PRESETS[(instrument, media_key)]
+    printable_w = printable_width_mm(media_key)
+    if preset.page_h_mm > printable_w:
+        raise PrinttargChartError("page_too_wide",
+                                  f"{preset.page_h_mm:.1f} mm > printable {printable_w:.1f} mm")
+    try:
+        exe = resolve_argyll_binary(printtarg_path)
+    except ArgyllNotFound as e:
+        raise PrinttargChartError("printtarg_not_found", str(e))
+    with tempfile.TemporaryDirectory(prefix="fg-printtarg-estimate-") as tmp:
+        work = Path(tmp)
+        ti1 = work / "estimate.ti1"
+        if ti1_path is not None:
+            check_ti1_tables(ti1_path)
+            n = len(read_ti1_patches(ti1_path))
+            shutil.copyfile(ti1_path, ti1)
+        else:
+            n = int(n_patches)
+            _write_layout_ti1(ti1, n)
+        plan, prober = _plan_transverse(
+            exe, work, ti1, instrument=instrument, page_h=preset.page_h_mm,
+            unlimited=preset.unlimited_strip, seed=1, nominal_w=preset.page_w_mm,
+            max_page_length_mm=max_page_length_mm, sheet_limits=limits, timeout=timeout,
+            patch_scale=scale, high_density=hd)
+    margins = _margins(media_key)
+    chart_h = plan["pages"] * plan["page_w_mm"]           # blocks stacked without a gap
+    if sheet and chart_h > limits["max_h_mm"]:
+        raise PrinttargChartError("too_many_strips_for_sheet",
+                                  f"{chart_h:.1f} mm > {limits['max_h_mm']:.1f} mm on the sheet")
+    return {
+        "estimate": True, "instrument": instrument, "media_key": media_key,
+        "media_source": G.MEDIA[media_key].source, "n_patches": n,
+        "patch_scale": scale, "high_density": hd,
+        "patches_per_strip": prober.steps_in_pass, "total_strips": plan["strips_total"],
+        "n_pages": plan["pages"], "strips_per_page": plan["strips_per_page"],
+        "strip_length_mm": preset.page_h_mm,
+        "chart_w_mm": preset.page_h_mm, "chart_h_mm": round(chart_h, 1),
+        "roll_length_mm": None if sheet else round(chart_h + margins["top"] + margins["bottom"], 1),
+        "patch_geometry": patch_geometry(instrument, scale, hd),
+        "probes": len(prober.log),
+    }
+
+
 def orchestrate_printtarg_chart(
     ti1_path: str | Path,
     *,
@@ -1121,6 +1329,8 @@ def orchestrate_printtarg_chart(
     now: Optional[datetime] = None,
     printtarg_path: str = "printtarg",
     timeout: float = PRINTTARG_TIMEOUT_S,
+    patch_scale: Optional[float] = None,
+    high_density: bool = False,
 ) -> PrinttargChartResult:
     """Generate an external-instrument chart (printtarg + composed TIFF + chart.json).
 
@@ -1135,6 +1345,7 @@ def orchestrate_printtarg_chart(
         raise PrinttargChartError("unsupported_instrument", str(instrument))
     if media_key not in SUPPORTED_MEDIA or (instrument, media_key) not in PRESETS:
         raise PrinttargChartError("unsupported_media", str(media_key))
+    scale, hd = check_layout_options(instrument, patch_scale, high_density)
     if roll_layout not in ROLL_LAYOUTS:
         raise PrinttargChartError("invalid_roll_layout", str(roll_layout))
     if rotation not in ROTATIONS:
@@ -1196,29 +1407,20 @@ def orchestrate_printtarg_chart(
         if transverse:
             probe_dir = work / "probes"
             probe_dir.mkdir()
-            prober = _LayoutProber(exe, probe_dir, work / f"{base}.ti1",
-                                   instrument=instrument, page_h_mm=page_h,
-                                   unlimited_strip=unlimited, random_start=seed,
-                                   margin_in_tiff=True, timeout=timeout)
-            plan = plan_transverse_pages(prober, min(int(round(nominal_w)), int(max_page_length_mm)),
-                                         max_page_mm=int(max_page_length_mm))
-            if sheet and plan["pages"] != 1:
-                raise PrinttargChartError(
-                    "too_many_strips_for_sheet",
-                    f"{plan['strips_total']} strips need {plan['pages']} blocks; a sheet takes one "
-                    f"of at most {limits['max_h_mm']:.1f} mm: fewer patches")
-            page_w = float(plan["page_w_mm"])
-            rows_at_w = prober.rows(plan["page_w_mm"])
-            layout_search = {**plan, "rows_per_page": rows_at_w,
-                             "start_page_w_mm": nominal_w,
-                             "max_page_length_mm": max_page_length_mm,
-                             "probes": prober.log}
+            layout_search, _ = _plan_transverse(
+                exe, probe_dir, work / f"{base}.ti1", instrument=instrument, page_h=page_h,
+                unlimited=unlimited, seed=seed, nominal_w=nominal_w,
+                max_page_length_mm=max_page_length_mm, sheet_limits=limits, timeout=timeout,
+                patch_scale=scale, high_density=hd)
+            page_w = float(layout_search["page_w_mm"])
             shutil.rmtree(probe_dir)
 
-        # 2. The printtarg run that counts (recorded argv reproduces it).
+        # 2. The printtarg run that counts (recorded argv reproduces it), with the very options
+        #    the probes used.
         argv = build_printtarg_argv(exe, instrument=instrument, page_w_mm=page_w,
                                     page_h_mm=page_h, unlimited_strip=unlimited, dpi=dpi,
-                                    random_start=seed, base=base, margin_in_tiff=transverse)
+                                    random_start=seed, base=base, margin_in_tiff=transverse,
+                                    patch_scale=scale, high_density=hd)
         run = run_printtarg(work, base, argv, timeout=timeout)
         padding_rgb = read_ti1_padding_rgb(ti1_path)
         ti2 = check_ti2(ti1_patches, work / f"{base}.ti2", instrument=instrument,
@@ -1334,6 +1536,8 @@ def orchestrate_printtarg_chart(
                 "page_w_mm": page_w, "page_h_mm": page_h, "nominal_page_w_mm": nominal_w,
                 "margin_mm": PRINTTARG_MARGIN_MM, "margin_in_tiff": transverse,
                 "unlimited_strip": unlimited,
+                # printtarg -a / -h (defaults: 1.0 / off, the charts made before these options)
+                "patch_scale": scale, "high_density": hd,
                 "dpi": dpi, "random_start_requested": seed,
                 "random_start": int(ti2.keywords.get("RANDOM_START", seed)),
                 "ti2_keywords": {k: ti2.keywords[k] for k in (
@@ -1342,6 +1546,15 @@ def orchestrate_printtarg_chart(
                     "INDEX_ORDER", "CREATED") if k in ti2.keywords},
             },
             "layout_search": layout_search,
+            # patches as printtarg lays them out (nominal, printtarg.c) and as found on the
+            # pages; neither is a proof that the instrument reads them (physically_validated)
+            "patch_geometry": {
+                "nominal": patch_geometry(instrument, scale, hd),
+                "measured": {k: per_page[0].get(k) for k in (
+                    "patch_pitch_mm", "strip_pitch_mm", "patch_w_mm", "patch_h_mm",
+                    "staggered", "strip_stagger_mm")},
+                "physically_validated": instrument == "colormunki" and sheet and scale == 1.0 and not hd,
+            },
             "geometry": {
                 "patch_count": len(ti1_patches),
                 "sets": len(ti2.patches),

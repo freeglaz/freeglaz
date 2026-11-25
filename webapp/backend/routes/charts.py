@@ -114,6 +114,31 @@ def get_printtarg_options() -> dict:
             "requires_printer_for_measurement": False}
 
 
+@router.post("/printtarg-estimate")
+def estimate_printtarg_chart(body: PrinttargEstimateBody) -> dict:
+    """What the printtarg chart would take BEFORE it is generated: the generator's own preset,
+    options and transverse plan, from printtarg layout probes (no TIFF, nothing kept): strips,
+    blocks, chart size, roll consumed, patch size. From the .ti1 when given, else a count.
+    No printer and no instrument are contacted."""
+    if body.ti1_text is None and body.n_patches is None:
+        raise HTTPException(422, detail={"code": "estimate_needs_count",
+                                         "message": "n_patches (targen -f) or ti1_text"})
+    with tempfile.TemporaryDirectory(prefix="freeglaz_estimate_") as tmp:
+        ti1 = None
+        if body.ti1_text is not None:
+            ti1 = Path(tmp) / "chart.ti1"
+            ti1.write_text(body.ti1_text, encoding="utf-8")
+        try:
+            return _ptc.estimate_printtarg_layout(
+                instrument=body.instrument, media_key=body.media_key,
+                n_patches=body.n_patches, ti1_path=ti1, patch_scale=body.patch_scale,
+                high_density=bool(body.high_density))
+        except _ptc.PrinttargChartError as e:
+            status = 503 if e.code == "printtarg_not_found" else \
+                422 if e.code.startswith(_PRINTTARG_INPUT_PREFIXES) else 500
+            raise HTTPException(status, detail={"code": e.code, "message": str(e)})
+
+
 # ─── targen : help + user presets ────────────────────────────────────────────
 @router.get("/targen-help")
 def get_targen_help() -> dict:
@@ -249,6 +274,19 @@ class CreateChartBody(BaseModel):
     # (ArgyllCMS printtarg strips for an external instrument read by chartread).
     layout: str = "honeycomb"
     instrument: Optional[str] = None                    # printtarg only (whitelist)
+    # printtarg only: -a factor and -h (high density), checked against the instrument's
+    # whitelist (printtarg_chart.check_layout_options). None = the default (1.0, off).
+    patch_scale: Optional[float] = None
+    high_density: Optional[bool] = None
+
+
+class PrinttargEstimateBody(BaseModel):
+    instrument: str
+    media_key: str
+    n_patches: Optional[int] = None                     # the targen -f count…
+    ti1_text: Optional[str] = None                      # …or the .ti1 the chart will be made from
+    patch_scale: Optional[float] = None
+    high_density: Optional[bool] = None
 
 
 def _resolve_precond(z9, c_profile, paper_mediaid, print_ge, workdir, warnings):
@@ -299,6 +337,7 @@ def _create_printtarg_chart(body, ti1: Path, tag: Path, serial: str):
                    "media_id": body.paper_mediaid,
                    "gloss_enhancer": body.gloss_enhancer,
                    "serial": serial},
+            patch_scale=body.patch_scale, high_density=bool(body.high_density),
         )
     except _ptc.PrinttargChartError as e:
         if e.code == "printtarg_not_found":
@@ -331,8 +370,14 @@ def create_chart(request: Request, body: CreateChartBody,
         if body.media_key not in _ptc.SUPPORTED_MEDIA:
             raise HTTPException(422, detail=(f"printtarg charts support {list(_ptc.SUPPORTED_MEDIA)} "
                                              f"only, not {body.media_key}"))
+        try:                             # before targen or the printer: a refused option costs nothing
+            _ptc.check_layout_options(body.instrument, body.patch_scale, body.high_density)
+        except _ptc.PrinttargChartError as e:
+            raise HTTPException(422, detail={"code": e.code, "message": str(e)})
     elif body.instrument is not None:
         raise HTTPException(422, detail="instrument applies to the printtarg layout only")
+    elif body.patch_scale is not None or body.high_density is not None:
+        raise HTTPException(422, detail="patch_scale and high_density apply to the printtarg layout only")
 
     cap = _sc.format_capacity(body.media_key)
     warnings: list[str] = []
@@ -438,6 +483,10 @@ def create_chart(request: Request, body: CreateChartBody,
             "media_source": (desc.get("media") or {}).get("source"),     # "sheet" | "roll"
             "composition": {k: (desc.get("composition") or {}).get(k) for k in
                             ("rotation", "strips_cross_the_roll", "strip_order", "patch_1_side")},
+            # printtarg -a / -h and the patches they give (nominal and found on the pages)
+            "patch_scale": (desc.get("printtarg") or {}).get("patch_scale", 1.0),
+            "high_density": bool((desc.get("printtarg") or {}).get("high_density")),
+            "patch_geometry": desc.get("patch_geometry"),
             "purpose": body.purpose,
             "tag": {"icc_name": cm.get("icc_name"), "gloss_enhancer": cm.get("gloss_enhancer")},
             # request-level notes as text; the generator's own findings as codes (the UI words

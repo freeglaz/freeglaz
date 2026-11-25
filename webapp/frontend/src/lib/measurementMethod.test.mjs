@@ -3,9 +3,10 @@
  * instrument) and lib/libraryLink.js. Run: node webapp/frontend/src/lib/measurementMethod.test.mjs
  */
 import {
-  METHOD_EXTERNAL, METHOD_INTEGRATED, chartBadge, chartMeasurement, defaultMethod, describeValue,
-  externalFormats, externalMediaCheck, externalPrintBlock, identityRefusal, methodAvailability, previewCompatibility, printtargSummary,
-  resolveInstrument, resolveMethod, scanIdentityLine, untrackedSourceProfiles, validationIdentityNotice,
+  METHOD_EXTERNAL, METHOD_INTEGRATED, chartBadge, chartMeasurement, defaultMethod, describeValue, estimateRequest,
+  externalFormats, externalMediaCheck, externalPrintBlock, identityRefusal, layoutGeometry, layoutOptionsFor,
+  methodAvailability, previewCompatibility, printtargSummary, resolveInstrument, resolveLayoutChoice, resolveMethod,
+  scanIdentityLine, untrackedSourceProfiles, validationIdentityNotice,
 } from './measurementMethod.js';
 import { classifyBuildError } from './buildPreview.js';
 import { chartIdFromHash, libraryHref } from './libraryLink.js';
@@ -182,6 +183,36 @@ assert(untrackedSourceProfiles({ sources: { source_profiles: [{ identity_tracked
 assert(untrackedSourceProfiles({ sources: { source_profiles: [] } }) === 0 && untrackedSourceProfiles(null) === 0, 'none');
 assert(previewCompatibility({ measurement_compatibility: { combined: false } }) === null, 'single scan: nothing');
 assert(previewCompatibility({ measurement_compatibility: { combined: true, status: 'compatible', members: [1, 2] } }).nMembers === 2, 'combined scans');
+
+console.log('Test 7b — printtarg -a / -h choices and the paper estimate request');
+const LAYOUT = {
+  instruments: [
+    { key: 'colormunki', layout_options: { patch_scales: [1, 0.9, 0.8], default_patch_scale: 1, high_density: true,
+      geometry: { standard: { 1: { patch_width_mm: 28 }, 0.9: { patch_width_mm: 25.2 }, 0.8: { patch_width_mm: 22.4 } },
+                  high_density: { patch_width_mm: 13.7, stagger_mm: 7.25 } } } },
+    { key: 'i1pro3plus', layout_options: { patch_scales: [1], default_patch_scale: 1, high_density: false,
+      geometry: { standard: { 1: { patch_width_mm: 16 } } } } },
+  ],
+};
+const cmo = layoutOptionsFor(LAYOUT, 'colormunki'), i1o = layoutOptionsFor(LAYOUT, 'i1pro3plus');
+assert(layoutOptionsFor(LAYOUT, 'spyder') === null && layoutOptionsFor(null, 'colormunki') === null, 'unknown instrument → no options');
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+assert(same(resolveLayoutChoice({ patchScale: null, highDensity: false }, cmo), { patchScale: 1, highDensity: false }), 'default: standard, 100 %');
+assert(same(resolveLayoutChoice({ patchScale: 0.8, highDensity: false }, cmo), { patchScale: 0.8, highDensity: false }), '80 % kept');
+assert(same(resolveLayoutChoice({ patchScale: 0.8, highDensity: true }, cmo), { patchScale: 1, highDensity: true }), 'high density forces 100 % (never combined)');
+assert(same(resolveLayoutChoice({ patchScale: 0.85, highDensity: false }, cmo), { patchScale: 1, highDensity: false }), 'size not offered → default');
+assert(same(resolveLayoutChoice({ patchScale: 0.9, highDensity: true }, i1o), { patchScale: 1, highDensity: false }), 'i1Pro 3 Plus: 100 %, no high density');
+assert(layoutGeometry(cmo, { patchScale: 0.9, highDensity: false }).patch_width_mm === 25.2, 'geometry of 90 %');
+assert(layoutGeometry(cmo, { patchScale: 1, highDensity: true }).stagger_mm === 7.25, 'geometry of high density');
+const req = (o) => estimateRequest({ instrument: 'colormunki', mediaKey: 'roll24', srcMode: 'targen', fCount: 2000,
+  ti1Text: '', choice: { patchScale: 1, highDensity: true }, ...o });
+assert(same(req({}).body, { instrument: 'colormunki', media_key: 'roll24', patch_scale: 1, high_density: true, n_patches: 2000 }), 'estimate from the targen -f count');
+assert(req({ fCount: null }).skip === 'needs_count' && req({ mediaKey: null }).skip === 'incomplete', 'no count / no format → no request');
+assert(req({ srcMode: 'ti1', ti1Text: 'CTI1' }).body.ti1_text === 'CTI1' && req({ srcMode: 'ti1' }).skip === 'incomplete', 'estimate from the .ti1');
+const psHd = printtargSummary({ ...created, patch_scale: 1, high_density: true, patch_geometry: { measured: { strip_stagger_mm: 7.25 } } });
+assert(psHd.highDensity && psHd.patchScale === 1 && psHd.patchGeometry.measured.strip_stagger_mm === 7.25, 'summary carries the options');
+const psOld = printtargSummary(created);
+assert(psOld.patchScale === 1 && psOld.highDensity === false && psOld.patchGeometry === null, 'a chart made before the options: defaults, no patch row');
 
 console.log('Test 8 — deep link to the library');
 assert(libraryHref('CHT-20261122-1600-AA') === '/mesures#chart=CHT-20261122-1600-AA', 'href');

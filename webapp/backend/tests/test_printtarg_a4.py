@@ -76,7 +76,7 @@ def test_a4_is_offered_for_the_colormunki_only():
     assert presets == {"i1pro3plus": ["roll24"], "colormunki": ["roll24", "a4"]}
     pre = P.PRESETS[("colormunki", "a4")]
     assert pre.page_h_mm <= P.printable_width_mm("a4") and not pre.unlimited_strip
-    assert P.PRESETS[("colormunki", "roll24")] == P.LayoutPreset(610.0, 450.0, False)
+    assert P.PRESETS[("colormunki", "roll24")] == P.LayoutPreset(610.0, 580.0, False)
     assert P.PRESETS[("i1pro3plus", "roll24")] == P.LayoutPreset(610.0, 500.0, True)
 
 

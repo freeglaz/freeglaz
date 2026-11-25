@@ -123,7 +123,7 @@ def test_create_with_real_targen_and_printtarg(client, monkeypatch):
     body = r.json()
     assert body["layout"] == "printtarg" and body["instrument"] == "colormunki"
     assert body["roll_layout"] == "transverse"
-    assert abs(body["tiff_w_mm"] - 450) < 0.3                      # strips cross the roll
+    assert abs(body["tiff_w_mm"] - 580) < 0.3                      # strips cross the roll
     # what the UI shows before printing: roll consumed and printed orientation (generator values)
     assert body["media_key"] == "roll24" and body["roll_length_mm"] > body["tiff_h_mm"]
     assert body["composition"] == {"rotation": "cw", "strips_cross_the_roll": True,
@@ -132,7 +132,9 @@ def test_create_with_real_targen_and_printtarg(client, monkeypatch):
     expected = ([{"code": "patches_not_located", "count": pm["patch_count"] - pm["located"]}]
                 if pm["located"] < pm["patch_count"] else [])
     assert body["generator_warnings"] == expected                  # codes, worded by the UI
-    assert body["n_patches"] == 120 and body["steps_in_pass"] == 26 and body["n_pages"] == 1
+    assert body["n_patches"] == 120 and body["steps_in_pass"] == 34 and body["n_pages"] == 1
+    assert (body["patch_scale"], body["high_density"]) == (1.0, False)          # the defaults
+    assert body["patch_geometry"]["nominal"]["patch_width_mm"] == 28.0
     desc = json.loads((Path(body["chart_dir"]) / "chart.json").read_text())
     assert desc["layout"] == "printtarg" and "scanLayout" not in desc
     assert desc["composition"]["rotation"] == "cw"
@@ -222,3 +224,69 @@ def test_chart_detail_and_listing_read_a_printtarg_chart(client):
     assert det.json()["identity"]["patch_count"] == 10
     assert any(c["chart_id"] == CID for c in client.get("/api/charts").json()["charts"])
     shutil.rmtree(cache.charts_dir(SERIAL) / CID)
+
+
+# ─── printtarg -a / -h and the estimate (test_printtarg_layout_options.py: the generator) ──
+@pytest.mark.parametrize("kw, code", [
+    ({"instrument": "colormunki", "patch_scale": 0.9, "high_density": True}, "unsupported_option_combination"),
+    ({"instrument": "colormunki", "patch_scale": 0.7}, "unsupported_patch_scale"),
+    ({"instrument": "i1pro3plus", "high_density": True}, "unsupported_high_density"),
+    ({"instrument": "i1pro3plus", "patch_scale": 0.9}, "unsupported_patch_scale"),
+])
+def test_refused_layout_options_cost_nothing(client, monkeypatch, kw, code):
+    """Refused before targen, the printer or printtarg: no chart folder."""
+    def boom(*a, **k):
+        raise AssertionError("printtarg must not run")
+    monkeypatch.setattr(charts_routes._ptc, "orchestrate_printtarg_chart", boom)
+    app.dependency_overrides[charts_routes.get_chart_z9] = lambda: _fake_z9()
+    r = client.post("/api/charts", json=_body(**kw))
+    assert r.status_code == 422 and r.json()["detail"]["code"] == code, r.text
+    assert _charts_on_disk() == []
+
+
+def test_layout_options_are_printtarg_only(client):
+    app.dependency_overrides[charts_routes.get_chart_z9] = lambda: _fake_z9()
+    r = client.post("/api/charts", json=_body(layout="honeycomb", instrument=None, patch_scale=0.9))
+    assert r.status_code == 422 and "printtarg" in r.text
+
+
+@pytest.mark.skipif(not (find_argyll_binary("printtarg") and find_argyll_binary("targen")),
+                    reason="printtarg/targen (Argyll) not installed")
+def test_create_a_high_density_colormunki_chart(client, monkeypatch):
+    monkeypatch.setattr(charts_routes._ptc, "orchestrate_printtarg_chart",
+                        functools.partial(P.orchestrate_printtarg_chart, dpi=100))
+    app.dependency_overrides[charts_routes.get_chart_z9] = lambda: _fake_z9()
+    r = client.post("/api/charts", json=_body(ti1_text=None, targen_flags="-d2 -G -f 120",
+                                              instrument="colormunki", high_density=True))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert (body["patch_scale"], body["high_density"], body["steps_in_pass"]) == (1.0, True, 34)
+    geo = body["patch_geometry"]
+    assert geo["nominal"]["patch_width_mm"] == 13.7 and geo["measured"]["staggered"]
+    assert geo["physically_validated"] is False
+    desc = json.loads((Path(body["chart_dir"]) / "chart.json").read_text())
+    assert desc["printtarg"]["high_density"] is True and "-h" in desc["printtarg"]["argv"]
+
+
+@pytest.mark.skipif(not find_argyll_binary("printtarg"), reason="printtarg (Argyll) not installed")
+def test_estimate_route(client, tmp_path):
+    r = client.post("/api/charts/printtarg-estimate",
+                    json={"instrument": "colormunki", "media_key": "roll24", "n_patches": 500,
+                          "patch_scale": 0.8})
+    assert r.status_code == 200, r.text
+    e = r.json()
+    assert e["estimate"] and (e["patches_per_strip"], e["patch_scale"]) == (43, 0.8)
+    assert e["roll_length_mm"] > e["chart_h_mm"] and e["patch_geometry"]["patch_width_mm"] == 22.4
+    P._write_layout_ti1(tmp_path / "t.ti1", 40)
+    r = client.post("/api/charts/printtarg-estimate",
+                    json={"instrument": "colormunki", "media_key": "roll24",
+                          "ti1_text": (tmp_path / "t.ti1").read_text()})
+    assert r.status_code == 200 and r.json()["n_patches"] == 40
+    for body, code in (({"instrument": "colormunki", "media_key": "roll24"}, "estimate_needs_count"),
+                       ({"instrument": "colormunki", "media_key": "a4", "n_patches": 300,
+                         "high_density": True}, "too_many_strips_for_sheet"),
+                       ({"instrument": "i1pro3plus", "media_key": "roll24", "n_patches": 50,
+                         "high_density": True}, "unsupported_high_density")):
+        r = client.post("/api/charts/printtarg-estimate", json=body)
+        assert r.status_code == 422 and r.json()["detail"]["code"] == code, r.text
+    assert _charts_on_disk() == []                     # an estimate writes no chart

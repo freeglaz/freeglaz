@@ -26,9 +26,10 @@ import { useBuildPreview, buildWithPreview } from '../../hooks/useBuildPreview.j
 import { buildRequestBody, chartStateStamp, classifyBuildError, summarizePreview } from '../../lib/buildPreview.js';
 import { errorText } from '../../lib/errorText.js';
 import {
-  METHOD_EXTERNAL, METHOD_INTEGRATED, chartMeasurement, externalFormats, externalMediaCheck, externalPrintBlock,
-  instrumentLabel,
-  methodAvailability, printtargSummary, resolveInstrument, resolveMethod, validationIdentityNotice,
+  METHOD_EXTERNAL, METHOD_INTEGRATED, chartMeasurement, estimateRequest, externalFormats, externalMediaCheck,
+  externalPrintBlock, instrumentLabel, layoutGeometry, layoutOptionsFor,
+  methodAvailability, printtargSummary, resolveInstrument, resolveLayoutChoice, resolveMethod,
+  validationIdentityNotice,
 } from '../../lib/measurementMethod.js';
 import { openInLibrary } from '../../lib/libraryLink.js';
 import MeasurementBadge from './MeasurementBadge.jsx';
@@ -147,6 +148,9 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
   const [ptOptions, setPtOptions] = useState(null);          // printtarg options | null loading | false error
   const [methodChoice, setMethodChoice] = useState(null);    // integrated | external | null
   const [instrumentChoice, setInstrumentChoice] = useState(null);
+  // printtarg -a / -h chosen for an external chart (made valid for the instrument below)
+  const [layoutChoice, setLayoutChoice] = useState({ patchScale: null, highDensity: false });
+  const [estimateRes, setEstimateRes] = useState(null);   // last paper estimate answer {key, …}
 
   // ─── scan ───
   const [charts, setCharts] = useState(null);
@@ -352,6 +356,31 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
   const maxPatches = external ? null : (fmt?.max_patches ?? null);
   const fCount = srcMode === 'targen' ? _extractF(flags) : null;
   const fOver = fCount != null && maxPatches != null && fCount > maxPatches;
+  const layoutOpts = external ? layoutOptionsFor(ptOptions || null, instrument) : null;
+  const layout = resolveLayoutChoice(layoutChoice, layoutOpts);
+  // Paper estimate BEFORE generating the TIFF: the backend runs printtarg's layout probes with
+  // the chart's own preset and options (debounced; only the answer to the current request shows).
+  const estimateReq = external && phase === 'compose'
+    ? estimateRequest({ instrument, mediaKey: effMediaKey, srcMode, fCount, ti1Text, choice: layout })
+    : { skip: 'off' };
+  const estimateKey = estimateReq.body ? JSON.stringify(estimateReq.body) : null;
+  useEffect(() => {
+    if (!estimateKey) return undefined;
+    let live = true;
+    const timer = setTimeout(() => {
+      setEstimateRes((e) => ({ key: estimateKey, state: 'loading', data: e?.data || null }));
+      api.estimatePrinttargChart(JSON.parse(estimateKey))
+        .then((d) => { if (live) setEstimateRes({ key: estimateKey, state: 'ok', data: d }); })
+        .catch((e) => {
+          if (live) setEstimateRes({ key: estimateKey, state: 'error', code: e?.detail?.code || null, message: errorText(e, t) });
+        });
+    }, 450);
+    return () => { live = false; clearTimeout(timer); };
+  }, [estimateKey, t]);
+  const estimate = estimateReq.skip === 'needs_count' ? { state: 'needs_count' }
+    : !estimateKey ? null
+      : estimateRes?.key === estimateKey ? estimateRes
+        : { state: 'loading', data: estimateRes?.data || null };
   const residentCurrent = preconds.find((p) => p.id === `resident:${geStr}`);
   const customs = preconds.filter((p) => p.kind === 'custom');
 
@@ -393,6 +422,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
   // a validation LOOK (preview) before the physical act. Cancelling at the preview
   // records nothing in the library (library = printed only) → no phantom chart.
   const canCreate = mediaid && !fOver && !busy && method != null
+    && !(external && estimate?.state === 'error' && estimate.code === 'too_many_strips_for_sheet')
     && (!external || (instrument && effMediaKey && availability[METHOD_EXTERNAL].note !== 'printtarg_missing'))
     && (srcMode === 'ti1' ? ti1Text.trim() : flags.trim());
 
@@ -407,7 +437,10 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
         c_profile: isValidate ? 'none' : resolveCProfile(),
         purpose: isValidate ? 'validation' : 'profiling',
       };
-      if (external) { body.layout = 'printtarg'; body.instrument = instrument; }   // honeycomb: body unchanged
+      if (external) {                                 // honeycomb: body unchanged
+        body.layout = 'printtarg'; body.instrument = instrument;
+        body.patch_scale = layout.patchScale; body.high_density = layout.highDensity;
+      }
       if (srcMode === 'ti1') body.ti1_text = ti1Text;
       else body.targen_flags = `-d2 ${flags}`.trim();
       const created = await api.createChart(body);
@@ -692,7 +725,8 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
               validate={isValidate}
               method={method} availability={availability} onMethod={setMethodChoice}
               ptOptions={ptOptions} instrument={instrument} onInstrument={setInstrumentChoice}
-              extFormats={extFormats} mediaCheck={mediaCheck} extKey={effMediaKey}/>
+              extFormats={extFormats} mediaCheck={mediaCheck} extKey={effMediaKey}
+              layoutOpts={layoutOpts} layout={layout} onLayoutChoice={setLayoutChoice} estimate={estimate}/>
           )}
 
           {phase === 'preview' && result && !resultExternal && (
@@ -1124,14 +1158,15 @@ function ComposeView({
   geStr, cChoice, setCChoice, cCustom, setCCustom, residentCurrent, customs, dev,
   validate = false,
   method, availability, onMethod, ptOptions, instrument, onInstrument, extFormats = [], mediaCheck,
-  extKey = null,
+  extKey = null, layoutOpts = null, layout = null, onLayoutChoice = () => {}, estimate = null,
 }) {
   const external = method === METHOD_EXTERNAL;
   return (
     <>
       <Section n="1" title={t('measurement.method_title')}>
         <MethodChooser t={t} method={method} availability={availability} onMethod={onMethod}
-                       ptOptions={ptOptions} instrument={instrument} onInstrument={onInstrument} mediaKey={extKey}/>
+                       ptOptions={ptOptions} instrument={instrument} onInstrument={onInstrument} mediaKey={extKey}
+                       layoutOpts={layoutOpts} layout={layout} onLayoutChoice={onLayoutChoice}/>
       </Section>
 
       <Section n="2" title={t('chart_create.layer_format')}>
@@ -1144,7 +1179,8 @@ function ComposeView({
               <span className="text-tiny text-text-faint">{t('measurement.media.only', { formats: extFormats.map((f) => f.name || f.key).join(' / ') || '—' })}</span>
             </div>
             <MediaNotice t={t} check={mediaCheck}/>
-            <p className="text-tiny text-text-faint leading-snug">{t('measurement.dims_after_creation')}</p>
+            {estimate ? <PaperEstimate t={t} estimate={estimate}/>
+              : <p className="text-tiny text-text-faint leading-snug">{t('measurement.dims_after_creation')}</p>}
           </div>
         ) : (
           <div className="flex items-center gap-3 flex-wrap">
@@ -1263,7 +1299,8 @@ function ComposeView({
 
 // Measurement method: two cards (built-in HP / external) + the instrument list of the backend.
 // An unavailable method stays visible, disabled, with its reason (never silently dropped).
-function MethodChooser({ t, method, availability, onMethod, ptOptions, instrument, onInstrument, mediaKey = null }) {
+function MethodChooser({ t, method, availability, onMethod, ptOptions, instrument, onInstrument, mediaKey = null,
+                         layoutOpts = null, layout = null, onLayoutChoice = () => {} }) {
   const cards = [
     { value: METHOD_INTEGRATED, title: t('measurement.method.integrated'), desc: t('measurement.method.integrated_desc') },
     { value: METHOD_EXTERNAL, title: t('measurement.method.external'), desc: t('measurement.method.external_desc') },
@@ -1314,10 +1351,117 @@ function MethodChooser({ t, method, availability, onMethod, ptOptions, instrumen
               {preset.unlimited_strip && <> {t('measurement.preset_long_strips')}</>}
             </p>
           )}
+          {layoutOpts && layout && (layoutOpts.patch_scales.length > 1 || layoutOpts.high_density) && (
+            <LayoutOptions t={t} opts={layoutOpts} choice={layout} onChoice={onLayoutChoice}/>
+          )}
           <p className="text-tiny text-text-faint leading-snug">{t('measurement.to_verify_physically')}</p>
         </div>
       )}
     </div>
+  );
+}
+
+function useMm() {
+  const { i18n } = useTranslation();
+  return (v) => (v == null ? '—' : Number(v).toLocaleString(i18n.language, { minimumFractionDigits: 1, maximumFractionDigits: 2 }));
+}
+
+// printtarg's own options for an external chart (as ChromIQ presents them): reading density
+// (ColorMunki -h) and patch size (-a), exclusive; the nominal patch they give; a reminder that
+// only printtarg's geometry is known, not yet what the instrument reads.
+function LayoutOptions({ t, opts, choice, onChoice }) {
+  const mm = useMm();
+  const geo = layoutGeometry(opts, choice);
+  const def = opts.default_patch_scale ?? 1;
+  const custom = choice.highDensity || choice.patchScale !== def;
+  return (
+    <div className="space-y-1.5 rounded-md border border-border-soft px-2.5 py-2" data-layout-options
+         data-patch-scale={choice.patchScale} data-high-density={choice.highDensity ? '1' : '0'}>
+      {opts.high_density && (
+        <div className="flex items-center gap-2 flex-wrap" data-option="density">
+          <span className="text-xs2 text-text-muted w-36">{t('measurement.layout_options.density')}</span>
+          <span className="whitespace-nowrap">
+            <Segmented value={choice.highDensity ? 'high' : 'standard'} options={[
+              { value: 'standard', label: t('measurement.layout_options.density_standard') },
+              { value: 'high', label: t('measurement.layout_options.density_high') },
+            ]} onChange={(v) => onChoice({ patchScale: def, highDensity: v === 'high' })}/>
+          </span>
+        </div>
+      )}
+      {opts.patch_scales.length > 1 && (
+        <div className="flex items-center gap-2 flex-wrap" data-option="patch_scale">
+          <span className="text-xs2 text-text-muted w-36">{t('measurement.layout_options.patch_size')}</span>
+          <span className="whitespace-nowrap">
+            <Segmented value={String(choice.patchScale)}
+                       options={opts.patch_scales.map((v) => ({ value: String(v), label: t('measurement.layout_options.scale_value', { pct: Math.round(v * 100) }) }))}
+                       onChange={(v) => onChoice({ patchScale: Number(v), highDensity: false })}/>
+          </span>
+        </div>
+      )}
+      {geo && (
+        <p className="text-tiny text-text-muted leading-snug" data-patch-geometry>
+          {t('measurement.layout_options.geometry', { l: mm(geo.patch_length_mm), w: mm(geo.patch_width_mm), sp: mm(geo.spacer_mm) })}
+          {choice.highDensity && <> {t('measurement.layout_options.stagger', { s: mm(geo.stagger_mm) })}</>}
+        </p>
+      )}
+      {opts.high_density && (
+        <p className="text-tiny text-text-faint leading-snug">
+          {choice.highDensity ? t('measurement.layout_options.density_high_desc') : t('measurement.layout_options.not_combined')}
+        </p>
+      )}
+      {custom && (
+        <p className="text-tiny text-warn leading-snug flex items-start gap-1" data-not-validated>
+          <AlertTriangle size={12} className="mt-0.5 flex-shrink-0"/>{t('measurement.layout_options.not_validated')}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Paper the chart will take, from printtarg's layout probes, before the TIFF is generated.
+function PaperEstimate({ t, estimate }) {
+  const mm = useMm();
+  if (estimate.state === 'needs_count') {
+    return <p className="text-tiny text-text-faint leading-snug" data-estimate="needs_count">{t('measurement.estimate.needs_count')}</p>;
+  }
+  if (estimate.state === 'error') {
+    return (
+      <div className="flex items-start gap-1.5 text-tiny text-warn leading-snug" data-estimate="error" data-estimate-code={estimate.code || ''}>
+        <AlertTriangle size={12} className="mt-0.5 flex-shrink-0"/><span>{estimate.message}</span>
+      </div>
+    );
+  }
+  const d = estimate.data;
+  return (
+    <div className="rounded-md border border-border-soft bg-sunken/50 px-2.5 py-1.5 text-tiny leading-snug" data-estimate={estimate.state}>
+      <span className="font-semibold text-text-strong">{t('measurement.estimate.title')}</span>
+      {estimate.state === 'loading' && <span className="text-text-faint"> · {t('measurement.estimate.loading')}</span>}
+      {d && (
+        <span className={`block text-text-muted ${estimate.state === 'loading' ? 'opacity-60' : ''}`} data-estimate-roll={d.roll_length_mm ?? ''}>
+          {t(d.roll_length_mm != null ? 'measurement.estimate.value_roll' : 'measurement.estimate.value_sheet', {
+            patches: d.n_patches, strips: d.total_strips, per: d.patches_per_strip, blocks: d.n_pages,
+            w: Math.round(d.chart_w_mm), h: Math.round(d.chart_h_mm), roll: Math.round(d.roll_length_mm ?? 0) })}
+          {' '}{t('measurement.layout_options.geometry', { l: mm(d.patch_geometry?.patch_length_mm), w: mm(d.patch_geometry?.patch_width_mm), sp: mm(d.patch_geometry?.spacer_mm) })}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// Patches of a created chart: as found on its pages, and the printtarg options used.
+function PatchesValue({ t, p }) {
+  const mm = useMm();
+  const m = p.patchGeometry?.measured || {};
+  const parts = [t('measurement.preview.patches_value', { l: mm(m.patch_h_mm), w: mm(m.patch_w_mm) })];
+  if (p.highDensity) parts.push(t('measurement.preview.option_high_density', { s: mm(m.strip_stagger_mm) }));
+  else if (p.patchScale !== 1) parts.push(t('measurement.preview.option_scale', { pct: Math.round(p.patchScale * 100) }));
+  return (
+    <span>
+      {parts.join(' · ')}
+      {p.patchGeometry?.physically_validated === false && (
+        <span className="text-icc-warn-deep"> · {t('measurement.preview.not_read_yet')}</span>
+      )}
+    </span>
   );
 }
 
@@ -1421,6 +1565,7 @@ function PrinttargPreviewView({ t, result, family, printBlockedBy, dev }) {
         {row(t('measurement.preview.instrument'), instrumentLabel(t, p.instrument), 'instrument')}
         {row(t('chart_create.r_patches'), p.nPatches, 'n_patches')}
         {row(t('measurement.preview.strips'), t('measurement.preview.strips_value', { count: p.nStrips, per: p.patchesPerStrip }), 'strips')}
+        {p.patchGeometry && row(t('measurement.preview.patches'), <PatchesValue t={t} p={p}/>, 'patches')}
         {row(p.onSheet ? t('measurement.preview.layout_sheet') : t('measurement.preview.layout'),
              !p.stripsCrossTheRoll ? t('measurement.preview.layout_pages')
                : p.onSheet ? t('measurement.preview.layout_transverse_sheet', { side: t(`measurement.side.${p.patch1Side || 'right'}`) })

@@ -1136,7 +1136,12 @@
     "command_unknown": "Unknown command.",
     "session_unreadable": "The session state cannot be read: it is blocked.",
     "session_unsupported": "This session was written by an incompatible freeglaz version.",
-    "validated_ahead_incompatible": "The validated save lacks strips the session says were saved: the session is blocked."
+    "validated_ahead_incompatible": "The validated save lacks strips the session says were saved: the session is blocked.",
+    "unsupported_patch_scale": "This patch size is not offered for this instrument.",
+    "unsupported_high_density": "High density is offered for the ColorMunki only.",
+    "unsupported_option_combination": "High density is not combined with a reduced patch size.",
+    "unsupported_patch_count": "Patch count out of range for the estimate (1 to 10,000).",
+    "estimate_needs_count": "Give the number of patches (-f N) or a .ti1 to estimate the paper."
   },
   "modify_mechanical": {
     "title": "Mechanical Properties",
@@ -1969,7 +1974,12 @@
       "established": "Strip geometry and order computed by printtarg; patch positions checked against the .ti2 on the chart pixels; printed by the usual freeglaz pipeline.",
       "to_verify_title": "To check on the first reading",
       "to_verify": "Reading with the instrument: strip length, ruler or hand reading, reading direction of the turned chart.",
-      "color_not_proven": "The real color rendering of this printer is not demonstrated for these charts."
+      "color_not_proven": "The real color rendering of this printer is not demonstrated for these charts.",
+      "patches": "Patch size",
+      "patches_value": "{{l}} × {{w}} mm (long × wide, measured on the chart)",
+      "option_high_density": "high density, strips shifted by {{s}} mm",
+      "option_scale": "size {{pct}} %",
+      "not_read_yet": "not yet read with the instrument"
     },
     "side": {
       "right": "right",
@@ -2049,6 +2059,25 @@
     "generator_warning": {
       "patches_not_located_one": "{{count}} patch could not be checked on the chart pixels (repeated or white colour): its place is the one printtarg gives.",
       "patches_not_located_other": "{{count}} patches could not be checked on the chart pixels (repeated or white colour): their place is the one printtarg gives."
+    },
+    "layout_options": {
+      "density": "Reading density",
+      "density_standard": "Hand-held (standard)",
+      "density_high": "High density",
+      "density_high_desc": "Narrow strips, every other one shifted by half a patch (printtarg -h): about half the paper, a more demanding reading (ChromIQ presents it as a guided reading). Always at 100 % size.",
+      "not_combined": "High density is not combined with a reduced patch size.",
+      "patch_size": "Patch size",
+      "scale_value": "{{pct}} %",
+      "geometry": "Patch {{l}} × {{w}} mm (long × wide), spacer {{sp}} mm.",
+      "stagger": "Every other strip shifted by {{s}} mm.",
+      "not_validated": "Geometry computed by printtarg, not yet read with the instrument."
+    },
+    "estimate": {
+      "title": "Paper estimated before generating",
+      "loading": "printtarg is computing…",
+      "value_roll": "{{patches}} patches: {{strips}} strips of {{per}}, {{blocks}} block(s), {{w}} × {{h}} mm, about {{roll}} mm of roll.",
+      "value_sheet": "{{patches}} patches: {{strips}} strips of {{per}}, {{w}} × {{h}} mm on the sheet.",
+      "needs_count": "Give the number of patches (-f N) to estimate the paper before creating the chart."
     }
   },
   "external_measure": {

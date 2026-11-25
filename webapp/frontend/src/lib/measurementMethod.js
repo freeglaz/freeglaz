@@ -150,6 +150,40 @@ export function chartBadge(chart) {
   return { kind: m.integrated ? 'integrated' : m.external ? 'external' : 'unknown', instrument: m.instrument };
 }
 
+/** printtarg -a / -h as the backend offers them for this instrument, or null. */
+export function layoutOptionsFor(options, instrument) {
+  const inst = (options?.instruments || []).find((i) => i.key === instrument);
+  return inst?.layout_options || null;
+}
+
+/** The user's choice made valid for the instrument: a size the backend offers (else its
+ *  default), high density only where offered, and never both (high density at full size). */
+export function resolveLayoutChoice(choice, layoutOptions) {
+  const scales = layoutOptions?.patch_scales || [1];
+  const def = layoutOptions?.default_patch_scale ?? scales[0] ?? 1;
+  const highDensity = !!(choice?.highDensity && layoutOptions?.high_density);
+  const wanted = choice?.patchScale ?? def;
+  const patchScale = highDensity ? def : (scales.some((s) => Math.abs(s - wanted) < 1e-9) ? wanted : def);
+  return { patchScale, highDensity };
+}
+
+/** Nominal patch geometry (printtarg's) of a choice, from the backend's table, or null. */
+export function layoutGeometry(layoutOptions, choice) {
+  const g = layoutOptions?.geometry;
+  if (!g) return null;
+  if (choice?.highDensity) return g.high_density || null;
+  const key = String(Number(choice?.patchScale ?? layoutOptions.default_patch_scale ?? 1));
+  return g.standard?.[key] || null;
+}
+
+/** The estimate request for the current composition, or the reason there is none. */
+export function estimateRequest({ instrument, mediaKey, srcMode, fCount, ti1Text, choice }) {
+  if (!instrument || !mediaKey) return { skip: 'incomplete' };
+  const base = { instrument, media_key: mediaKey, patch_scale: choice.patchScale, high_density: choice.highDensity };
+  if (srcMode === 'ti1') return (ti1Text || '').trim() ? { body: { ...base, ti1_text: ti1Text } } : { skip: 'incomplete' };
+  return fCount ? { body: { ...base, n_patches: fCount } } : { skip: 'needs_count' };
+}
+
 /** What the preview of a created printtarg chart shows — every number is the generator's. */
 export function printtargSummary(result) {
   if (!result || result.layout !== 'printtarg') return null;
@@ -174,6 +208,10 @@ export function printtargSummary(result) {
     ge: result.tag?.gloss_enhancer || null,
     warnings: result.warnings || [],
     generatorWarnings: result.generator_warnings || [],
+    // printtarg -a / -h and the patches found on the pages (charts made before: defaults)
+    patchScale: result.patch_scale ?? 1,
+    highDensity: !!result.high_density,
+    patchGeometry: result.patch_geometry || null,
   };
 }
 

@@ -1273,6 +1273,12 @@ export async function getPrinttargOptions() {
 export async function createChart(body) {
   return http('/api/charts', { method: 'POST', body: JSON.stringify(body) });
 }
+/** What a printtarg chart would take BEFORE it is generated (printtarg layout probes, no TIFF):
+ *  strips, blocks, size, roll consumed, patch size. Body: instrument, media_key, n_patches or
+ *  ti1_text, patch_scale, high_density. */
+export async function estimatePrinttargChart(body) {
+  return http('/api/charts/printtarg-estimate', { method: 'POST', body: JSON.stringify(body) });
+}
 export async function getCharts({ paper, printed, scanned, purpose } = {}) {
   const qs = new URLSearchParams();
   if (paper) qs.set('paper', paper);

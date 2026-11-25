@@ -1136,7 +1136,12 @@
     "command_unknown": "Commande inconnue.",
     "session_unreadable": "L'état de la séance est illisible : elle est bloquée.",
     "session_unsupported": "Cette séance a été écrite par une version de freeglaz incompatible.",
-    "validated_ahead_incompatible": "La sauvegarde validée ne contient pas toutes les rangées que la séance dit avoir sauvegardées : la séance est bloquée."
+    "validated_ahead_incompatible": "La sauvegarde validée ne contient pas toutes les rangées que la séance dit avoir sauvegardées : la séance est bloquée.",
+    "unsupported_patch_scale": "Cette taille de patch n'est pas proposée pour cet instrument.",
+    "unsupported_high_density": "La haute densité n'est proposée que pour le ColorMunki.",
+    "unsupported_option_combination": "La haute densité ne se combine pas avec une taille de patch réduite.",
+    "unsupported_patch_count": "Nombre de patches hors limites pour l'estimation (1 à 10 000).",
+    "estimate_needs_count": "Indiquez le nombre de patches (-f N) ou un .ti1 pour estimer le papier."
   },
   "modify_mechanical": {
     "title": "Propriétés mécaniques",
@@ -1969,7 +1974,12 @@
       "established": "Géométrie et ordre des bandes calculés par printtarg ; position des patches vérifiée contre le .ti2 sur les pixels de la charte ; impression par le pipeline habituel de freeglaz.",
       "to_verify_title": "À vérifier à la première lecture",
       "to_verify": "Lecture avec l'instrument : longueur des bandes, lecture à la règle ou à main levée, sens de lecture de la charte tournée.",
-      "color_not_proven": "Le rendu couleur réel de cette imprimante n'est pas démontré pour ces chartes."
+      "color_not_proven": "Le rendu couleur réel de cette imprimante n'est pas démontré pour ces chartes.",
+      "patches": "Taille des patches",
+      "patches_value": "{{l}} × {{w}} mm (long × large, mesurés sur la charte)",
+      "option_high_density": "haute densité, bandes décalées de {{s}} mm",
+      "option_scale": "taille {{pct}} %",
+      "not_read_yet": "pas encore lu avec l'instrument"
     },
     "side": {
       "right": "droite",
@@ -2049,6 +2059,25 @@
     "generator_warning": {
       "patches_not_located_one": "{{count}} patch n'a pas pu être vérifié sur les pixels de la charte (couleur répétée ou blanche) : sa place est celle donnée par printtarg.",
       "patches_not_located_other": "{{count}} patches n'ont pas pu être vérifiés sur les pixels de la charte (couleur répétée ou blanche) : leur place est celle donnée par printtarg."
+    },
+    "layout_options": {
+      "density": "Densité de lecture",
+      "density_standard": "À main levée (standard)",
+      "density_high": "Haute densité",
+      "density_high_desc": "Bandes étroites, une sur deux décalée d'un demi-patch (printtarg -h) : environ deux fois moins de papier, lecture plus exigeante (ChromIQ la présente comme une lecture avec guide). Toujours en taille 100 %.",
+      "not_combined": "La haute densité ne se combine pas avec une taille de patch réduite.",
+      "patch_size": "Taille des patches",
+      "scale_value": "{{pct}} %",
+      "geometry": "Patch {{l}} × {{w}} mm (long × large), séparateur {{sp}} mm.",
+      "stagger": "Une bande sur deux décalée de {{s}} mm.",
+      "not_validated": "Géométrie calculée par printtarg, pas encore lue avec l'instrument."
+    },
+    "estimate": {
+      "title": "Papier estimé avant génération",
+      "loading": "calcul par printtarg…",
+      "value_roll": "{{patches}} patches : {{strips}} bandes de {{per}}, {{blocks}} bloc(s), {{w}} × {{h}} mm, environ {{roll}} mm de rouleau.",
+      "value_sheet": "{{patches}} patches : {{strips}} bandes de {{per}}, {{w}} × {{h}} mm sur la feuille.",
+      "needs_count": "Indiquez le nombre de patches (-f N) pour estimer le papier avant de créer la charte."
     }
   },
   "external_measure": {

@@ -5,14 +5,31 @@ so a user does not need Homebrew, `uv`, a Python install or a Terminal to run
 freeglaz. The interpreter, all Python dependencies, the built frontend and the
 reference ICC assets are bundled.
 
-**ArgyllCMS is not bundled.** It stays an external system dependency, installed
-separately (`brew install argyll-cms`) and auto-detected at runtime. The
-printing path works without it; only the open profiling path needs it.
+**Optional components.** A release build also ships, when it is given them:
+
+- `FREEGLAZ_BUNDLE_ARGYLL` — the extracted official ArgyllCMS macOS arm64
+  binary archive (`Argyll_V3.5.0/`). The ten tools freeglaz runs go to
+  `Contents/Frameworks/argyll/bin`, with `ref/`, `License.txt` and
+  `ARGYLL_SOURCE.txt`; `entry.py` points `FREEGLAZ_ARGYLL_ROOT` at them.
+- `FREEGLAZ_BUNDLE_FGK` — a folder with the chartread-fgK engine **signed ad hoc
+  alone** (`codesign -s - --force`, never `-i`), its
+  `chartread-fgK.manifest.json` written after that signature, and `source/`
+  (the Corresponding Source archive). It lands in
+  `Contents/Frameworks/chartread-fgK/`. The build checks that the engine in the
+  signed app is byte for byte its input and its manifest, and says whether it
+  is listed in `TRUSTED_BUILDS` (`lib/z9_client/chartread_fgk/engine.py`):
+  only a listed engine shipped in the app is approved for publishing
+  measurements.
+
+Without `FREEGLAZ_BUNDLE_ARGYLL`, ArgyllCMS stays an external system dependency,
+installed separately (`brew install argyll-cms`) and auto-detected at runtime.
+The printing path works without it; only the open profiling path needs it.
 
 ## Build
 
 ```
 ./packaging/macos/build_app.command
+FREEGLAZ_BUNDLE_ARGYLL=… FREEGLAZ_BUNDLE_FGK=… ./packaging/macos/build_app.command
 ```
 
 The script:
@@ -79,3 +96,5 @@ and is unaffected.
 - `freeglaz.spec` — the PyInstaller spec.
 - `entry.py` — the `.app` entry point (empty argv, frozen-env setup).
 - `rthook_libvips.py` — runtime hook for libvips (see above).
+- `ARGYLL_SOURCE.txt` — where the bundled ArgyllCMS tools and their source
+  come from (copied next to them).

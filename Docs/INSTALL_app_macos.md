@@ -68,20 +68,37 @@ in the Dock**. Other formats are rejected.
 
 ---
 
-## 6. Custom ICC profiling with ArgyllCMS (optional)
+## 6. Custom ICC profiling with ArgyllCMS
 
 The app prints and runs the printer's **built-in** profiling without any extra
 install. The **open profiling path** (chart defined with ArgyllCMS, ICC computed
-by ArgyllCMS) additionally needs ArgyllCMS, which is never bundled. Install it
-once with Homebrew:
+by ArgyllCMS) needs ArgyllCMS.
+
+From **0.1.17-rc.2**, the app ships the official **ArgyllCMS 3.5.0** tools for
+Apple Silicon (unmodified, with their licence and source, see
+`freeglaz.app/Contents/Frameworks/argyll/ARGYLL_SOURCE.txt`): nothing to install,
+and the app uses its own copy even when Homebrew has another one.
+
+An app without them (an older release, or one built without
+`FREEGLAZ_BUNDLE_ARGYLL`) needs ArgyllCMS from Homebrew, once:
 
 ```bash
 brew install argyll-cms
 ```
 
-(If Homebrew is absent: https://brew.sh/.) freeglaz auto-detects Argyll under
-`/opt/homebrew`. The **Profiles** and **Measurements** screens surface a clear
-notice while Argyll is missing.
+(If Homebrew is absent: https://brew.sh/.) freeglaz then auto-detects Argyll
+under `/opt/homebrew`. The **Profiles** and **Measurements** screens surface a
+clear notice while Argyll is missing.
+
+### Measuring with a handheld spectrophotometer (experimental)
+
+From **0.1.17-rc.2**, the app also ships **chartread-fgK**, the ArgyllCMS 3.5.0
+`chartread` with a checkpoint after each strip (source in
+`freeglaz.app/Contents/Frameworks/chartread-fgK/source/`). freeglaz uses only
+this copy, never another `chartread`, and publishes measurements only when it
+is the copy shipped in the app. ArgyllCMS needs no extra driver for these
+instruments on macOS. Only one program can use the instrument at a time: quit
+i1Profiler and other X-Rite software before measuring.
 
 ---
 
@@ -89,7 +106,7 @@ notice while Argyll is missing.
 
 | Path | Contents |
 |---|---|
-| `~/Documents/freeglaz/` | printers, color profiles, backups, sessions |
+| `~/Documents/freeglaz/` | printers, color profiles, backups, sessions, charts and their measurements |
 | `~/Library/Application Support/freeglaz/` | internal app state (logs, job history) |
 
 Uninstalling = move **freeglaz** from Applications to the Trash (and the two
@@ -107,6 +124,18 @@ Check the entered IP, that the printer is on and on the same network.
 
 **The open profiling path is unavailable / a notice mentions Argyll.**
 Install ArgyllCMS (§6).
+
+**Sending diagnostics.** freeglaz never sends anything by itself. To report a
+problem, attach what is useful, after reading it:
+- the app log: `~/Library/Application Support/freeglaz/freeglaz.log` (and
+  `freeglaz.log.1`… if present). In Finder: **Go → Go to Folder…** and paste the
+  folder path;
+- for a measurement: the session folder
+  `~/Documents/freeglaz/charts/<printer>/<chart>/external/<session>/`, its
+  `session.json` and `logs/`.
+
+These files can contain the printer's address and serial number, paper and file
+names, and the measured values. Remove what you do not want to share.
 
 ---
 

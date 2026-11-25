@@ -218,6 +218,41 @@ def post_colprof_preset(body: TargenPresetBody) -> dict:
 
 
 # ─── GET precondition-profiles (ordered -c menu) ─────────────────────────────
+_FREEGLAZ_BUILT_ORIGINS = ("free_chart_argyll",)
+
+
+def _freeglaz_precondition_profiles(paper: str, print_ge: str) -> list:
+    """Profiles freeglaz built for THIS paper and THIS gloss enhancer, offered as targen -c
+    without going through the printer (note 129 §7.2). Read from repo/z9 and the sidecar
+    freeglaz wrote with each one (paper, GE slot, origin, md5 checked against the file): copies
+    of HP profiles and imports are not "built by freeglaz", and an intermediate profile of a
+    two-pass profiling is never in repo/z9."""
+    out = []
+    base = _cache.repo_z9_dir()
+    if not base.is_dir():
+        return out
+    ge = _norm_ge(print_ge)
+    for icc in sorted(base.rglob("*.icc")):
+        if _cache.REPLACED_DIR_NAME in icc.parts or icc.parent.name != paper:
+            continue                                       # another paper, or a replaced copy kept aside
+        meta = _cache.read_repo_z9_profile_meta(icc) or {}
+        if meta.get("origin") not in _FREEGLAZ_BUILT_ORIGINS or meta.get("media_id") != paper \
+                or _norm_ge(meta.get("gloss_slot")) != ge:
+            continue
+        try:
+            if meta.get("md5") and _cache.md5_bytes(icc.read_bytes()) != meta["md5"]:
+                continue                                   # changed since freeglaz wrote it
+        except OSError:
+            continue
+        build = meta.get("build") if isinstance(meta.get("build"), dict) else {}
+        out.append({"id": f"path:{icc}", "kind": "freeglaz", "path": str(icc), "ge": ge,
+                    "name": meta.get("label") or icc.stem, "chart_id": meta.get("chart_id"),
+                    "build_id": meta.get("build_id"),
+                    "built_at": build.get("created_at") or meta.get("created_at")})
+    out.sort(key=lambda x: x.get("built_at") or "", reverse=True)
+    return out
+
+
 @router.get("/precondition-profiles")
 def get_precondition_profiles(
     request: Request,
@@ -242,6 +277,8 @@ def get_precondition_profiles(
             pass                                          # this GE does not exist on this slot
         finally:
             tp.unlink(missing_ok=True)
+
+    items += _freeglaz_precondition_profiles(paper, print_ge)
 
     pr = _cache.repo_printers_dir()
     if pr.exists():

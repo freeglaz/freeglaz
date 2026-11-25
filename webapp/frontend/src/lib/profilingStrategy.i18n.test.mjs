@@ -98,5 +98,13 @@ assert(wizard.includes("else body.targen_flags = `-d2 ${flags}`.trim();"), 'the 
 assert(wizard.includes('confirm_condition_warnings: confirmWarnings') && wizard.includes("pc?.kind === 'confirm'"),
   'print warnings of a later pass need an explicit confirmation');
 
+console.log('5. general -c menu: profiles built by freeglaz');
+const chartsRoute = charts.slice(charts.indexOf('def _freeglaz_precondition_profiles'), charts.indexOf('@router.get("/precondition-profiles")'));
+assert(chartsRoute.includes('"kind": "freeglaz"') && wizard.includes("p.kind === 'freeglaz'"), 'the kind the server returns is the one the wizard lists');
+assert(wizard.includes("if (cChoice === 'freeglaz') return cFreeglaz || 'none';"), 'choosing one sends its path:… id as -c');
+for (const k of ['start_built', 'start_built_desc']) {
+  assert(has(fr, `chart_create.${k}`) && has(en, `chart_create.${k}`), `chart_create.${k} translated`);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

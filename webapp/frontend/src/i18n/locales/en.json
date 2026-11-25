@@ -1487,6 +1487,8 @@
     "precond_with": "Preconditioned with: {{name}}",
     "start_zero": "Start from scratch",
     "start_zero_desc": "Standard chart, no pre-conditioning.",
+    "start_built": "Start from a profile built by freeglaz",
+    "start_built_desc": "A profile built here for this paper and this Gloss Enhancer, used only to spread the patches: it does not need to be installed.",
     "start_custom": "Start from another profile",
     "start_custom_desc": "Use a custom profile as pre-conditioning.",
     "later": "Later",

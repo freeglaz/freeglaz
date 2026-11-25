@@ -150,6 +150,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
   // passe-2 refinement (and sees which profile is used, below).
   const [cChoice, setCChoice] = useState('zero');           // zero | affiner | custom
   const [cCustom, setCCustom] = useState('');               // id path:… if custom
+  const [cFreeglaz, setCFreeglaz] = useState('');           // id path:… of a profile built by freeglaz
   const [presets, setPresets] = useState([]);
   const [presetKey, setPresetKey] = useState('');
   const [help, setHelp] = useState(null);
@@ -368,6 +369,8 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
         setCChoice(hasResident ? 'affiner' : 'zero');
         const firstCustom = list.find((p) => p.kind === 'custom');
         setCCustom(firstCustom ? firstCustom.id : '');
+        const firstBuilt = list.find((p) => p.kind === 'freeglaz');   // most recent first (server)
+        setCFreeglaz(firstBuilt ? firstBuilt.id : '');
       })
       .catch(() => setPreconds([]));
   }, [open, mode, mediaid, geStr]);
@@ -479,10 +482,12 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
         : { state: 'loading', data: estimateRes?.data || null };
   const residentCurrent = preconds.find((p) => p.id === `resident:${geStr}`);
   const customs = preconds.filter((p) => p.kind === 'custom');
+  const builtProfiles = preconds.filter((p) => p.kind === 'freeglaz');   // built by freeglaz, same paper + GE
 
   function resolveCProfile() {
     if (cChoice === 'zero') return 'none';
     if (cChoice === 'custom') return cCustom || 'none';
+    if (cChoice === 'freeglaz') return cFreeglaz || 'none';
     return residentCurrent ? residentCurrent.id : 'none';   // affiner
   }
 
@@ -913,6 +918,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
               showHelp={showHelp} help={help} geStr={geStr}
               cChoice={cChoice} setCChoice={setCChoice} cCustom={cCustom} setCCustom={setCCustom}
               residentCurrent={residentCurrent} customs={customs} dev={DEV}
+              builtProfiles={builtProfiles} cFreeglaz={cFreeglaz} setCFreeglaz={setCFreeglaz}
               validate={isValidate}
               method={method} availability={availability} onMethod={setMethodChoice}
               ptOptions={ptOptions} instrument={instrument} onInstrument={setInstrumentChoice}
@@ -1444,6 +1450,7 @@ function ComposeView({
   method, availability, onMethod, ptOptions, instrument, onInstrument, extFormats = [], mediaCheck,
   extKey = null, layoutOpts = null, layout = null, onLayoutChoice = () => {}, estimate = null,
   strategyNode = null, twoPassNode = null, methodLocked = false,
+  builtProfiles = [], cFreeglaz = '', setCFreeglaz = () => {},
 }) {
   const external = method === METHOD_EXTERNAL;
   return (
@@ -1543,6 +1550,19 @@ function ComposeView({
                 )}
                 <CRadio label={t('chart_create.start_zero')} desc={t('chart_create.start_zero_desc')}
                         checked={cChoice === 'zero'} onClick={() => setCChoice('zero')}/>
+                {builtProfiles.length > 0 && (
+                  <div data-precond-built={builtProfiles.length}>
+                    <CRadio label={t('chart_create.start_built')} desc={t('chart_create.start_built_desc')}
+                            checked={cChoice === 'freeglaz'} onClick={() => setCChoice('freeglaz')}/>
+                    {cChoice === 'freeglaz' && (
+                      <div className="pl-6 pt-1">
+                        <NSelect value={cFreeglaz} onChange={setCFreeglaz}
+                                 options={builtProfiles.map((p) => ({ value: p.id,
+                                   label: [p.name, p.chart_id, (p.built_at || '').slice(0, 10)].filter(Boolean).join(' · ') }))}/>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {customs.length > 0 && (
                   <div>
                     <CRadio label={t('chart_create.start_custom')} desc={t('chart_create.start_custom_desc')}
@@ -1557,7 +1577,7 @@ function ComposeView({
                 )}
               </div>
               {dev && residentCurrent && (
-                <p className="text-tiny text-text-faint font-mono">-c → {cChoice === 'affiner' ? residentCurrent.id : cChoice === 'custom' ? cCustom : 'none'}</p>
+                <p className="text-tiny text-text-faint font-mono">-c → {cChoice === 'affiner' ? residentCurrent.id : cChoice === 'custom' ? cCustom : cChoice === 'freeglaz' ? cFreeglaz : 'none'}</p>
               )}
             </div>
             )}

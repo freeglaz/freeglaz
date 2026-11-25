@@ -65,17 +65,9 @@ jobs:
   # AFTER the Release exists (needs: release), then uploads the .dmg to it.
   # Unsigned + ad-hoc signed (no Apple Developer account, no secrets); the user
   # clears the quarantine flag once (see Docs/INSTALL_app_macos.md).
-  #
-  # Not for a release candidate (v0.1.17-rc.2 and later): its .dmg ships the
-  # ArgyllCMS tools and the chartread-fgK engine, whose sha256 is pinned in
-  # TRUSTED_BUILDS for one toolchain. A runner image builds other bytes (a
-  # development engine), so that .dmg is built with the pinned toolchain
-  # (FREEGLAZ_BUNDLE_ARGYLL / FREEGLAZ_BUNDLE_FGK, packaging/macos/README.md),
-  # checked, and attached to the pre-release by the maintainer.
   macos-app:
     name: macOS .app (arm64)
     needs: release
-    if: ${{ !contains(github.ref_name, '-rc.') }}
     runs-on: macos-latest   # Apple Silicon (arm64)
     steps:
       - uses: actions/checkout@v5

@@ -387,8 +387,8 @@ jobs:
           W="$RUNNER_TEMP/w"; mkdir -p "$W/out" "$W/logs"; echo "W=$W" >> "$GITHUB_ENV"
           mkdir -p -m 700 /run/user/0 && echo "XDG_RUNTIME_DIR=/run/user/0" >> "$GITHUB_ENV"
           flatpak --version; flatpak-builder --version
-          flatpak update -y --noninteractive --system --commit="$FLATPAK_SDK_COMMIT" org.gnome.Sdk//50
-          flatpak update -y --noninteractive --system --commit="$FLATPAK_PLATFORM_COMMIT" org.gnome.Platform//50
+          flatpak update -y --noninteractive --system --no-related --no-deps --commit="$FLATPAK_SDK_COMMIT" org.gnome.Sdk//50
+          flatpak update -y --noninteractive --system --no-related --no-deps --commit="$FLATPAK_PLATFORM_COMMIT" org.gnome.Platform//50
           test "$(flatpak info --system -c org.gnome.Sdk//50)" = "$FLATPAK_SDK_COMMIT"
           test "$(flatpak info --system -c org.gnome.Platform//50)" = "$FLATPAK_PLATFORM_COMMIT"
 

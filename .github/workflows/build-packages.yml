@@ -390,7 +390,9 @@ jobs:
 
       - name: GNOME 50 SDK and Platform at the pinned commits
         run: |
-          W="$RUNNER_TEMP/w"; mkdir -p "$W/out" "$W/logs"; echo "W=$W" >> "$GITHUB_ENV"
+          # In a container job, the runner.temp context is the HOST path: the files the
+          # artifacts need live in the workspace (_w), uploaded by relative paths.
+          W="$GITHUB_WORKSPACE/_w"; mkdir -p "$W/out" "$W/logs"; echo "W=$W" >> "$GITHUB_ENV"
           mkdir -p -m 700 /run/user/0 && echo "XDG_RUNTIME_DIR=/run/user/0" >> "$GITHUB_ENV"
           # ostree cannot hard-link inside the image's overlay ("Invalid cross-device
           # link", seen on one runner of two): the system installation is copied to the
@@ -506,23 +508,23 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: flatpak-${{ matrix.build }}
-          path: ${{ runner.temp }}/w/out/*.flatpak
+          path: _w/out/*.flatpak
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: report-flatpak-${{ matrix.build }}
           path: |
-            ${{ runner.temp }}/w/out/report.json
-            ${{ runner.temp }}/w/out/app_check.json
-            ${{ runner.temp }}/w/out/inside_checks.json
+            _w/out/report.json
+            _w/out/app_check.json
+            _w/out/inside_checks.json
           if-no-files-found: error
           retention-days: 30
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ always() }}
         with:
           name: logs-flatpak-${{ matrix.build }}
-          path: ${{ runner.temp }}/w/logs/
+          path: _w/logs/
           if-no-files-found: ignore
           retention-days: 14
 

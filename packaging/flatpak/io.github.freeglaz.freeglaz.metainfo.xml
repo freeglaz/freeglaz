@@ -82,9 +82,12 @@
           preconditioned by it) is offered. All of this is experimental.
         </p>
         <p>
-          The handheld measurement engine is shipped only in the macOS app for
-          now: in this package the measurement wizard reports it as missing.
-          It also includes the Z9 Pro roll placement fix of 0.1.17-rc.1.
+          The measurement engine, chartread-fgK (the ArgyllCMS 3.5.0 chartread
+          with a checkpoint after each strip), is built from source into this
+          package. To reach the instrument, freeglaz now asks for USB devices
+          only; it needs Flatpak 1.15.11 or later, and udev rules giving the
+          user access to the instrument. It also includes the Z9 Pro roll
+          placement fix of 0.1.17-rc.1.
         </p>
       </description>
     </release>

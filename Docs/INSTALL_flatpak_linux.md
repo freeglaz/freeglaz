@@ -50,11 +50,38 @@ it) and can be added later in Settings → Printers.
 
 To explore without a printer, use **"Try a demo"** on that screen.
 
+### Measuring with a handheld spectrophotometer (experimental)
+
+From **0.1.17-rc.2**, the Flatpak also ships **chartread-fgK**, the ArgyllCMS
+3.5.0 `chartread` with a checkpoint after each strip, built from source (its
+source is in `/app/chartread-fgK/source/`). freeglaz uses only this copy, never
+another `chartread`, and publishes measurements only when it is the copy shipped
+in the package.
+
+The app asks for access to **USB devices only** (`--device=usb`). That needs:
+
+- **Flatpak 1.15.11 or later** (`flatpak --version`). Older versions have not
+  been tested: they may not give the instrument to the app.
+- **udev rules** on your system that let your user open the instrument. Fedora
+  already covers some instruments (the ColorMunki), not the i1Pro 3. ArgyllCMS's
+  rules cover both; the Flatpak ships them. To install them, once:
+
+  ```bash
+  flatpak run --command=cat io.github.freeglaz.freeglaz /app/argyll/usb/55-Argyll.rules \
+      | sudo tee /etc/udev/rules.d/55-Argyll.rules > /dev/null
+  sudo udevadm control --reload-rules
+  ```
+
+  then unplug and plug the instrument back in.
+
+Only one program can use the instrument at a time: close other colour software
+while freeglaz measures.
+
 ## 5. Data locations
 
 | Path | Contents |
 |---|---|
-| `~/Documents/freeglaz/` | printers, color profiles, backups, sessions |
+| `~/Documents/freeglaz/` | printers, color profiles, backups, sessions, charts and their measurements |
 | `~/.var/app/io.github.freeglaz.freeglaz/` | the app's private state (logs, settings) |
 
 ## 6. Update
@@ -76,6 +103,22 @@ flatpak uninstall --user io.github.freeglaz.freeglaz
   a separate system dependency) — nothing to install for the profiling path.
 - The bundle install needs **Flathub configured** (§1) so the GNOME runtime can be
   fetched. On Flathub proper (coming), that is automatic.
+- **Checking a download**: each release lists the sha256 of its files in
+  `SHA256SUMS` (`sha256sum -c SHA256SUMS --ignore-missing`).
+
+## Sending diagnostics
+
+freeglaz never sends anything by itself. To report a problem, attach what is
+useful, after reading it:
+
+- the app log: `~/.var/app/io.github.freeglaz.freeglaz/data/freeglaz/freeglaz.log`
+  (and `freeglaz.log.1`… if present);
+- for a measurement: the session folder
+  `~/Documents/freeglaz/charts/<printer>/<chart>/external/<session>/`, its
+  `session.json` and `logs/`.
+
+These files can contain the printer's address and serial number, paper and file
+names, and the measured values. Remove what you do not want to share.
 
 ## Coming: Flathub
 

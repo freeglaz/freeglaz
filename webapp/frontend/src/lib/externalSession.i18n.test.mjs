@@ -106,5 +106,17 @@ assert(/if \(startingRef\.current\) return null;/.test(hook), 'a second start wh
 assert(/poll = useCallback[\s\S]{0,120}reader\(\)\.shared\(\)[\s\S]{0,40}catch \{\s*return null;/.test(hook),
        'a failed presence check is not shown as a refused action');
 
+console.log('Test 6 — a new measurement after a published one');
+const svc = read(join(repo, 'webapp/backend/services/external_measure.py'));
+assert(/state = last\[-1\]\.data\["status"\] if last else "none"\s*return state, \["create"\]/.test(svc),
+       'backend: a chart whose last session is published allows "create"');
+assert(/const step = again \? 'prepare' : stepOf\(snap\);/.test(wiz), 'wizard: a new measurement shows the prepare step');
+assert(/if \(open && snap\?\.state === 'published'\) setAgainSeq\(snap\.state_seq\);/.test(wiz),
+       'opening the window on a published chart prepares a new session (the panel says "New measurement")');
+assert(/snap\?\.state === 'published' && allowed\(snap, 'create'\)[\s\S]{0,80}act\('again'/.test(wiz),
+       'right after publishing, the window offers "New measurement"');
+assert(both('external_measure.publish.measure_again') && both('external_measure.prepare.again_title') && both('external_measure.prepare.again'),
+       'its texts exist in fr and en');
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

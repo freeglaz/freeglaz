@@ -36,6 +36,19 @@ export default function ExternalMeasureWizard({ open, onClose, chartId, session 
   const [correctPick, setCorrectPick] = useState('');
   // Last answer of the presence watch ({ok}); null while the first one is awaited ("checking").
   const [check, setCheck] = useState(null);
+  // "New measurement" of a chart whose last session is published: the wizard shows the prepare
+  // step of a NEW session (the backend allows "create" then), not the publish step of the old
+  // one. Opening the window on a published chart means exactly that (the panel's button says
+  // "New measurement"); right after publishing, the window shows the result and offers it.
+  // Tied to the state_seq it was asked in: once the new session exists, or another publication
+  // happened, the backend's state decides again.
+  const [againSeq, setAgainSeq] = useState(null);
+  const [wasOpen, setWasOpen] = useState(false);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open && snap?.state === 'published') setAgainSeq(snap.state_seq);
+  }
+  const again = againSeq != null && snap?.state === 'published' && snap.state_seq === againSeq;
   const watching = open && watchesPresence(snap);
   const { poll } = session;
   useEffect(() => {
@@ -57,7 +70,7 @@ export default function ExternalMeasureWizard({ open, onClose, chartId, session 
   const setConfirm = (what) => setPending(what == null ? null : { what, seq: snap?.state_seq });
 
   if (!open) return null;
-  const step = stepOf(snap);
+  const step = again ? 'prepare' : stepOf(snap);
   const steps = STEPS.map((id) => ({ id, label: t(`external_measure.steps.${id}`) }));
   const ctx = snap?.context || {};
   const instrument = instrumentLabel(t, ctx.model);
@@ -82,6 +95,9 @@ export default function ExternalMeasureWizard({ open, onClose, chartId, session 
     if (allowed(snap, 'pause')) act('pause', t('external_measure.read.pause'), () => session.command('pause'), 'secondary', Pause);
     if (allowed(snap, 'start')) act('start', t('external_measure.read.resume'), session.start, can('start') && !block ? 'primary' : 'disabled', Play, blockText);
   } else if (step === 'publish') {
+    if (snap?.state === 'published' && allowed(snap, 'create')) {
+      act('again', t('external_measure.publish.measure_again'), () => setAgainSeq(snap.state_seq), 'primary', Play);
+    }
     if (allowed(snap, 'abandon')) act('abandon', t('external_measure.read.abandon'), () => setConfirm('abandon'), 'danger-ghost');
     if (allowed(snap, 'finalize')) {
       const ok = publishChecks(snap).every((c) => c.ok);
@@ -128,7 +144,8 @@ export default function ExternalMeasureWizard({ open, onClose, chartId, session 
           {block && block !== 'checking' && (step === 'prepare' || step === 'read') && (
             <Notice kind="warn"><span data-start-block={block}>{blockText}</span></Notice>
           )}
-          {step === 'prepare' && <PrepareStep t={t} snap={snap} instrument={instrument} presence={presence} filter={filter} setFilter={setFilter}/>}
+          {step === 'prepare' && <PrepareStep t={t} snap={snap} instrument={instrument} presence={presence} filter={filter} setFilter={setFilter}
+                                              previous={again ? snap?.last_session?.published : null}/>}
           {step === 'calibrate' && <CalibrateStep t={t} snap={snap} instrument={instrument}/>}
           {step === 'read' && (
             <ReadStep t={t} snap={snap} session={session} can={can} confirm={confirm} setConfirm={setConfirm}
@@ -230,14 +247,19 @@ function PresenceRow({ t, instrument, presence }) {
   );
 }
 
-function PrepareStep({ t, snap, instrument, presence, filter, setFilter }) {
+function PrepareStep({ t, snap, instrument, presence, filter, setFilter, previous = null }) {
   const ctx = snap?.context || {};
   const p = progress(snap);
   const eng = ctx.engine || {};
   const choices = conditionChoices(snap);
   const sessionCondition = snap?.session?.condition;
   return (
-    <div className="space-y-3" data-step="prepare">
+    <div className="space-y-3" data-step="prepare" data-again={previous ? '1' : undefined}>
+      {previous && (
+        <Notice kind="info" title={t('external_measure.prepare.again_title')}>
+          {t('external_measure.prepare.again', { stem: previous.stem })}
+        </Notice>
+      )}
       <Row label={t('external_measure.prepare.chart')}>
         {t('external_measure.prepare.patches', { count: p.patchesTotal, strips: p.passesTotal })}
       </Row>

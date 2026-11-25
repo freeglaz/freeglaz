@@ -2145,7 +2145,9 @@
       "condition_hint": "To be chosen explicitly: it is part of the measurement identity, and two conditions are never mixed.",
       "create": "Prepare the session",
       "start": "Start the measurement",
-      "how": "Strips are read one by one with the {{instrument}}'s button: freeglaz never starts a reading. Each strip is saved as soon as it is read; an interrupted session resumes where it stopped."
+      "how": "Strips are read one by one with the {{instrument}}'s button: freeglaz never starts a reading. Each strip is saved as soon as it is read; an interrupted session resumes where it stopped.",
+      "again_title": "New measurement of this chart",
+      "again": "The previous measurement ({{stem}}) is published and stays with the chart. A new session starts from the first strip; once published, it is added to the chart's measurements."
     },
     "presence": {
       "present": "{{instrument}} detected",
@@ -2380,7 +2382,8 @@
         "instrument": "Reported instrument: {{value}}",
         "calstd": "Calibration standard: {{value}}",
         "provenance": "Provenance: {{origin}}"
-      }
+      },
+      "measure_again": "New measurement"
     },
     "notice": {
       "stale": "The measurement state had changed: it was reloaded, nothing was sent.",

@@ -2145,7 +2145,9 @@
       "condition_hint": "À choisir explicitement : elle fait partie de l'identité de la mesure, et deux conditions ne se mélangent jamais.",
       "create": "Préparer la séance",
       "start": "Démarrer la mesure",
-      "how": "La lecture se fait rangée par rangée avec le bouton du {{instrument}} : freeglaz ne déclenche jamais une lecture. Chaque rangée est sauvegardée dès qu'elle est lue ; une séance interrompue se reprend où elle s'est arrêtée."
+      "how": "La lecture se fait rangée par rangée avec le bouton du {{instrument}} : freeglaz ne déclenche jamais une lecture. Chaque rangée est sauvegardée dès qu'elle est lue ; une séance interrompue se reprend où elle s'est arrêtée.",
+      "again_title": "Nouvelle mesure de cette charte",
+      "again": "La mesure précédente ({{stem}}) est publiée et reste dans la charte. Une nouvelle séance part de la première rangée ; une fois publiée, elle s'ajoute aux mesures de la charte."
     },
     "presence": {
       "present": "{{instrument}} détecté",
@@ -2380,7 +2382,8 @@
         "instrument": "Instrument signalé : {{value}}",
         "calstd": "Standard de calibration : {{value}}",
         "provenance": "Provenance : {{origin}}"
-      }
+      },
+      "measure_again": "Nouvelle mesure"
     },
     "notice": {
       "stale": "L'état de la mesure avait changé : il a été rechargé, rien n'a été envoyé.",

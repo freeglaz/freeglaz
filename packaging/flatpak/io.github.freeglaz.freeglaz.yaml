@@ -29,6 +29,13 @@ finish-args:
                                # sandbox has no audio device at all.
   - --device=dri               # GPU for WebKitGTK compositing
   - --filesystem=xdg-documents # ~/Documents/freeglaz (user-facing profiles/backups)
+  # Handheld spectrophotometer (chartread-fgK): /dev/bus/usb only, no serial port and
+  # never --device=all. Needs Flatpak >= 1.15.11 on the host, and udev rules giving the
+  # user access to the instrument (ArgyllCMS's, shipped in /app/argyll/usb/).
+  - --device=usb
+  # Per-user instrument lock, shared with a native freeglaz of the same user
+  # (lib/z9_client/chartread_fgk/session.py, user_lock_path reads this grant).
+  - --filesystem=xdg-run/freeglaz:create
   # File open/save go through the portals (file chooser) → no broad fs access.
 
 cleanup:
@@ -43,17 +50,52 @@ modules:
   - python3-deps.yaml
 
   # ArgyllCMS — BUNDLED (prebuilt relocatable Linux binaries; all deps resolve
-  # against the GNOME runtime). The user needs no external install.
+  # against the GNOME runtime). The user needs no external install. Its licence and
+  # udev rules come along; its source is in the chartread-fgK source archive
+  # (ARGYLL_SOURCE.txt).
   - name: argyll
     buildsystem: simple
     build-commands:
       - mkdir -p /app/argyll
       - cp -r bin ref /app/argyll/
+      - install -Dm644 License.txt ARGYLL_SOURCE.txt -t /app/argyll/
+      - install -Dm644 usb/55-Argyll.rules -t /app/argyll/usb/
     sources:
       - type: archive
         url: https://www.argyllcms.com/Argyll_V3.5.0_linux_x86_64_bin.tgz
         sha256: 0d1da052de22396f4141c5ca3ee0c17a434bc142048a327dd86565a9f20d0c13
         strip-components: 1
+      - type: file
+        path: ARGYLL_SOURCE.txt
+
+  # chartread-fgK — the measurement engine: ArgyllCMS 3.5.0 chartread + checkpoint
+  # patch v3.1, USB instruments only, built here from source at a FIXED commit of its
+  # repository (official source zip inside, unmodified). Installed in
+  # /app/chartread-fgK/ (binary, manifest, Corresponding Source), where freeglaz looks
+  # for it. No debug split, no strip: the bytes installed are the bytes hashed. Its
+  # sha256 depends on the SDK's compiler: the release workflow pins the SDK commit and
+  # refuses an engine whose sha256 is not in TRUSTED_BUILDS (engine.py).
+  - name: chartread-fgK
+    buildsystem: simple
+    build-options:
+      no-debuginfo: true
+      strip: false
+    build-commands:
+      - build/build-chartread-fgK.sh --zip upstream/Argyll_V3.5.0_src.zip
+          --patch patches/fg-chartread-checkpoint.v3.1.patch --out _out
+      - install -Dm755 _out/chartread-fgK /app/chartread-fgK/chartread-fgK
+      - python3 tools/make_manifest.py /app/chartread-fgK/chartread-fgK
+          --patch patches/fg-chartread-checkpoint.v3.1.patch --platform linux
+          --arch "$(uname -m | sed s/aarch64/arm64/)" --usb-only
+          --source-zip upstream/Argyll_V3.5.0_src.zip
+          --toolchain "$(cc --version | head -1); $(ld -v | head -1)"
+      # Corresponding Source (AGPL-3.0 section 6), next to the binary
+      - tools/make-source-tarball.sh upstream/Argyll_V3.5.0_src.zip /app/chartread-fgK/source
+      - install -Dm644 README.md NOTICE.md COPYING -t /app/chartread-fgK/source/
+    sources:
+      - type: git
+        url: https://github.com/freeglaz/chartread-fgK.git
+        commit: f5f5ed9d79b08d8c5eee741c1cf32af76a41668e
 
   # freeglaz itself — from the release tarball (the built frontend is inside, so
   # no Node at build time). The launcher points FREEGLAZ_ARGYLL_ROOT at /app/argyll

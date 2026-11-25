@@ -1,0 +1,29 @@
+ArgyllCMS in the freeglaz Flatpak
+=================================
+
+The programs in this folder (bin/), the reference data (ref/) and the udev rules
+(usb/55-Argyll.rules) are copied unmodified from the official ArgyllCMS 3.5.0
+binary archive for Linux on x86_64:
+
+  https://www.argyllcms.com/Argyll_V3.5.0_linux_x86_64_bin.tgz
+  sha256 0d1da052de22396f4141c5ca3ee0c17a434bc142048a327dd86565a9f20d0c13
+
+ArgyllCMS is Copyright Graeme W. Gill and distributed under the GNU Affero
+General Public License version 3 (see License.txt in this folder). The
+programs it is built from (some files are under other licences compatible
+with it) are described in that archive's documentation.
+
+Corresponding source
+--------------------
+The source of these programs is the official ArgyllCMS 3.5.0 source archive:
+
+  https://www.argyllcms.com/Argyll_V3.5.0_src.zip
+  sha256 f8576ce5589fd15620abb73ff049ea31f55ddbd1bba6d1ffa87452658e7bc85f
+
+An unmodified copy of that archive ships in this package, in the
+Corresponding Source archive of the chartread-fgK measurement engine:
+
+  /app/chartread-fgK/source/chartread-fgK-3.5.0-fg3.1-src.tar.gz
+    -> upstream/Argyll_V3.5.0_src.zip
+
+It is also attached to every freeglaz release on GitHub.

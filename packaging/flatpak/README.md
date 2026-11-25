@@ -79,12 +79,33 @@ module cache.
   GNOME runtime; `FREEGLAZ_ARGYLL_ROOT=/app/argyll` (set by the launcher).
 - **Writable data**: the launcher points `FREEGLAZ_DATA_DIR` at the XDG data dir
   (the package dir is read-only); user profiles stay in `~/Documents/freeglaz`.
+- **chartread-fgK** (the measurement engine) is built from source, from its
+  repository at a fixed commit (`commit:` of the `chartread-fgK` module), into
+  `/app/chartread-fgK/` with its Corresponding Source. No debug split, no strip:
+  the bytes installed are the bytes hashed. Its sha256 depends on the SDK's
+  compiler; freeglaz approves it only if it is in `TRUSTED_BUILDS`
+  (`lib/z9_client/chartread_fgk/engine.py`), for the SDK commit the release
+  workflow pins.
+- **Instrument access**: `--device=usb` (Flatpak >= 1.15.11, never
+  `--device=all`) and `--filesystem=xdg-run/freeglaz:create` (the per-user
+  instrument lock shared with a native freeglaz). The host also needs udev rules
+  for the instrument: ArgyllCMS's `55-Argyll.rules` ships in `/app/argyll/usb/`
+  (see `Docs/INSTALL_flatpak_linux.md`).
+- **ArgyllCMS source**: `ARGYLL_SOURCE.txt` and `License.txt` in `/app/argyll/`;
+  the official source zip is inside the chartread-fgK source archive.
 
 ## 4. Bump the packaged release
 
-In the manifest, update the freeglaz `sources` URL + `sha256`
-(`sha256sum freeglaz-<version>.tar.gz`) to the release being packaged, and
+Release bundles are built by GitHub Actions (`.github/workflows/build-packages.yml`),
+from the freeglaz tarball of the same run: the workflow rewrites the freeglaz
+source of the manifest itself, pins the GNOME SDK commit, builds twice and checks
+the engine in the final bundle. For a local build of a published release, update
+the freeglaz `sources` URL + `sha256` (`sha256sum freeglaz-<version>.tar.gz`), and
 regenerate `python3-deps.yaml` (§2) if the lock changed.
+
+A new chartread-fgK commit, or a new SDK commit in the workflow, gives another
+engine sha256: run the qualification (push on `release/**`), then pin the new
+value by a reviewed commit, never automatically.
 
 ## 5. Validate metadata (before Flathub)
 

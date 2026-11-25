@@ -56,8 +56,11 @@ BUILD_ROOT="${TMPDIR:-/tmp}/freeglaz-pkg"
 APP="$BUILD_ROOT/dist/freeglaz.app"
 echo "==> Building freeglaz.app with PyInstaller (in $BUILD_ROOT)…"
 rm -rf "$BUILD_ROOT"
-# --with pyinstaller keeps it out of the project venv (build-only tool).
-uv run --extra desktop --with pyinstaller \
+# --with keeps PyInstaller out of the project venv (build-only tool). Pinned, as
+# the release workflow records it; FREEGLAZ_PYINSTALLER overrides it.
+PYINSTALLER_REQ="${FREEGLAZ_PYINSTALLER:-pyinstaller==6.22.3}"
+echo "    ($PYINSTALLER_REQ)"
+uv run --extra desktop --with "$PYINSTALLER_REQ" \
   pyinstaller --noconfirm --clean packaging/macos/freeglaz.spec \
     --distpath "$BUILD_ROOT/dist" --workpath "$BUILD_ROOT/build"
 

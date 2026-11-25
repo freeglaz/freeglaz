@@ -6,6 +6,7 @@ unmodified from the official ArgyllCMS 3.5.0 binary archive for macOS on Apple
 Silicon:
 
   https://www.argyllcms.com/Argyll_V3.5.0_macOS11_arm64_bin.tgz
+  sha256 b1f27d638ddca054db3f5ff866410d5b36f179770cee5591f116352b1853d957
 
 They are only re-signed (ad hoc) with the rest of the application bundle.
 ArgyllCMS is Copyright Graeme W. Gill and distributed under the GNU Affero
@@ -25,3 +26,5 @@ Corresponding Source archive of the chartread-fgK measurement engine:
 
   ../chartread-fgK/source/chartread-fgK-3.5.0-fg3.1-src.tar.gz
     -> upstream/Argyll_V3.5.0_src.zip
+
+It is also attached to every freeglaz release on GitHub.

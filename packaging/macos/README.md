@@ -21,6 +21,12 @@ reference ICC assets are bundled.
   only a listed engine shipped in the app is approved for publishing
   measurements.
 
+Release builds come from GitHub Actions (`.github/workflows/build-packages.yml`):
+the official ArgyllCMS archive checked by sha256, chartread-fgK built from its
+repository at a fixed commit with a pinned Xcode, two independent builds, and
+the engine measured again in the final `.dmg`. Building on a personal machine
+gives another engine sha256, which freeglaz does not approve.
+
 Without `FREEGLAZ_BUNDLE_ARGYLL`, ArgyllCMS stays an external system dependency,
 installed separately (`brew install argyll-cms`) and auto-detected at runtime.
 The printing path works without it; only the open profiling path needs it.

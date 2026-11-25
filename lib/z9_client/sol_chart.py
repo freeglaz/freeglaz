@@ -598,6 +598,9 @@ def list_charts(charts_root: str | Path | None = None) -> list[dict]:
             "scanned": scanned,
             "purpose": desc.get("purpose") or "profiling",   # profiling | validation
             "lightened": bool(desc.get("lightened")),        # chart (TIFF) purged, ti3 kept
+            # pass of a profiling strategy (lib.z9_client.profiling_strategies), None otherwise
+            "strategy": ({k: (desc.get("strategy") or {}).get(k) for k in ("id", "pass", "role", "run")}
+                         if desc.get("strategy") else None),
         })
     out.sort(key=lambda c: c.get("created_at") or "", reverse=True)
     return out

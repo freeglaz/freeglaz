@@ -51,6 +51,7 @@ from lib.z9_client import chart_geometry_refonte as G
 from lib.z9_client import measurement_identity as _mi
 from lib.z9_client import printer_model
 from lib.z9_client import printtarg_chart as _ptc
+from lib.z9_client import profiling_strategies as _ps
 from lib.z9_client import sol_chart as _sc
 from lib.z9_client import store as _store
 from lib.z9_client import targen_strategies as _tg
@@ -257,6 +258,17 @@ def get_precondition_profiles(
 
 
 # ─── POST create ─────────────────────────────────────────────────────────────
+class StrategyChartRequest(BaseModel):
+    """A chart made as one pass of a profiling strategy (lib.z9_client.profiling_strategies).
+    The server composes the targen line from the parameters and resolves the -c itself."""
+    id: str
+    pass_id: str
+    params: dict = {}                              # overrides of the definition's parameters
+    run: Optional[str] = None                      # later pass: chart id of the run's first pass
+    precondition_build_id: Optional[str] = None    # later pass: the intermediate version shown
+    targen_flags: Optional[str] = None             # hand-edited line (its -c is refused)
+
+
 class CreateChartBody(BaseModel):
     media_key: str
     # IGNORED (non-fixed model : native density imposed, cols derived). Kept optional
@@ -278,6 +290,7 @@ class CreateChartBody(BaseModel):
     # whitelist (printtarg_chart.check_layout_options). None = the default (1.0, off).
     patch_scale: Optional[float] = None
     high_density: Optional[bool] = None
+    strategy: Optional[StrategyChartRequest] = None    # None = the one-pass wizard (unchanged)
 
 
 class PrinttargEstimateBody(BaseModel):
@@ -315,6 +328,182 @@ def _resolve_precond(z9, c_profile, paper_mediaid, print_ge, workdir, warnings):
             raise HTTPException(404, detail=f"-c profile not found: {p}")
         return p
     raise HTTPException(422, detail=f"invalid c_profile: {c_profile}")
+
+
+# ─── profiling strategies: a chart = one pass (lib.z9_client.profiling_strategies) ──
+# The run lives in the charts' own chart.json ("strategy" block, run = chart id of the
+# first pass); a later pass carries a copy of the exact intermediate profile it was made
+# from ("precondition" block + precondition.icc). Nothing else is stored.
+def _strategy_refusal(e: _ps.StrategyError, status: int = 422) -> HTTPException:
+    return HTTPException(status, detail=e.to_detail())
+
+
+def _refuse(status: int, code: str, message: str, **info) -> HTTPException:
+    return HTTPException(status, detail={"code": code, "message": message, **info})
+
+
+def _read_chart_json(d: Path) -> dict:
+    import json
+    return json.loads((d / "chart.json").read_text(encoding="utf-8"))
+
+
+def _scan_identity(path: Path):
+    """Measurement identity of a raw scan, None when it cannot be read."""
+    try:
+        return _mi.read_identity(path)
+    except (OSError, ValueError):
+        return None
+
+
+def _measurement_lock(first_dir: Path) -> dict:
+    """How the run's first pass was measured (its included scans): the instrument and the
+    condition later passes inherit. ``consistent`` False when the scans disagree or one is
+    unreadable (nothing is then inherited, and a later pass is refused)."""
+    idents = [_scan_identity(p) for p in _included_ti3_paths(first_dir)]
+    keys = {(i.instrument, i.condition, i.provenance.filter_option) for i in idents if i is not None}
+    if not idents or any(i is None for i in idents) or len(keys) != 1:
+        return {"consistent": False, "instrument": None, "condition": None, "filter_option": None}
+    instrument, condition, filter_option = keys.pop()
+    return {"consistent": True, "instrument": instrument, "condition": condition, "filter_option": filter_option}
+
+
+def _precondition_version(first_id: str, first_dir: Path, build_id: Optional[str]) -> dict:
+    """The intermediate profile a later pass is made from: an intact version of the first
+    chart built with role "preconditioning", the CURRENT one, up to date with the included
+    scans. Named explicitly by the request (the version the user saw), never picked silently."""
+    from lib.z9_client import profile_versions
+    if not build_id:
+        raise _refuse(422, "precondition_build_required", "the intermediate profile version is required",
+                      chart_id=first_id)
+    versions = {v["build_id"]: v for v in profile_versions.list_versions(first_dir)}
+    v = versions.get(build_id)
+    if v is None:
+        raise _refuse(409, "precondition_build_unknown", f"no version {build_id} of the intermediate profile",
+                      chart_id=first_id, build_id=build_id)
+    if not v["intact"]:
+        raise _refuse(409, "precondition_build_altered", f"version {build_id} is altered",
+                      chart_id=first_id, build_id=build_id)
+    m = profile_versions.read_version_manifest(first_dir, build_id)
+    if ((m.get("request") or {}).get("strategy") or {}).get("role") != _ps.ROLE_PRECONDITIONING:
+        raise _refuse(409, "precondition_not_intermediate", f"version {build_id} is not an intermediate profile",
+                      chart_id=first_id, build_id=build_id)
+    status = _profile_status(first_id, first_dir)
+    if status.get("build_id") != build_id:
+        raise _refuse(409, "precondition_not_current", "this is not the current intermediate profile of the first pass",
+                      chart_id=first_id, build_id=build_id, current_build_id=status.get("build_id"))
+    if status.get("state") in ("stale", "missing_input"):
+        raise _refuse(409, "precondition_stale", "the intermediate profile no longer matches the included "
+                      "measurements of the first pass: build it again", chart_id=first_id, build_id=build_id,
+                      state=status.get("state"))
+    return {"build_id": build_id, "icc_sha256": v["icc_sha256"], "created_at": v.get("created_at"),
+            "icc": profile_versions.builds_dir(first_dir) / build_id / profile_versions.VERSION_ICC,
+            "colprof_flags": (m.get("plan") or {}).get("colprof_flags"), "profile_state": status.get("state")}
+
+
+def _merge_params(base: dict, overrides: dict) -> dict:
+    import copy
+    out = copy.deepcopy(base or {})
+    for pid, sections in (overrides or {}).items():
+        if not isinstance(sections, dict):
+            out[pid] = sections                          # refused by normalize_params
+            continue
+        for sec, values in sections.items():
+            if isinstance(values, dict):
+                out.setdefault(pid, {}).setdefault(sec, {}).update(values)
+            else:
+                out.setdefault(pid, {})[sec] = values
+    return out
+
+
+def _strategy_context(body: "CreateChartBody") -> SimpleNamespace:
+    """Checks a strategy chart request BEFORE targen, the printer or any file: the pass, its
+    parameters (frozen in the first pass, changeable for the later ones), the composed (or
+    hand-edited) targen line, and for a later pass the run's locked conditions and its
+    intermediate profile. The geometry of the chart (format, density, patch size) is free."""
+    sr = body.strategy
+    try:
+        sdef = _ps.get_strategy(sr.id)
+        pdef = sdef.get_pass(sr.pass_id)
+    except _ps.StrategyError as e:
+        raise _strategy_refusal(e)
+    if body.purpose != "profiling":
+        raise _refuse(422, "strategy_not_for_validation", "a validation chart is never a strategy pass (independence)")
+    if pdef.generator is None:
+        raise _refuse(422, "strategy_pass_not_supported", f"pass {pdef.id}: predefined charts are not shipped yet")
+    if body.ti1_text:
+        raise _refuse(422, "strategy_composes_the_chart", "a strategy pass is generated by targen from its parameters")
+    if body.c_profile not in (None, "", "none"):
+        raise _refuse(422, "precondition_is_the_strategy", "a strategy pass gets its -c from the strategy")
+    first = sdef.first_pass
+    run, first_dir, fdesc, precond, lock = None, None, None, None, None
+    if pdef.id == first.id:
+        if sr.run or sr.precondition_build_id:
+            raise _refuse(422, "strategy_run_not_expected", "the first pass starts a run")
+        try:
+            params = _ps.normalize_params(sdef, sr.params)
+        except _ps.StrategyError as e:
+            raise _strategy_refusal(e)
+    else:
+        if not sr.run:
+            raise _refuse(422, "strategy_run_required", f"pass {pdef.id} continues a run: give its first chart")
+        run = sr.run
+        first_dir = _chart_dir(run)
+        fdesc = _read_chart_json(first_dir)
+        fst = fdesc.get("strategy") or {}
+        if fst.get("id") != sdef.id or fst.get("pass") != first.id:
+            raise _refuse(409, "strategy_run_mismatch", f"{run} is not the first pass of a {sdef.id} run", run=run)
+        earlier = [p.id for p in sdef.passes[:sdef.pass_index(pdef.id)]]
+        if any(pid in (sr.params or {}) for pid in earlier):
+            raise _refuse(422, "earlier_pass_frozen", "the parameters of an earlier pass are history: not changeable",
+                          passes=earlier)
+        try:
+            params = _ps.normalize_params(sdef, _merge_params(fst.get("params") or {}, sr.params))
+        except _ps.StrategyError as e:
+            raise _strategy_refusal(e)
+        fpaper = fdesc.get("paper") or {}
+        if body.paper_mediaid != fpaper.get("media_id") or _norm_ge(body.gloss_enhancer) != _norm_ge(fpaper.get("gloss_enhancer")):
+            raise _refuse(409, "strategy_conditions_changed", "the paper and the gloss enhancer of the run are fixed",
+                          expected={"paper_media_id": fpaper.get("media_id"),
+                                    "gloss_enhancer": _norm_ge(fpaper.get("gloss_enhancer"))},
+                          requested={"paper_media_id": body.paper_mediaid, "gloss_enhancer": _norm_ge(body.gloss_enhancer)})
+        f_layout, f_inst = _mi.chart_layout(fdesc), (fdesc.get("instrument") or {}).get("key")
+        if body.layout != f_layout or (body.instrument or None) != (f_inst or None):
+            raise _refuse(409, "strategy_instrument_locked", "the measurement instrument of the run is inherited",
+                          expected={"layout": f_layout, "instrument": f_inst},
+                          requested={"layout": body.layout, "instrument": body.instrument})
+        precond = _precondition_version(run, first_dir, sr.precondition_build_id)
+        lock = _measurement_lock(first_dir)
+        if not lock["consistent"]:
+            raise _refuse(409, "strategy_measurement_unknown", "the included scans of the first pass do not tell "
+                          "one instrument and condition: nothing to inherit", run=run)
+    if sr.targen_flags:
+        try:
+            _ps.check_free_targen_line(sr.targen_flags)
+        except _ps.StrategyError as e:
+            raise _strategy_refusal(e)
+        if _tg.extract_f_count(sr.targen_flags) is None:
+            raise _refuse(422, "strategy_line_needs_count", "a hand-edited targen line needs its -f count")
+        flags, free = sr.targen_flags, True
+    else:
+        flags, free = _ps.compose_targen(params[pdef.id]), False
+    return SimpleNamespace(sdef=sdef, pdef=pdef, params=params, flags=flags, free=free, run=run,
+                           first_dir=first_dir, first_desc=fdesc, precond=precond, lock=lock,
+                           composed=_ps.compose(sdef, pdef.id, params))
+
+
+def _strategy_block(strat: SimpleNamespace, chart_id: str, body: "CreateChartBody", tag_sha: Optional[str]) -> dict:
+    return {
+        "id": strat.sdef.id, "version": strat.sdef.version, "validated": strat.sdef.validated,
+        "pass": strat.pdef.id, "role": strat.pdef.role, "run": strat.run or chart_id,
+        "params": strat.params,
+        "lines": {"targen_flags": strat.flags, "free_line": strat.free,
+                  "colprof_flags": strat.composed["colprof_flags"]},
+        # what every later pass must share (checked again when it is printed)
+        "inherited": {"paper_media_id": body.paper_mediaid, "gloss_enhancer": _norm_ge(body.gloss_enhancer),
+                      "layout": body.layout, "instrument": body.instrument,
+                      "measurement": strat.lock},
+        "resident_tag_sha256": tag_sha,
+    }
 
 
 # printtarg error codes caused by the request (the .ti1, the page) vs by the install
@@ -357,7 +546,7 @@ def create_chart(request: Request, body: CreateChartBody,
         raise HTTPException(422, detail=f"unknown media: {body.media_key}")
     if body.gloss_enhancer not in _GE_VALUES:
         raise HTTPException(422, detail=f"gloss_enhancer must be {_GE_VALUES}")
-    if not body.targen_flags and not body.ti1_text:
+    if not body.targen_flags and not body.ti1_text and not body.strategy:
         raise HTTPException(422, detail="Provide 'targen_flags' OR 'ti1_text'.")
     if body.purpose not in ("profiling", "validation"):
         raise HTTPException(422, detail="purpose must be 'profiling' or 'validation'")
@@ -379,9 +568,16 @@ def create_chart(request: Request, body: CreateChartBody,
     elif body.patch_scale is not None or body.high_density is not None:
         raise HTTPException(422, detail="patch_scale and high_density apply to the printtarg layout only")
 
+    # A strategy pass: checked before any work; the line is the strategy's, the -c the server's.
+    strat = _strategy_context(body) if body.strategy else None
+    if strat:
+        body = body.model_copy(update={"targen_flags": strat.flags, "c_profile": "none"})
+
     cap = _sc.format_capacity(body.media_key)
     warnings: list[str] = []
+    strategy_notices: list[dict] = []
     targen_run = None                    # {argv, stdout, returncode} of the REAL targen run (#23)
+    tag_sha = None
     workdir = Path(tempfile.mkdtemp(prefix="freeglaz_chart_"))
     try:
         # 1. .ti1 : targen (path a) OR upload (path b)
@@ -405,13 +601,37 @@ def create_chart(request: Request, body: CreateChartBody,
                     warnings.append("purpose=validation: -c preconditioning ignored "
                                     "(independence of the validation chart).")
                 cprof = "none"
-            precond = _resolve_precond(z9, cprof, body.paper_mediaid,
-                                       body.gloss_enhancer, workdir, warnings)
-            try:
-                ti1, targen_run = _tg.run_targen(body.targen_flags, workdir / "chart",
-                                                 precond_icc=precond)
-            except (FileNotFoundError, RuntimeError) as e:
-                raise HTTPException(500, detail=f"targen: {e}")
+            if strat and strat.precond:
+                # the exact intermediate version, copied and checked: targen -c only (never a
+                # conversion of the chart values: the TIFF is tagged with the live resident below)
+                precond = workdir / "precondition.icc"
+                shutil.copyfile(strat.precond["icc"], precond)
+                if hashlib_sha256(precond.read_bytes()) != strat.precond["icc_sha256"]:
+                    raise _refuse(409, "precondition_build_altered", "the intermediate profile changed on disk",
+                                  build_id=strat.precond["build_id"])
+            else:
+                precond = _resolve_precond(z9, cprof, body.paper_mediaid,
+                                           body.gloss_enhancer, workdir, warnings)
+            if strat:
+                import subprocess
+                try:
+                    ti1, targen_run = _tg.run_targen(body.targen_flags, workdir / "chart",
+                                                     precond_icc=precond)
+                except FileNotFoundError as e:
+                    raise HTTPException(503, detail={"code": "targen_not_found", "message": str(e)})
+                except (RuntimeError, subprocess.TimeoutExpired) as e:
+                    # never another algorithm silently: the -Q fallback is offered, the user decides
+                    ofps = (strat.params[strat.pdef.id]["chart"] or {}).get("ofps")
+                    raise _refuse(422, "targen_failed", f"targen: {e}", ofps=ofps,
+                                  timeout=isinstance(e, subprocess.TimeoutExpired),
+                                  fallback=("Q" if ofps == "G" and not strat.free else None),
+                                  targen_flags=body.targen_flags)
+            else:
+                try:
+                    ti1, targen_run = _tg.run_targen(body.targen_flags, workdir / "chart",
+                                                     precond_icc=precond)
+                except (FileNotFoundError, RuntimeError) as e:
+                    raise HTTPException(500, detail=f"targen: {e}")
 
         # 2. LIVE resident TAG (export_icc) — never sRGB, never cache
         tag = workdir / "resident_tag.icc"
@@ -421,6 +641,7 @@ def create_chart(request: Request, body: CreateChartBody,
                                 quality="BEST", color_space="RGB")
         except Z9Error as e:
             raise HTTPException(502, detail=f"cannot read live resident (tag): {e}")
+        tag_sha = hashlib_sha256(tag.read_bytes())
 
         # 2b. Printer SERIAL = per-serial HOME of the chart
         #     (charts/<serial>/<chart_id>/) AND storage key of the profile
@@ -464,12 +685,42 @@ def create_chart(request: Request, body: CreateChartBody,
         desc["purpose"] = body.purpose
         if targen_run:
             desc["targen"] = targen_run   # REAL argv + stdout (#23) — audit the flags honored
+        if strat:
+            desc["strategy"] = _strategy_block(strat, res.chart_id, body, tag_sha)
+            if strat.precond:
+                # the chart keeps the exact profile its patches were spread with: reproducible
+                # even if the first chart is deleted, never replaced afterwards
+                copy = Path(res.chart_dir) / "precondition.icc"
+                shutil.copyfile(strat.precond["icc"], copy)
+                if hashlib_sha256(copy.read_bytes()) != strat.precond["icc_sha256"]:
+                    raise ValueError("precondition copy does not match its version")
+                desc["precondition"] = {
+                    "kind": "chart_build", "chart_id": strat.run, "build_id": strat.precond["build_id"],
+                    "icc_sha256": strat.precond["icc_sha256"], "file": copy.name,
+                    "role": _ps.ROLE_PRECONDITIONING, "built_at": strat.precond["created_at"],
+                    "colprof_flags": strat.precond["colprof_flags"], "used_for": "targen -c only"}
+                f_tag = ((strat.first_desc or {}).get("strategy") or {}).get("resident_tag_sha256")
+                if f_tag and tag_sha and f_tag != tag_sha:
+                    strategy_notices.append({"code": "resident_changed_since_first_pass"})
+                    warnings.append("The resident profile of this paper changed since the first pass "
+                                    "(another profile installed on the slot?). The values are still sent "
+                                    "unconverted.")
         dpath.write_text(json.dumps(desc, indent=2, ensure_ascii=False), encoding="utf-8")
     except (OSError, ValueError):
-        pass
+        if strat:                        # a strategy pass without its block would be lost to the run
+            shutil.rmtree(Path(res.chart_dir), ignore_errors=True)
+            raise HTTPException(500, detail={"code": "strategy_record_failed",
+                                             "message": "the chart could not record its strategy: not kept"})
+    strategy_out = None
+    if strat:
+        st = desc["strategy"]
+        strategy_out = {"id": st["id"], "pass": st["pass"], "role": st["role"], "run": st["run"],
+                        "lines": st["lines"], "precondition": desc.get("precondition"),
+                        "notices": strategy_notices,
+                        "targen_argv": (targen_run or {}).get("argv")}
 
     if printtarg:
-        return {
+        out = {
             "chart_id": res.chart_id, "chart_dir": res.chart_dir,
             "n_patches": res.n_patches, "layout": _ptc.LAYOUT, "instrument": body.instrument,
             "roll_layout": res.roll_layout,
@@ -494,14 +745,18 @@ def create_chart(request: Request, body: CreateChartBody,
             "warnings": warnings,
             "generator_warnings": _printtarg_generator_warnings(desc),
         }
-    return {
-        "chart_id": res.chart_id, "chart_dir": res.chart_dir,
-        "n_patches": res.n_patches, "cols": res.cols, "nrows": res.nrows,
-        "purpose": body.purpose,
-        "feasibility": {"ok": res.feasibility.ok, "gap_mm": round(res.feasibility.gap_mm, 2)},
-        "tag": {"icc_name": cm.get("icc_name"), "gloss_enhancer": cm.get("gloss_enhancer")},
-        "warnings": warnings,
-    }
+    else:
+        out = {
+            "chart_id": res.chart_id, "chart_dir": res.chart_dir,
+            "n_patches": res.n_patches, "cols": res.cols, "nrows": res.nrows,
+            "purpose": body.purpose,
+            "feasibility": {"ok": res.feasibility.ok, "gap_mm": round(res.feasibility.gap_mm, 2)},
+            "tag": {"icc_name": cm.get("icc_name"), "gloss_enhancer": cm.get("gloss_enhancer")},
+            "warnings": warnings,
+        }
+    if strategy_out:                     # one-pass responses keep exactly their keys
+        out["strategy"] = strategy_out
+    return out
 
 
 def _printtarg_generator_warnings(desc: dict) -> list:
@@ -675,13 +930,56 @@ def _same_measurement_scans(d: Path, ti3: str, names: list) -> list:
     return out
 
 
-def _build_request_record(body, flags: list, policy: str) -> dict:
-    """The build REQUEST as recorded in the manifest (what a rebuild would replay)."""
-    return {"base": body.profile_base, "extra_chart_ids": list(body.extra_chart_ids),
-            "source_profiles": [sp.path for sp in body.source_profiles],
-            "colprof_flags": body.colprof_flags, "colprof_flags_resolved": list(flags),
-            "name": body.name, "on_conflict": body.on_conflict, "policy": policy,
-            "expected_fingerprint": getattr(body, "expected_fingerprint", None)}
+def _build_request_record(body, flags: list, policy: str, strategy: Optional[dict] = None) -> dict:
+    """The build REQUEST as recorded in the manifest (what a rebuild would replay). ``strategy``
+    (charts of a profiling strategy only): run, pass, role and variant of this build."""
+    rec = {"base": body.profile_base, "extra_chart_ids": list(body.extra_chart_ids),
+           "source_profiles": [sp.path for sp in body.source_profiles],
+           "colprof_flags": body.colprof_flags, "colprof_flags_resolved": list(flags),
+           "name": body.name, "on_conflict": body.on_conflict, "policy": policy,
+           "expected_fingerprint": getattr(body, "expected_fingerprint", None)}
+    if strategy:
+        rec["strategy"] = strategy
+    return rec
+
+
+def _build_strategy_info(chart_id: str, desc: dict, body) -> Optional[dict]:
+    """Role of a build on a strategy chart, decided by the CHART (never by the client): the
+    first pass builds the intermediate profile (preconditioning: never ranged, never
+    installable), the final pass a normal profile. Variant = which passes it is built from
+    (matched against the definition's variants: pass 2 alone, passes 1 + 2, else custom)."""
+    st = desc.get("strategy") or {}
+    if not st.get("id") or not st.get("pass"):
+        return None
+    try:
+        sdef = _ps.get_strategy(st["id"])
+        pdef = sdef.get_pass(st["pass"])
+        role, variants = pdef.role, pdef.variants
+    except _ps.StrategyError:
+        sdef, role, variants = None, st.get("role"), ()
+    info = {"id": st["id"], "run": st.get("run") or chart_id, "pass": st["pass"], "role": role, "variant": None}
+    if role != _ps.ROLE_FINAL:
+        return info
+    sources = {st["pass"]}
+    for xcid in getattr(body, "extra_chart_ids", None) or []:
+        xd = _cache.locate_chart_dir(xcid)
+        try:
+            xst = _read_chart_json(xd).get("strategy") or {} if xd else {}
+        except (OSError, ValueError):
+            xst = {}
+        if xst.get("run") == info["run"] and xst.get("pass"):
+            sources.add(xst["pass"])
+        else:
+            sources.add(f"chart:{xcid}")
+    if getattr(body, "source_profiles", None):
+        sources.add("profiles")
+    info["variant"] = "custom"
+    for v in variants:
+        want = set(v.get("sources") or [st["pass"]])
+        if want == sources:
+            info["variant"] = v.get("id")
+            break
+    return info
 
 
 def _chart_snapshot(chart_id: str, chart_dir: Path, state: dict):
@@ -713,6 +1011,78 @@ class PrintChartBody(BaseModel):
     # offset_x_mm lets a user find the correction empirically without a rebuild.
     offset_x_mm: float = 0.0
     offset_y_mm: float = 0.0
+    # Later pass of a profiling strategy: print anyway despite the WARNINGS of the condition
+    # check (resident or CLC changed since the first pass). Never overrides a blocking change.
+    confirm_condition_warnings: bool = False
+
+
+def _clc_state(z9, media_id: Optional[str]) -> Optional[dict]:
+    """CLC (colour linearization) state of the paper as the Z9 reports it ({status, timestamp}),
+    from the shared LEDM cache; None when it cannot be read. Informative only."""
+    if not media_id:
+        return None
+    try:
+        from webapp.backend.services import ledm_calibration_cache
+        st = (ledm_calibration_cache.get_snapshot(z9) or {}).get(media_id)
+        return dict(st) if isinstance(st, dict) else None
+    except Exception:                                                # noqa: BLE001
+        return None
+
+
+def _print_serial(z9) -> Optional[str]:
+    try:
+        return _store.get_serial(z9)
+    except Exception:                                                # noqa: BLE001
+        return None
+
+
+def _strategy_print_check(desc: dict, pp: dict, confirmed: bool) -> list:
+    """Before a later pass is printed: the conditions of the run's first print must hold.
+    A different paper, gloss enhancer, quality, rendering mode or printer is refused (409,
+    no paper used); a resident profile or CLC changed since is a warning the user confirms.
+    Returns the confirmed warnings (recorded with the print)."""
+    st = desc.get("strategy") or {}
+    inh = st.get("inherited") or {}
+    first_dir = _cache.locate_chart_dir(st.get("run") or "")
+    first = None
+    if first_dir is not None:
+        try:
+            first = _read_chart_json(first_dir)
+        except (OSError, ValueError):
+            first = None
+    blocking, warns = [], []
+    if pp.get("paper_media_id") != inh.get("paper_media_id"):
+        blocking.append({"code": "paper_differs", "expected": inh.get("paper_media_id"),
+                         "actual": pp.get("paper_media_id")})
+    if _norm_ge(pp.get("gloss_enhancer")) != _norm_ge(inh.get("gloss_enhancer")):
+        blocking.append({"code": "gloss_enhancer_differs", "expected": _norm_ge(inh.get("gloss_enhancer")),
+                         "actual": _norm_ge(pp.get("gloss_enhancer"))})
+    fpp = (first or {}).get("print_params")
+    if first is None:
+        warns.append({"code": "first_pass_missing"})
+    elif not fpp:
+        warns.append({"code": "first_pass_print_unknown"})
+    else:
+        for key in ("quality", "rendermode"):
+            if fpp.get(key) != pp.get(key):
+                blocking.append({"code": f"{key}_differs", "expected": fpp.get(key), "actual": pp.get(key)})
+        if fpp.get("printer_serial") and pp.get("printer_serial") and fpp["printer_serial"] != pp["printer_serial"]:
+            blocking.append({"code": "printer_differs", "expected": fpp["printer_serial"],
+                             "actual": pp["printer_serial"]})
+        if fpp.get("resident_icc_sha256") and pp.get("resident_icc_sha256") \
+                and fpp["resident_icc_sha256"] != pp["resident_icc_sha256"]:
+            warns.append({"code": "resident_changed"})
+        fclc, clc = fpp.get("clc") or {}, pp.get("clc") or {}
+        if fclc.get("timestamp") and clc.get("timestamp") and fclc["timestamp"] != clc["timestamp"]:
+            warns.append({"code": "clc_changed", "first": fclc.get("timestamp"), "now": clc.get("timestamp")})
+    if blocking:
+        raise _refuse(409, "strategy_print_conditions_changed",
+                      "the print conditions differ from the run's first pass: not printed",
+                      differences=blocking, warnings=warns)
+    if warns and not confirmed:
+        raise _refuse(409, "strategy_print_warnings", "the print conditions changed since the first pass: "
+                      "confirm to print", warnings=warns)
+    return warns
 
 
 @router.post("/{chart_id}/print")
@@ -800,6 +1170,23 @@ def print_chart(chart_id: str, body: PrintChartBody, request: Request,
     except Z9Error as e:
         raise HTTPException(502, detail=f"cannot read live resident (chart print): {e}")
 
+    # The parameters ACTUALLY used, kept with the chart; a later strategy pass must match the
+    # first one's (checked here, before any paper is used).
+    icc = job.icc_override
+    print_params = {
+        "quality": params.quality, "rendermode": params.rendermode, "gloss_enhancer": gloss,
+        "paper_media_id": loaded.id, "paper_name": loaded.name, "media_source": geometry.media_source,
+        "printer_serial": _print_serial(z9),
+        "resident_icc_sha256": hashlib_sha256(bytes(icc)) if isinstance(icc, (bytes, bytearray)) else None,
+        "clc": _clc_state(z9, loaded.id),
+        "offset_x_mm": body.offset_x_mm, "offset_y_mm": body.offset_y_mm,
+    }
+    st = desc.get("strategy") or {}
+    if st.get("run") and st["run"] != chart_id:
+        confirmed = _strategy_print_check(desc, print_params, body.confirm_condition_warnings)
+        if confirmed:
+            print_params["confirmed_warnings"] = confirmed
+
     try:
         result = PrintOps(z9).send(job)
     except Exception as e:  # noqa: BLE001 (geometry/preflight/send → clear message)
@@ -836,6 +1223,7 @@ def print_chart(chart_id: str, body: PrintChartBody, request: Request,
     # printed_at : the chart enters the library (printed only)
     from datetime import datetime
     desc["printed_at"] = datetime.now().isoformat(timespec="seconds")
+    desc["print_params"] = {**print_params, "printed_at": desc["printed_at"]}
     (d / "chart.json").write_text(json.dumps(desc, indent=2, ensure_ascii=False) + "\n",
                                   encoding="utf-8")
 
@@ -1424,6 +1812,9 @@ def _build_profile_conflict(chart_id: str, body: "ProfileChartBody") -> Optional
         desc = json.loads((_chart_dir(chart_id) / "chart.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+    info = _build_strategy_info(chart_id, desc, body)
+    if info and info["role"] == _ps.ROLE_PRECONDITIONING:
+        return None                                  # an intermediate profile is never ranged
     paper = desc.get("paper") or {}
     serial = _resolve_serial_for_ranging(desc)
     media_id = paper.get("media_id")
@@ -1557,7 +1948,7 @@ def profile_preview(chart_id: str, body: ProfileChartBody) -> dict:
         raise _identity_refusal(e)
     except ValueError as e:
         raise HTTPException(422, detail=str(e))
-    req = _build_request_record(body, ctx.flags, ctx.plan.policy)
+    req = _build_request_record(body, ctx.flags, ctx.plan.policy, ctx.strategy)
     ptr = profile_versions.read_pointer(d) or {}
     cur_req = ptr.get("request")
     plan = ctx.plan.to_dict()
@@ -1605,7 +1996,9 @@ def profile_preview(chart_id: str, body: ProfileChartBody) -> dict:
             "measurement_compatibility": plan.get("measurement_compatibility"),
             # decides how the UI words newly_applied_vs_legacy: a historical notice only when the
             # current build really used the legacy rule, a neutral one without a reliable manifest
-            "current_build_policy": _current_build_policy(chart_id, d, ptr)}
+            "current_build_policy": _current_build_policy(chart_id, d, ptr),
+            # profiling strategy charts: role/variant of this build, and whether -f may be used
+            "strategy": ctx.strategy, "fwa": ctx.fwa}
 
 
 def _profile_status(chart_id: str, d: Path) -> dict:
@@ -1665,7 +2058,7 @@ def _build_summary(chart_dir: Path, v: dict, current_id: Optional[str]) -> dict:
            "icc_sha256": v["icc_sha256"], "manifest_available": v["manifest_sha256"] is not None,
            "provenance": None, "label": None, "base_requested": None, "base_effective": None, "policy": None,
            "n_scans": None, "n_extra_charts": None, "n_source_profiles": None, "n_excluded": None,
-           "n_holes": None, "colprof_flags": None, "references": []}
+           "n_holes": None, "colprof_flags": None, "references": [], "role": None, "strategy_variant": None}
     try:
         m = profile_versions.read_version_manifest(chart_dir, v["build_id"])
     except (OSError, ValueError):
@@ -1676,6 +2069,8 @@ def _build_summary(chart_dir: Path, v: dict, current_id: Optional[str]) -> dict:
     else:
         out["provenance"] = "complete"
     out["label"] = (m.get("result") or {}).get("label") or (m.get("request") or {}).get("name")
+    st = (m.get("request") or {}).get("strategy") or {}
+    out["role"], out["strategy_variant"] = st.get("role"), st.get("variant")
     if plan:
         scans = plan.get("current_scans", []) + plan.get("extra_scans", [])
         out.update({"base_requested": plan.get("base_requested"), "base_effective": plan.get("base_effective"),
@@ -1830,6 +2225,10 @@ def _prepare_build(chart_id: str, body: "ProfileChartBody"):
     # `desc` already refers to the chart.json dict above.)
     label = _cache.slugify(custom_name) if custom_name else _cache.repo_z9_profile_basename(
         paper.get("gloss_enhancer"), paper_name, date_str=date.today().isoformat())
+    strategy = _build_strategy_info(chart_id, desc, body)
+    if strategy and strategy["role"] == _ps.ROLE_PRECONDITIONING:
+        # never ranged, never installed: a plain description says so (ASCII, < 64 chars)
+        custom_name, label = None, f"Intermediate {chart_id} (targen -c only)"
     flags = shlex.split(body.colprof_flags) if body.colprof_flags else _chart_default_colprof_flags()
     # Resolve -s/-S source-gamut ALIASES (e.g. "AdobeRGB") to absolute bundled ICC
     # paths (assets/), exactly like the CLI. Percentage forms (-s 90) are left as-is.
@@ -1871,10 +2270,17 @@ def _prepare_build(chart_id: str, body: "ProfileChartBody"):
     plan = build_inputs.plan_inputs(snap, extra_snaps, build_inputs.BuildRequest(
         base=body.profile_base, source_profiles=tuple(profile_paths), colprof_flags=tuple(flags),
         policy=_build_policy(body)))
+    # FWA compensation on a strategy chart: only on measurements ArgyllCMS can compensate
+    # (spectra, an instrument with a UV lamp, M0); unknown conditions are never presumed fit.
+    fwa = None
+    if strategy:
+        fwa = _ps.fwa_gate([_scan_identity(s.path) for s in plan.scans] + [None] * len(profile_paths))
+        if _ps.flags_request_fwa(flags) and not fwa["allowed"]:
+            raise ValueError(f"FWA compensation (-f) refused for these measurements: {fwa['reason']}")
     return SimpleNamespace(d=d, snap=snap, state=_state_for_build, desc=desc, paper=paper,
                            paper_name=paper_name, custom_name=custom_name, label=label, flags=flags,
                            out_icc=out_icc, serial=serial, media_id=media_id, extra_snaps=extra_snaps,
-                           profile_paths=profile_paths, plan=plan)
+                           profile_paths=profile_paths, plan=plan, strategy=strategy, fwa=fwa)
 
 
 def _qc_findings_cached(plan) -> dict:
@@ -1950,7 +2356,7 @@ def _build_profile_now(chart_id: str, body: ProfileChartBody, set_phase) -> dict
         n_patches = _ti3_n_sets(eff.profile_ti3) or (desc.get("geometry") or {}).get("patch_count")
         icc_size = result.output_icc_size_bytes
         manifest = build_inputs.build_manifest(
-            plan, eff, build_id=build_id, request=_build_request_record(body, flags, plan.policy),
+            plan, eff, build_id=build_id, request=_build_request_record(body, flags, plan.policy, ctx.strategy),
             coverage=coverage,
             snapshot={"included": list(snap.included()),
                       "rejected": {k: list(v) for k, v in snap.rejected.items()}},
@@ -1982,7 +2388,8 @@ def _build_profile_now(chart_id: str, body: ProfileChartBody, set_phase) -> dict
     # Per-paper storage (COPY — the original stays in the chart folder). Best-effort :
     # never breaks profiling if the serial is unknown or the copy fails.
     ranged_path = None
-    if serial and media_id:
+    intermediate = bool(ctx.strategy) and ctx.strategy["role"] == _ps.ROLE_PRECONDITIONING
+    if serial and media_id and not intermediate:     # an intermediate profile is never ranged
         try:
             cm = desc.get("color_management") or {}
             # n_patches = REAL count of the ti3 that fed colprof (computed above, before the
@@ -2026,7 +2433,8 @@ def _build_profile_now(chart_id: str, body: ProfileChartBody, set_phase) -> dict
             "paper_name": paper_name,
             "averaged": averaged,                       # base = average of the stable scans (§4d)
             "n_scans_averaged": len(plan.current) if averaged else None,
-            "installable": ranged_path is not None}     # → installable from Papers/Profiles
+            "installable": ranged_path is not None,     # → installable from Papers/Profiles
+            "strategy": ctx.strategy}                   # role (preconditioning | final) + variant
 
 
 # ─── POST validate — profcheck (b) : forward A2B terminal ────────────────────
@@ -2439,6 +2847,10 @@ def chart_detail(chart_id: str) -> dict:
         "layout": _mi.chart_layout(desc),
         "instrument": (desc.get("instrument") or {}).get("key"),
         "measurement": _mi.expected_measurement(desc),
+        # profiling strategy pass (None for a one-pass chart), the intermediate profile a later
+        # pass was made from, and the print parameters actually used
+        "strategy": desc.get("strategy"), "precondition": desc.get("precondition"),
+        "print_params": desc.get("print_params"),
     }
     # External measurement (chartread-fgK): session and live run, as the snapshot shows them
     external = None

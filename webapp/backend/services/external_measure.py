@@ -118,6 +118,15 @@ def _scrub(value):
 
 
 # ─── providers (replaced by tests) ──────────────────────────────────────────
+def _strategy_filter_lock(desc: dict) -> Optional[str]:
+    """chartread -F option a later pass of a profiling strategy must be read with: the one of
+    its first pass's measurements (chart.json strategy.inherited.measurement). None = free
+    (one-pass chart, first pass, or an instrument without a selectable condition)."""
+    inh = ((desc or {}).get("strategy") or {}).get("inherited") or {}
+    meas = inh.get("measurement") or {}
+    return meas.get("filter_option") if meas.get("consistent") else None
+
+
 def default_engine() -> tuple[EngineSpec, dict]:
     """chartread-fgK as engine.engine_status finds and checks it; never the system chartread."""
     st = fgk.engine_status()
@@ -259,6 +268,10 @@ class ExternalMeasureService:
         m = mi.INSTRUMENT_MODELS.get(model) if model else None
         options = ([{"option": opt, "condition": cond} for opt, cond in mi.CHARTREAD_FILTERS.items()
                     if cond in m.conditions] if m and m.filter_selectable else [])
+        # a later pass of a profiling strategy is read under its first pass's condition
+        locked = _strategy_filter_lock(desc)
+        if locked is not None and options:
+            options = [o for o in options if o["option"] == locked]
         try:
             spec, _ = self.engine_provider()
             engine = {"ok": True, "origin": spec.origin, "publishable": spec.origin == ORIGIN_APPROVED,
@@ -267,6 +280,7 @@ class ExternalMeasureService:
             engine = {"ok": False, "code": e.code}
         geom = desc.get("geometry") or {}
         ctx = {"model": model, "filter_options": options, "filter_required": bool(options),
+               "filter_locked": locked,
                "chart": {"patch_count": geom.get("patch_count"), "n_strips": geom.get("total_strips")},
                "engine": engine, "lock_scope": self.lock_scope()}
         self._ctx_cache[chart_id] = (now, ctx)
@@ -348,7 +362,14 @@ class ExternalMeasureService:
                 except SessionError as e:
                     raise ExternalMeasureError(409, e.code, e.message) from None
                 try:
-                    key = (json.loads((d / "chart.json").read_text()).get("instrument") or {}).get("key")
+                    desc = json.loads((d / "chart.json").read_text())
+                    key = (desc.get("instrument") or {}).get("key")
+                    locked = _strategy_filter_lock(desc)
+                    if locked is not None and filter_option != locked:
+                        raise ExternalMeasureError(
+                            409, "strategy_condition_locked",
+                            "this pass is measured under the condition of the run's first pass",
+                            filter_option=locked)
                     Session.create(d, model=key or "", filter_option=filter_option, engine=spec)
                 except SessionError as e:
                     raise ExternalMeasureError(409, e.code, e.message) from None

@@ -1,0 +1,56 @@
+# ============================================================================
+# freeglaz — built-in profiling strategies
+# ============================================================================
+# A strategy says HOW a printer profile is made, in one or more passes, with the
+# tools freeglaz already has (targen, printtarg or the honeycomb chart, chartread
+# or the built-in scan, colprof). It is not a workflow engine: freeglaz knows how
+# to run one pass, optionally preconditioned by the profile of a previous pass,
+# and nothing more. Loaded by lib/z9_client/profiling_strategies.py, which bounds
+# every value and composes the Argyll lines.
+#
+# Versioned with the code, like colprof_strategies_builtin.toml (never edit a
+# copy in the store). The one-pass wizard is NOT a strategy: it stays the free
+# targen line, the -c menu and the colprof presets.
+#
+# Per pass:
+#   chart        what the chart is made from. A generation preset:
+#                  { generator = "targen", patches = N, ofps = "G" | "Q", … }
+#                or a predefined chart (fixed RGB, targen not called):
+#                  { ti1 = "charts/<name>.ti1" }     (none shipped yet)
+#                The loader refuses a pass that mixes both.
+#   precondition "none", or the id of an earlier pass whose INTERMEDIATE profile
+#                becomes targen's -c (targen only reads its A2B table).
+#   profile      the colprof build of this pass:
+#                  role = "preconditioning"  never ranged, never installable;
+#                                            only feeds targen -c of a later pass
+#                  role = "final"            a normal, installable profile
+#   variants     final pass only: which measurement sets a final profile may be
+#                built from (the default one first).
+#
+# Values are reasoned starting points, not a demonstrated optimum (validated = false).
+# ============================================================================
+
+[strategy.two_pass_adaptive]
+version = 1
+validated = false
+
+[[strategy.two_pass_adaptive.pass]]
+id = "pass1"
+precondition = "none"
+# targen -d2 -G -f 400 : a coarse, evenly spread chart to learn the paper.
+chart = { generator = "targen", patches = 400, ofps = "G", grey_steps = 0 }
+# colprof -qm -r 2.0 -bl : smooth A2B for targen; -bl only saves time (targen
+# reads the A2B table). -r is the assumed average deviation of the readings, in %.
+profile = { role = "preconditioning", quality = "m", smoothing = 2.0, b2a = "l" }
+
+[[strategy.two_pass_adaptive.pass]]
+id = "pass2"
+precondition = "pass1"
+# targen -d2 -G -N 0.75 -f 2000 -c <intermediate profile of pass 1>
+chart = { generator = "targen", patches = 2000, ofps = "G", neutral_emphasis = 0.75, neutral_steps = 0 }
+# colprof -qh -S AdobeRGB -c mt -d pp : -S and the viewing conditions only shape the
+# stored perceptual and saturation B2A tables (other software); freeglaz's Convert
+# uses collink. AdobeRGB is resolved to the bundled ClayRGB (Elle Stone).
+profile = { role = "final", quality = "h", source_gamut = "AdobeRGB", viewcond_in = "mt", viewcond_out = "pp", fwa = false }
+variants = [ { id = "pass2", default = true },
+             { id = "pass1_pass2", sources = ["pass1", "pass2"] } ]

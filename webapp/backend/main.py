@@ -41,6 +41,7 @@ from webapp.backend.routes import logs as logs_routes
 from webapp.backend.routes import papers as papers_routes
 from webapp.backend.routes import printers as printers_routes
 from webapp.backend.routes import printing as printing_routes
+from webapp.backend.routes import profiling_strategies as profiling_strategies_routes
 from webapp.backend.routes import profiles as profiles_routes
 from webapp.backend.routes import argyll as argyll_routes
 from webapp.backend.routes import settings as settings_routes
@@ -276,6 +277,7 @@ app.include_router(settings_routes.router)
 app.include_router(argyll_routes.router)
 app.include_router(gamut_routes.router)
 app.include_router(charts_routes.router)
+app.include_router(profiling_strategies_routes.router)
 app.include_router(convert_routes.router)
 app.include_router(desktop_routes.router)
 app.include_router(external_measure_routes.router)

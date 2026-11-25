@@ -7,7 +7,7 @@
  *
  * Run: node webapp/frontend/src/lib/placement.test.mjs
  */
-import { rollCenterX, isCenteredX, CENTER_TOL_MM } from './placement.js';
+import { rollCenterX, isCenteredX, CENTER_TOL_MM, horizontalLocked, z9proRollImageX } from './placement.js';
 
 let pass = 0, fail = 0;
 function assert(cond, msg) {
@@ -35,6 +35,23 @@ console.log('Test 2 — isCenteredX');
   // Null/undefined center (dims not ready) must never read as "centered".
   assert(isCenteredX(5, null) === false, 'null center → false');
   assert(isCenteredX(undefined, center) === false, 'undefined effX → false');
+}
+
+console.log('Test 3 — Z9 Pro roll: horizontal position fixed, image centred');
+{
+  assert(horizontalLocked('z9pro', true) === true, 'Z9 Pro on a roll → locked');
+  assert(horizontalLocked('z9pro', false) === false, 'Z9 Pro on a sheet → free');
+  assert(horizontalLocked('z9', true) === false, 'Z9 on a roll → free (unchanged)');
+  assert(horizontalLocked(null, true) === false, 'unknown family → free (historical behaviour)');
+  assert(horizontalLocked('designjet', true) === false, 'other DesignJet → free');
+  // Reference case: image 1230 mm on a 1268.8 mm roll → ~19.4 mm each side, like
+  // the backend (19.4025: PAPERWIDTH and LEFTMARGIN rounded to PJL units).
+  const x = z9proRollImageX(1268.8, 1230);
+  assert(Math.abs(x - 19.4025) < 1e-9, `reference case x = ${x.toFixed(4)} (backend: 19.4025)`);
+  assert(Math.abs((1268.8 - 1230 - x) - x) < 0.05, 'same margin on both sides');
+  assert(isCenteredX(x, rollCenterX(1268.8, 1230)), 'reads as centred for the indicator');
+  assert(Math.abs(z9proRollImageX(1240.2, 1230) - 5.1) < 0.04, 'image almost as wide as the roll → ~5 mm');
+  assert(z9proRollImageX(null, 1230) === null && z9proRollImageX(1268.8, undefined) === null, 'missing dims → null');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

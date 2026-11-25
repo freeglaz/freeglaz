@@ -13,6 +13,7 @@
 
 import glob
 import importlib.util
+import re
 import tomllib
 from pathlib import Path
 
@@ -25,6 +26,11 @@ ROOT = Path(SPECPATH).resolve().parents[1]
 # .app's CFBundle version never drifts from the project version on a release.
 with open(ROOT / "pyproject.toml", "rb") as _f:
     VERSION = tomllib.load(_f)["project"]["version"]
+# The CFBundle versions must be period-separated integers: a PEP 440
+# pre-release (0.1.17rc1) keeps only its release part (0.1.17). A final
+# version (0.1.16) is unchanged. The full version stays in the app itself
+# (webapp/backend/version.py → Settings "About") and in the .dmg name.
+BUNDLE_VERSION = re.match(r"\d+(?:\.\d+)*", VERSION).group(0)
 
 # Locate pyvips_binary's SELF-CONTAINED libvips (only /usr/lib + system-
 # framework deps). We bundle this one and load it in ABI mode; see
@@ -144,8 +150,8 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "freeglaz",
         "CFBundleDisplayName": "freeglaz",
-        "CFBundleShortVersionString": VERSION,
-        "CFBundleVersion": VERSION,
+        "CFBundleShortVersionString": BUNDLE_VERSION,
+        "CFBundleVersion": BUNDLE_VERSION,
         "NSHighResolutionCapable": True,
         # Real floor of the bundled wheels (scipy/numpy/pikepdf ship macOS 14
         # binaries). build_app.command fails the build if any Mach-O in the

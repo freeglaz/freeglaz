@@ -69,6 +69,23 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.1.17-rc.1" date="2026-11-23" type="development">
+      <description>
+        <p>
+          Release candidate for the HP DesignJet Z9 Pro, not a final release.
+          On a Z9 Pro roll the image is now centred on the roll: the page sent
+          to the printer is the measured roll width and the image is drawn
+          where the printer actually prints, so it is no longer cut on one
+          side and the Gloss Enhancer covers the image. The horizontal
+          position is fixed on a Z9 Pro roll. The printer commands are
+          unchanged, and printing on the Z9 is unchanged.
+        </p>
+        <p>
+          The top bar and the status bar show the model the printer reports,
+          with a partial-support badge for the Z9 Pro.
+        </p>
+      </description>
+    </release>
     <release version="0.1.16" date="2026-11-22">
       <description>
         <p>

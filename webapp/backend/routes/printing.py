@@ -24,7 +24,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from sse_starlette.sse import EventSourceResponse
 
-from lib.z9_client import Z9Client, Z9Error
+from lib.z9_client import Z9Client, Z9Error, printer_model
 from lib.z9_client.exceptions import Z9ConnectionError
 
 from webapp.backend.models import (
@@ -68,6 +68,7 @@ def _empty_geometry(file_w_mm: float, file_h_mm: float) -> GeometryResult:
         margin_right_mm=0.0, margin_bottom_mm=0.0,
         media_source="MANUAL_FEED",
         centered_x=False, centered_y=False,
+        pjl_left_margin_mm=0.0, pjl_top_margin_mm=0.0,
     )
 
 
@@ -115,11 +116,13 @@ def print_preview(
         other = print_geometry.other_sources_warning(loaded)
         if other:
             warnings.append(other)
+        # Same identification the status bar classifies (device.status()).
+        family = printer_model.classify((dashboard or {}).get("identification"))
         try:
             geometry = print_geometry.compute_geometry(
-                loaded, params, eff_w_mm, eff_h_mm,
+                loaded, params, eff_w_mm, eff_h_mm, family=family,
             )
-        except print_geometry.UnsupportedMediaSource as e:
+        except print_geometry.GeometryRefusal as e:
             blocking.append(str(e))
         else:
             g_blocking, g_warnings = print_geometry.detect_geometry_issues(

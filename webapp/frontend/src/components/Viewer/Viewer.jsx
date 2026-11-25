@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { UIState } from '../../lib/state-machine.js';
-import { ROLL_ECON_MARGIN_MM } from '../../lib/placement.js';
+import { ROLL_ECON_MARGIN_MM, z9proRollImageX } from '../../lib/placement.js';
 import EmptyDropzone from './EmptyDropzone.jsx';
 import PaperPreview from './PaperPreview.jsx';
 
@@ -26,7 +26,7 @@ import PaperPreview from './PaperPreview.jsx';
  */
 export default function Viewer({
   state, file, paper, advanced, loading = false,
-  autoX = 0, autoY = 0, centered = false,
+  autoX = 0, autoY = 0, centered = false, xLocked = false,
   onFileDrop, onPositionCommit, onPositionReset,
 }) {
   const [dragging, setDragging] = useState(false);
@@ -78,10 +78,12 @@ export default function Viewer({
   const hasPrintableBounds = Boolean(
     g && g.printable_w_mm > 0 && g.printable_h_mm > 0,
   );
+  // Z9 Pro roll (xLocked): X is fixed (centred) and a roll has no Y drag → no drag.
   const draggable = Boolean(
     file && paper && hasPrintableBounds
       && state !== UIState.D_NOPAPER
-      && state !== UIState.E_PRINTING,
+      && state !== UIState.E_PRINTING
+      && !(isRoll && xLocked),
   );
   const dragAxis = isRoll ? 'x' : 'xy';
   // The honest "centered" indicator is computed in App (single source, shared
@@ -94,8 +96,12 @@ export default function Viewer({
   // move the image instantly; the backend still owns the printable bounds / fits
   // (validation). The frontend auto anchor MATCHES the backend (sheet = centre ;
   // economical roll = 5 mm), so there is no jump when the backend confirms.
+  // Z9 Pro roll: centred under the PJL window — the backend's auto_x_mm once
+  // known, the same formula before the first preview.
   const frontAutoX = isRoll
-    ? ROLL_ECON_MARGIN_MM
+    ? (xLocked
+      ? (g?.auto_x_mm ?? z9proRollImageX(paper?.width_mm, effImgW) ?? ROLL_ECON_MARGIN_MM)
+      : ROLL_ECON_MARGIN_MM)
     : ((paper?.width_mm ?? 0) - effImgW) / 2;
   const frontAutoY = isRoll
     ? ROLL_ECON_MARGIN_MM

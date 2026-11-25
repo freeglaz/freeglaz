@@ -314,6 +314,34 @@ def test_print_happy(client, monkeypatch):
     assert all(c["chart_id"] != cid for c in other)
 
 
+def test_print_chart_on_a_z9pro_roll_is_centred(client, monkeypatch):
+    """Chart print on a Z9 Pro roll: same pipeline, so the same layout as a photo —
+    PJL margins of the economical roll (5 mm), page = the roll, image centred; the
+    scanLayout records where the chart really lands."""
+    cid = _create_a3(client)
+    fake = _fake_z9(model="HP DesignJet Z9 Pro 64in PS", source="ROLL")
+    fake.device.status.return_value.update(
+        loaded_paper_width_mm=1117.6, loaded_paper_length_mm=None,
+        identification={"SerialNumber": SERIAL, "ModelName": "HP DesignJet Z9 Pro 64in PS"})
+    app.dependency_overrides[charts_routes.get_chart_z9] = lambda: fake
+    sent = {}
+
+    def _fake_send(self, job, **kw):
+        sent["job"] = job
+        return SimpleNamespace(duration_seconds=1.0, prn_size_bytes=1000)
+
+    monkeypatch.setattr("lib.z9_client.printing.PrintOps.send", _fake_send)
+    r = client.post(f"/api/charts/{cid}/print", json={"quality": "HIGH"})
+    assert r.status_code == 200, r.text
+    job = sent["job"]
+    assert (job.page_layout, job.media_source, job.sheet_w_mm) == ("z9pro_roll", "ROLL", 1117.6)
+    assert (job.offset_x_mm, job.offset_y_mm) == (5.0, 5.0)              # PJL margins unchanged
+    placed_x = _descriptor(cid)["scanLayout"]["placement"]["offset_x_mm"]
+    assert abs(placed_x - (1117.6 - job.image_w_mm) / 2) < 0.05          # centred on the roll
+    with_offset = client.post(f"/api/charts/{cid}/print", json={"quality": "HIGH", "offset_x_mm": 20})
+    assert with_offset.status_code == 409 and "horizontal" in with_offset.json()["detail"]
+
+
 def test_print_blocks_when_resident_unavailable(client, monkeypatch):
     """Chart print refetches the resident FRESH at the go; if it can't be read,
     block franc (HTTP 502), send NOT called — no fallback to the stale tag."""

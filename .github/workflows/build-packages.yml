@@ -285,9 +285,13 @@ jobs:
         run: |
           R="$W/run"; mkdir -p "$R/home/tmp" "$R/home/Documents" "$R/home/Library/Application Support"
           PROFILE='(version 1)(allow default)(deny network-outbound (remote ip "*:*"))(allow network-outbound (remote ip "localhost:*"))'
-          sandbox-exec -p "$PROFILE" /usr/bin/curl -sS -m 5 -o /dev/null http://192.0.2.1/ > "$W/logs/net_probe.txt" 2>&1 || true
-          grep -qi "not permitted" "$W/logs/net_probe.txt" \
-            || { cat "$W/logs/net_probe.txt"; echo "::error::sandbox-exec does not block the network"; exit 1; }
+          # Proof that the sandbox cuts the network: the same request reaches GitHub
+          # without it, and fails inside it.
+          /usr/bin/curl -sS -m 20 -o /dev/null https://github.com/ > "$W/logs/net_probe_open.txt" 2>&1 \
+            || { cat "$W/logs/net_probe_open.txt"; echo "::error::no network outside the sandbox: cannot prove it is cut inside"; exit 1; }
+          if sandbox-exec -p "$PROFILE" /usr/bin/curl -sS -m 20 -o /dev/null https://github.com/ > "$W/logs/net_probe.txt" 2>&1; then
+            echo "::error::sandbox-exec does not block the network"; exit 1; fi
+          echo "network inside the sandbox: refused ($(cat "$W/logs/net_probe.txt"))"
           env -i HOME="$R/home" TMPDIR="$R/home/tmp" PATH=/usr/bin:/bin:/usr/sbin:/sbin LANG=en_US.UTF-8 \
             sandbox-exec -p "$PROFILE" "$R/freeglaz.app/Contents/MacOS/freeglaz" > "$W/logs/app_stdout.txt" 2>&1 &
           PID=$!; PORT=""
@@ -388,6 +392,12 @@ jobs:
         run: |
           W="$RUNNER_TEMP/w"; mkdir -p "$W/out" "$W/logs"; echo "W=$W" >> "$GITHUB_ENV"
           mkdir -p -m 700 /run/user/0 && echo "XDG_RUNTIME_DIR=/run/user/0" >> "$GITHUB_ENV"
+          # ostree cannot hard-link inside the image's overlay ("Invalid cross-device
+          # link", seen on one runner of two): the system installation is copied to the
+          # runner's disk and used from there for the whole job.
+          export FLATPAK_SYSTEM_DIR="$RUNNER_TEMP/flatpak-system"
+          cp -a /var/lib/flatpak "$FLATPAK_SYSTEM_DIR"
+          echo "FLATPAK_SYSTEM_DIR=$FLATPAK_SYSTEM_DIR" >> "$GITHUB_ENV"
           flatpak --version; flatpak-builder --version
           flatpak update -y --noninteractive --system --no-related --no-deps --commit="$FLATPAK_SDK_COMMIT" org.gnome.Sdk//50
           flatpak update -y --noninteractive --system --no-related --no-deps --commit="$FLATPAK_PLATFORM_COMMIT" org.gnome.Platform//50

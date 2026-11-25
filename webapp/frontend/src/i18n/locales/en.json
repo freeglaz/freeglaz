@@ -2381,5 +2381,206 @@
       "stale": "The measurement state had changed: it was reloaded, nothing was sent.",
       "sse_lost": "Event connection interrupted: refreshing every 2 seconds."
     }
+  },
+  "strategy": {
+    "badge": "Pass {{index}}/{{total}}",
+    "badge_title": "Two-pass profiling",
+    "selector": {
+      "title": "Strategy",
+      "one": "One pass",
+      "two": "Two adaptive passes",
+      "one_desc": "One chart, then the profile: the usual wizard, with its free targen line.",
+      "two_desc": "A first chart to learn the paper, then a finer second chart spread from what the first one learned. freeglaz composes the ArgyllCMS lines and keeps the link between the two passes, even after closing."
+    },
+    "resume": {
+      "title": "Two-pass profiling in progress",
+      "next": "Next step: {{step}}",
+      "btn": "Resume"
+    },
+    "step": {
+      "pass1_print": "print the pass 1 chart",
+      "pass1_measure": "measure the pass 1 chart",
+      "intermediate_build": "prepare pass 2 (intermediate profile)",
+      "pass2_create": "create the pass 2 chart",
+      "pass2_print": "print the pass 2 chart",
+      "pass2_measure": "measure the pass 2 chart",
+      "final_build": "build the final profile",
+      "done": "final profile built (other profiles can still be built without printing again)",
+      "first_pass_missing": "the pass 1 chart was deleted"
+    },
+    "compose": {
+      "pass1_title": "Pass 1 of 2: survey chart",
+      "pass1_intro": "An evenly spread chart, without preconditioning. Its measurements give an intermediate profile used only to prepare pass 2.",
+      "pass2_title": "Pass 2 of 2: fine chart",
+      "pass2_intro": "The patches are spread from the intermediate profile of pass 1: denser where the paper needs them. The final profile is built from this chart.",
+      "pass1_patches": "Pass 1 patches",
+      "pass2_patches": "Pass 2 patches",
+      "pass2_patches_hint": "Planned now to estimate the paper; can be changed when pass 2 is created.",
+      "pass1_done": "Pass 1",
+      "pass1_done_value": "{{n}} patches ({{id}})",
+      "neutral": "Neutral emphasis",
+      "neutral_hint": "Share of pass 2 patches drawn towards the grey axis (targen -N, 0.50 by default in ArgyllCMS).",
+      "final_quality": "Final profile quality",
+      "precondition": "Preconditioning",
+      "precondition_pass1": "None (pass 1)",
+      "precondition_pass2": "Intermediate profile of {{id}} (version of {{date}})",
+      "precondition_note": "It only spreads the patches. The printed values stay raw: the chart is tagged with the resident profile, like every chart.",
+      "over_capacity": "{{n}} patches exceed this format's capacity ({{max}}): lower the count or choose another format.",
+      "pass2_over_capacity": "Pass 2 ({{n}} patches) will not fit this format ({{max}} max): you can choose another format, a roll for instance, when you create it.",
+      "advanced": "Advanced",
+      "ofps_pass1": "Spread, pass 1",
+      "ofps_pass2": "Spread, pass 2",
+      "ofps_G": "OFPS (-G)",
+      "ofps_Q": "Quasi-random (-Q)",
+      "grey_steps": "RGB grey steps, pass 1 (-g)",
+      "grey_steps_hint": "0 by default: OFPS already covers the grey axis.",
+      "neutral_steps": "Neutral steps, pass 2 (-n)",
+      "neutral_steps_hint": "Steps computed from the intermediate profile. 0 by default.",
+      "smoothing": "Intermediate profile smoothing (-r)",
+      "smoothing_hint": "Assumed average deviation of the readings, in %. 2.0 by default (smoother); 1.2 was the July session's setting.",
+      "other": "Other",
+      "source_gamut": "Final profile source gamut (-S)",
+      "source_gamut_hint": "Only shapes the perceptual and saturation tables stored in the profile (other software). freeglaz's conversion does not depend on it.",
+      "gamut_none": "None",
+      "viewing": "Viewing conditions (-c / -d)",
+      "viewing_hint": "Source then destination of the gamut mapping. Without a source gamut they have no effect.",
+      "fwa_later": "Optical brightener compensation (FWA): decided when the final profile is built, from the actual measurements.",
+      "details": "Technical details",
+      "create_pass": "Create the pass {{index}} chart",
+      "instrument_locked": "Instrument and measurement conditions inherited from pass 1."
+    },
+    "quality": {
+      "m": "Medium",
+      "h": "High",
+      "u": "Ultra"
+    },
+    "lines": {
+      "pass1_chart": "Pass 1 chart",
+      "intermediate": "Intermediate profile",
+      "pass2_chart": "Pass 2 chart",
+      "final": "Final profile",
+      "intermediate_file": "<intermediate profile of pass 1>",
+      "gamut_alias": "-S {{alias}} = {{file}}, a free profile bundled with freeglaz (Elle Stone).",
+      "not_validated": "Reasoned starting settings, not a demonstrated colorimetric optimum."
+    },
+    "paper": {
+      "pass1": "Pass 1 paper",
+      "pass2": "Pass 2 paper",
+      "pass1_used": "Pass 1 (already created)",
+      "pass2_planned": "Pass 2 (planned, same settings)",
+      "total": "Estimated total for both passes: about {{m}} m of roll.",
+      "see_composition": "The paper of each pass is estimated in the composition, below.",
+      "first_roll": "{{id}}: {{n}} patches, about {{mm}} mm of roll.",
+      "first_sheet": "{{id}}: {{n}} patches, {{format}} format."
+    },
+    "created": {
+      "pass1": "Pass 1 chart created",
+      "pass2": "Pass 2 chart created",
+      "precondition": "Preconditioned by the intermediate profile of {{id}}; its copy is kept with the chart.",
+      "argv": "Line run:"
+    },
+    "notice": {
+      "resident_changed_since_first_pass": "The resident profile of this paper changed since pass 1 (another profile installed on the slot?). The values are still sent raw."
+    },
+    "fallback": {
+      "explain": "OFPS did not complete. Quasi-random spreading (-Q) is a possible fallback, faster but less optimised.",
+      "retry": "Retry with -Q"
+    },
+    "error": {
+      "precondition_build_required": "The intermediate profile of pass 1 is not given.",
+      "precondition_build_unknown": "This version of the intermediate profile does not exist.",
+      "precondition_build_altered": "The intermediate profile changed on disk: build it again.",
+      "precondition_not_intermediate": "This profile is not an intermediate profile.",
+      "precondition_not_current": "The intermediate profile was built again since: resume from pass 1.",
+      "precondition_stale": "The measurements of pass 1 changed since the intermediate profile: use \"Prepare pass 2\" to build it again.",
+      "strategy_conditions_changed": "The paper and the Gloss Enhancer of the profiling are fixed by pass 1.",
+      "strategy_instrument_locked": "The measurement instrument is inherited from pass 1.",
+      "strategy_measurement_unknown": "The included measurements of pass 1 do not tell one instrument and one condition: nothing to inherit.",
+      "earlier_pass_frozen": "The settings of pass 1 can no longer be changed.",
+      "strategy_run_mismatch": "This chart is not pass 1 of a two-pass profiling.",
+      "strategy_run_required": "Pass 2 must be attached to its pass 1.",
+      "targen_failed": "targen could not generate the chart.",
+      "param_out_of_range": "A value is out of the accepted range.",
+      "invalid_param": "A value is not accepted.",
+      "unknown_param": "A setting does not belong to this pass."
+    },
+    "print": {
+      "blocked": "Print refused, no paper used: the conditions differ from pass 1 ({{list}}).",
+      "confirm_title": "Conditions changed since pass 1",
+      "confirm_body": "{{list}}. Print the pass 2 chart anyway?",
+      "confirm_btn": "Print anyway",
+      "code": {
+        "paper_differs": "another paper loaded",
+        "gloss_enhancer_differs": "another Gloss Enhancer setting",
+        "quality_differs": "another print quality",
+        "rendermode_differs": "another rendering mode",
+        "printer_differs": "another printer",
+        "resident_changed": "the paper's resident profile changed",
+        "clc_changed": "a CLC was run again",
+        "first_pass_missing": "the pass 1 chart was deleted",
+        "first_pass_print_unknown": "the print conditions of pass 1 are not known"
+      }
+    },
+    "run": {
+      "title": "Two-pass profiling · pass {{index}} of {{total}}",
+      "run_id": "Profiling {{id}}",
+      "next": "Next step:",
+      "pass1": "Pass 1:",
+      "first_missing": "deleted",
+      "chart_state": "{{patches}} patches, {{scans}} included acquisition(s)",
+      "pass2_attempt": "Pass 2, attempt {{n}}:",
+      "made_from": "preconditioned by the version of {{date}}",
+      "final_built": "final profile built"
+    },
+    "intermediate": {
+      "title": "Intermediate profile",
+      "purpose": "It is only used to prepare pass 2. It is never installed, never filed with the profiles, never offered for printing.",
+      "state": {
+        "none": "Not built yet.",
+        "stale": "Stale: the included acquisitions changed since it was built ({{date}}).",
+        "other_settings": "Built on {{date}} with another smoothing.",
+        "ready": "Up to date (built on {{date}})."
+      },
+      "state_short": {
+        "ready": "intermediate profile ready",
+        "stale": "intermediate profile stale"
+      },
+      "acquisitions": "The {{n}} included acquisitions of this chart are averaged.",
+      "prepare": "Prepare pass 2",
+      "prepare_hint": "First builds the intermediate profile (preview above), then opens the pass 2 composition.",
+      "needs_scan": "Measure this chart first.",
+      "phase": {
+        "preparing": "Preparing…",
+        "building": "Building the intermediate profile…"
+      }
+    },
+    "final": {
+      "title": "Final profile",
+      "made_from": "Chart spread with the intermediate profile of {{id}} (version of {{date}}).",
+      "variant": "Build from",
+      "variant_pass2_hint": "By default: the measurements of pass 2 alone.",
+      "variant_pass1_pass2_hint": "Joins the measurements of both passes, for comparison. It is not presumed better; both profiles stay comparable in the version history.",
+      "variant_unavailable": "The passes 1 + 2 variant needs the pass 1 chart and its measurements.",
+      "planned": "Planned build: {{variant}}.",
+      "gamut": "Source gamut: {{alias}}, i.e. the bundled file {{file}}. It only shapes the stored perceptual and saturation tables.",
+      "viewing": "Viewing conditions: {{vin}} ({{din}}) to {{vout}} ({{dout}}).",
+      "fwa": "Compensate optical brighteners (FWA, -f)",
+      "fwa_refused": "The line asks for -f, but these measurements do not allow it: the build will be refused.",
+      "current": "current profile"
+    },
+    "variant": {
+      "pass2": "Pass 2 alone",
+      "pass1_pass2": "Passes 1 + 2",
+      "custom": "Hand-picked sources"
+    },
+    "fwa": {
+      "no_measurements": "Disabled: no measurement to examine.",
+      "identity_unknown": "Disabled: the instrument or the measurement condition is not known.",
+      "no_spectra": "Disabled: these measurements hold no spectra.",
+      "instrument_without_uv": "Disabled: the ColorMunki lamp emits no ultraviolet; ArgyllCMS cannot compensate brighteners from its readings.",
+      "instrument_not_supported": "Disabled: ArgyllCMS has no lamp model for this instrument.",
+      "condition_unknown": "Disabled: the measurement condition is not known, it is not presumed to be M0.",
+      "condition_not_m0": "Disabled: measured under another condition than M0."
+    }
   }
 }

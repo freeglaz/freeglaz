@@ -20,6 +20,8 @@ import ArgyllProfileWizard from '../Charts/ArgyllProfileWizard.jsx';
 import MeasurementBadge from '../Charts/MeasurementBadge.jsx';
 import IdentityRefusal from '../Charts/IdentityRefusal.jsx';
 import ExternalMeasurePanel from '../ExternalMeasure/ExternalMeasurePanel.jsx';
+import StrategyRunPanel from '../Charts/StrategyRunPanel.jsx';
+import StrategyBadge from '../Charts/StrategyBadge.jsx';
 import { chartMeasurement, identityRefusal } from '../../lib/measurementMethod.js';
 import { chartIdFromHash } from '../../lib/libraryLink.js';
 import { errorText } from '../../lib/errorText.js';
@@ -83,6 +85,9 @@ export default function MesuresPage({ offline }) {
   // Multi-source sources selected in the panel (current chart implicit).
   const [extraSources, setExtraSources] = useState({ extra_chart_ids: [], source_profiles: [] });
   const [colprofFlags, setColprofFlags] = useState('');
+  const [defaultFlags, setDefaultFlags] = useState('-v -qh');     // the wizard's default line
+  const [presetSources, setPresetSources] = useState(null);       // two-pass final: variant → sources
+  const [pass2Wizard, setPass2Wizard] = useState(null);           // {paper, ge, run, buildId}
   const [previewNonce, setPreviewNonce] = useState(0);
   const [confirmKey, setConfirmKey] = useState(null);
   const [comparePair, setComparePair] = useState(null);   // {a, b} build ids being compared
@@ -93,7 +98,9 @@ export default function MesuresPage({ offline }) {
   const buildBody = useMemo(() => buildRequestBody({ nKept: nKeptBuild, profileBase, colprofFlags, extraSources }),
                             [nKeptBuild, profileBase, colprofFlags, extraSources]);
   const stateStamp = useMemo(() => chartStateStamp(detail), [detail]);
-  const preview = useBuildPreview(selected, buildBody, { enabled: !!selected && nKeptBuild >= 1, stateStamp, nonce: previewNonce });
+  // (the first pass of a two-pass profiling previews its intermediate profile in its own panel)
+  const preview = useBuildPreview(selected, buildBody, {
+    enabled: !!selected && nKeptBuild >= 1 && detail?.identity?.strategy?.role !== 'preconditioning', stateStamp, nonce: previewNonce });
   const [colprofPresets, setColprofPresets] = useState([]);
   const [colprofHelp, setColprofHelp] = useState(null);
   const [showColprofHelp, setShowColprofHelp] = useState(false);
@@ -190,9 +197,27 @@ export default function MesuresPage({ offline }) {
   // wizard (getChartColprofPresets) → zero recipe divergence.
   useEffect(() => {
     api.getChartColprofPresets()
-      .then((d) => { setColprofPresets(d.presets || []); setColprofFlags(d.default_flags || '-v -qh'); })
+      .then((d) => { setColprofPresets(d.presets || []); setColprofFlags(d.default_flags || '-v -qh'); setDefaultFlags(d.default_flags || '-v -qh'); })
       .catch(() => setColprofFlags('-v -qh'));
   }, []);
+
+  // A final pass of a two-pass profiling builds with the strategy's final line (frozen in the
+  // chart); any other chart with the wizard's default line. The line stays editable.
+  // Leaving such a chart gives back the line the user had (one-pass behaviour unchanged).
+  const strategyFinalLine = detail?.identity?.strategy?.role === 'final' ? detail.identity.strategy.lines?.colprof_flags : null;
+  const flagsKey = detail ? `${detail.identity.chart_id}|${strategyFinalLine || ''}` : null;
+  const [flagsFor, setFlagsFor] = useState({ key: null, saved: null });
+  if (flagsKey && flagsKey !== flagsFor.key) {
+    const wasStrategy = !!flagsFor.key && !flagsFor.key.endsWith('|');
+    if (strategyFinalLine) {
+      setFlagsFor({ key: flagsKey, saved: wasStrategy ? flagsFor.saved : colprofFlags });
+      setColprofFlags(strategyFinalLine);
+    } else {
+      setFlagsFor({ key: flagsKey, saved: null });
+      if (wasStrategy) setColprofFlags(flagsFor.saved || defaultFlags);
+    }
+    setPresetSources(null);
+  }
   const loadColprofHelp = () => {
     setShowColprofHelp((v) => !v);
     if (colprofHelp == null) {
@@ -421,6 +446,7 @@ export default function MesuresPage({ offline }) {
                           <ChartCard key={c.chart_id} chart={c} onClick={() => setSelected(c.chart_id)}
                             selected={c.chart_id === selected}
                             info={<>
+                              {c.strategy && <><StrategyBadge strategy={c.strategy}/>{' '}</>}
                               {c.patch_count != null && `${t('mesures.patches', { count: c.patch_count })} · `}
                               {t('mesures.scans_count', { count: c.n_scans ?? 0 })}
                               {c.created_at && ` · ${c.created_at.slice(0, 10)}`}
@@ -447,6 +473,7 @@ export default function MesuresPage({ offline }) {
                 <h2 className="text-[15px] font-semibold text-text-strong font-mono break-all">{id.chart_id}</h2>
                 <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                   <MeasurementBadge chart={id}/>
+                  <StrategyBadge strategy={id.strategy}/>
                   {idMeasurement.external && id.measurement?.n_strips != null && (
                     <span className="text-tiny text-text-faint">{t('measurement.strips_count', { count: id.measurement.n_strips })}</span>
                   )}
@@ -494,9 +521,21 @@ export default function MesuresPage({ offline }) {
                   a chart serves several builds, or no profile of its own if it's an ingredient.) */}
               <section className="space-y-2 pt-4 border-t border-border-soft">
                 <div className="text-[13px] font-semibold uppercase tracking-wide text-text-strong">{t('mesures.section_profile')}</div>
+                {/* two-pass profiling: the run; its first pass builds the intermediate profile here */}
+                {id.strategy && (
+                  <StrategyRunPanel chartId={selected} identity={id} nIncluded={nIncluded} stateStamp={stateStamp}
+                    refreshKey={`${previewNonce}-${prof?.status?.build_id || ''}-${detail.scans.length}`}
+                    onOpenChart={(cid) => setSelected(cid)}
+                    onBuilt={() => { loadDetail(selected); reload(); }}
+                    onPreparePass2={({ run, buildId }) => setPass2Wizard({
+                      paper: { mediaid: id.paper_media_id, name: id.paper }, ge: id.gloss_enhancer, run, buildId })}
+                    colprofFlags={colprofFlags} setColprofFlags={setColprofFlags} onVariant={setPresetSources}
+                    preview={preview}/>
+                )}
                 {/* SHARED build panel (base + colprof flags + visible command + button) — same
-                    component as the wizard. Available from ≥1 included scan; software, background job. */}
-                {nIncluded >= 1 && (
+                    component as the wizard. Available from ≥1 included scan; software, background job.
+                    Not for the first pass of a two-pass profiling (its intermediate profile, above). */}
+                {nIncluded >= 1 && id.strategy?.role !== 'preconditioning' && (
                   <div className="pt-1">
                     <ProfileBuildPanel
                       nIncluded={nIncluded}
@@ -509,7 +548,7 @@ export default function MesuresPage({ offline }) {
                       onBuild={buildProfile} busy={busy} buildPhase={buildPhase}
                       buildLabel={prof.built ? t('mesures.rebuild') : t('mesures.build')}
                       chartId={selected} onSelectionChange={setExtraSources}
-                      nameNotice={nameNotice} preview={preview}/>
+                      nameNotice={nameNotice} preview={preview} presetSources={presetSources}/>
                   </div>
                 )}
                 {/* Completion message (success) — name + personal repo location + installable. FAILURE
@@ -632,6 +671,11 @@ export default function MesuresPage({ offline }) {
           onConfirm={() => { setConflict(null); buildProfile('replace'); }}/>
       )}
       {inspect && <ProfileInspectorModal open source={inspect} onClose={() => setInspect(null)}/>}
+      {pass2Wizard && (
+        <ArgyllProfileWizard open mode="print" paper={pass2Wizard.paper} ge={pass2Wizard.ge}
+          strategyContinuation={{ run: pass2Wizard.run, buildId: pass2Wizard.buildId }}
+          onClose={() => { setPass2Wizard(null); reload(); loadDetail(selected); }}/>
+      )}
       {scanWizard && (
         <ArgyllProfileWizard open mode="scan" paper={scanWizard.paper} ge={scanWizard.ge}
           initialChart={scanWizard.chart}

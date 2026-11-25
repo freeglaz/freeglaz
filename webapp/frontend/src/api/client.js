@@ -1279,6 +1279,26 @@ export async function createChart(body) {
 export async function estimatePrinttargChart(body) {
   return http('/api/charts/printtarg-estimate', { method: 'POST', body: JSON.stringify(body) });
 }
+/** Profiling strategies (two-pass adaptive): definitions, default lines and choices. */
+export async function getProfilingStrategies() {
+  return http('/api/profiling-strategies');
+}
+/** What the server WILL run for these parameters: {params, passes:[{targen_flags, colprof_flags,
+ *  source_gamut, viewing_conditions…}]}. `run` = continue a run (its frozen parameters). */
+export async function composeStrategy({ strategy, params = {}, run = null }) {
+  return http('/api/profiling-strategies/compose', { method: 'POST', body: JSON.stringify({ strategy, params, run }) });
+}
+/** Runs derived from the charts (resume after closing freeglaz), with their next step. */
+export async function getStrategyRuns({ paper, ge } = {}) {
+  const qs = new URLSearchParams();
+  if (paper) qs.set('paper', paper);
+  if (ge) qs.set('ge', ge);
+  const s = qs.toString();
+  return http(`/api/profiling-strategies/runs${s ? `?${s}` : ''}`);
+}
+export async function getStrategyRun(run) {
+  return http(`/api/profiling-strategies/runs/${encodeURIComponent(run)}`);
+}
 export async function getCharts({ paper, printed, scanned, purpose } = {}) {
   const qs = new URLSearchParams();
   if (paper) qs.set('paper', paper);

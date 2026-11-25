@@ -2381,5 +2381,206 @@
       "stale": "L'état de la mesure avait changé : il a été rechargé, rien n'a été envoyé.",
       "sse_lost": "Connexion aux événements interrompue : actualisation toutes les 2 secondes."
     }
+  },
+  "strategy": {
+    "badge": "Passe {{index}}/{{total}}",
+    "badge_title": "Profilage en deux passes",
+    "selector": {
+      "title": "Stratégie",
+      "one": "Une passe",
+      "two": "Deux passes adaptatives",
+      "one_desc": "Une charte, puis le profil : l'assistant habituel, avec sa ligne targen libre.",
+      "two_desc": "Une première charte pour connaître le papier, puis une seconde charte plus fine, répartie d'après ce que la première a appris. freeglaz compose les lignes ArgyllCMS et garde le lien entre les deux passes, même après fermeture."
+    },
+    "resume": {
+      "title": "Profilage en deux passes en cours",
+      "next": "Étape suivante : {{step}}",
+      "btn": "Reprendre"
+    },
+    "step": {
+      "pass1_print": "imprimer la charte de passe 1",
+      "pass1_measure": "mesurer la charte de passe 1",
+      "intermediate_build": "préparer la passe 2 (profil intermédiaire)",
+      "pass2_create": "créer la charte de passe 2",
+      "pass2_print": "imprimer la charte de passe 2",
+      "pass2_measure": "mesurer la charte de passe 2",
+      "final_build": "construire le profil final",
+      "done": "profil final construit (d'autres profils restent possibles sans réimprimer)",
+      "first_pass_missing": "la charte de passe 1 a été supprimée"
+    },
+    "compose": {
+      "pass1_title": "Passe 1 sur 2 : charte de repérage",
+      "pass1_intro": "Une charte répartie uniformément, sans préconditionnement. Ses mesures donnent un profil intermédiaire qui sert seulement à préparer la passe 2.",
+      "pass2_title": "Passe 2 sur 2 : charte fine",
+      "pass2_intro": "Les patches sont répartis d'après le profil intermédiaire de la passe 1 : plus denses là où le papier en a besoin. Le profil final est construit à partir de cette charte.",
+      "pass1_patches": "Patches de la passe 1",
+      "pass2_patches": "Patches de la passe 2",
+      "pass2_patches_hint": "Prévus dès maintenant pour estimer le papier ; modifiables à la création de la passe 2.",
+      "pass1_done": "Passe 1",
+      "pass1_done_value": "{{n}} patches ({{id}})",
+      "neutral": "Concentration sur les neutres",
+      "neutral_hint": "Part des patches de la passe 2 rapprochés de l'axe des gris (targen -N, 0,50 par défaut dans ArgyllCMS).",
+      "final_quality": "Qualité du profil final",
+      "precondition": "Préconditionnement",
+      "precondition_pass1": "Aucun (passe 1)",
+      "precondition_pass2": "Profil intermédiaire de {{id}} (version du {{date}})",
+      "precondition_note": "Il sert uniquement à répartir les patches. Les valeurs imprimées restent brutes : la charte est étiquetée avec le profil résident, comme toute charte.",
+      "over_capacity": "{{n}} patches dépassent la capacité de ce format ({{max}}) : réduis le nombre ou choisis un autre format.",
+      "pass2_over_capacity": "La passe 2 ({{n}} patches) ne tiendra pas sur ce format ({{max}} max) : tu pourras choisir un autre format, par exemple un rouleau, à sa création.",
+      "advanced": "Avancé",
+      "ofps_pass1": "Répartition, passe 1",
+      "ofps_pass2": "Répartition, passe 2",
+      "ofps_G": "OFPS (-G)",
+      "ofps_Q": "Quasi aléatoire (-Q)",
+      "grey_steps": "Paliers de gris RVB, passe 1 (-g)",
+      "grey_steps_hint": "0 par défaut : l'OFPS couvre déjà l'axe des gris.",
+      "neutral_steps": "Paliers neutres, passe 2 (-n)",
+      "neutral_steps_hint": "Paliers calculés d'après le profil intermédiaire. 0 par défaut.",
+      "smoothing": "Lissage du profil intermédiaire (-r)",
+      "smoothing_hint": "Écart moyen supposé des lectures, en %. 2,0 par défaut (lisse davantage) ; 1,2 était le réglage de la séance de juillet.",
+      "other": "Autre",
+      "source_gamut": "Gamut source du profil final (-S)",
+      "source_gamut_hint": "N'agit que sur les tables perceptuelle et saturation stockées dans le profil (autres logiciels). La conversion de freeglaz n'en dépend pas.",
+      "gamut_none": "Aucun",
+      "viewing": "Conditions de visualisation (-c / -d)",
+      "viewing_hint": "Source puis destination du gamut mapping. Sans gamut source, elles sont sans effet.",
+      "fwa_later": "Compensation des azurants (FWA) : décidée à la construction du profil final, selon les mesures réelles.",
+      "details": "Détails techniques",
+      "create_pass": "Créer la charte de passe {{index}}",
+      "instrument_locked": "Instrument et conditions de mesure hérités de la passe 1."
+    },
+    "quality": {
+      "m": "Moyenne",
+      "h": "Haute",
+      "u": "Ultra"
+    },
+    "lines": {
+      "pass1_chart": "Charte de passe 1",
+      "intermediate": "Profil intermédiaire",
+      "pass2_chart": "Charte de passe 2",
+      "final": "Profil final",
+      "intermediate_file": "<profil intermédiaire de la passe 1>",
+      "gamut_alias": "-S {{alias}} = {{file}}, profil libre embarqué dans freeglaz (Elle Stone).",
+      "not_validated": "Réglages initiaux raisonnés, pas une optimalité colorimétrique démontrée."
+    },
+    "paper": {
+      "pass1": "Papier de la passe 1",
+      "pass2": "Papier de la passe 2",
+      "pass1_used": "Passe 1 (déjà créée)",
+      "pass2_planned": "Passe 2 (prévue, mêmes réglages)",
+      "total": "Total estimé des deux passes : environ {{m}} m de rouleau.",
+      "see_composition": "Le papier de chaque passe est estimé dans la composition, plus bas.",
+      "first_roll": "{{id}} : {{n}} patches, environ {{mm}} mm de rouleau.",
+      "first_sheet": "{{id}} : {{n}} patches, format {{format}}."
+    },
+    "created": {
+      "pass1": "Charte de passe 1 créée",
+      "pass2": "Charte de passe 2 créée",
+      "precondition": "Préconditionnée par le profil intermédiaire de {{id}} ; sa copie est gardée avec la charte.",
+      "argv": "Ligne exécutée :"
+    },
+    "notice": {
+      "resident_changed_since_first_pass": "Le profil résident de ce papier a changé depuis la passe 1 (un autre profil installé sur le slot ?). Les valeurs partent toujours brutes."
+    },
+    "fallback": {
+      "explain": "L'OFPS n'a pas abouti. La répartition quasi aléatoire (-Q) est un repli possible, plus rapide mais moins optimisée.",
+      "retry": "Réessayer avec -Q"
+    },
+    "error": {
+      "precondition_build_required": "Le profil intermédiaire de la passe 1 n'est pas indiqué.",
+      "precondition_build_unknown": "Cette version du profil intermédiaire n'existe pas.",
+      "precondition_build_altered": "Le profil intermédiaire a été modifié sur le disque : reconstruis-le.",
+      "precondition_not_intermediate": "Ce profil n'est pas un profil intermédiaire.",
+      "precondition_not_current": "Le profil intermédiaire a été reconstruit depuis : reprends depuis la passe 1.",
+      "precondition_stale": "Les mesures de la passe 1 ont changé depuis le profil intermédiaire : utilise « Préparer la passe 2 » pour le reconstruire.",
+      "strategy_conditions_changed": "Le papier et le Gloss Enhancer du profilage sont fixés par la passe 1.",
+      "strategy_instrument_locked": "L'instrument de mesure est hérité de la passe 1.",
+      "strategy_measurement_unknown": "Les mesures incluses de la passe 1 ne disent pas un seul instrument et une seule condition : rien à hériter.",
+      "earlier_pass_frozen": "Les réglages de la passe 1 ne se modifient plus.",
+      "strategy_run_mismatch": "Cette charte n'est pas la passe 1 d'un profilage en deux passes.",
+      "strategy_run_required": "La passe 2 doit être rattachée à sa passe 1.",
+      "targen_failed": "targen n'a pas pu générer la charte.",
+      "param_out_of_range": "Une valeur sort des bornes acceptées.",
+      "invalid_param": "Une valeur n'est pas acceptée.",
+      "unknown_param": "Un réglage n'appartient pas à cette passe."
+    },
+    "print": {
+      "blocked": "Impression refusée, aucun papier utilisé : les conditions diffèrent de la passe 1 ({{list}}).",
+      "confirm_title": "Conditions changées depuis la passe 1",
+      "confirm_body": "{{list}}. Imprimer quand même la charte de passe 2 ?",
+      "confirm_btn": "Imprimer quand même",
+      "code": {
+        "paper_differs": "papier chargé différent",
+        "gloss_enhancer_differs": "Gloss Enhancer différent",
+        "quality_differs": "qualité d'impression différente",
+        "rendermode_differs": "mode de rendu différent",
+        "printer_differs": "autre imprimante",
+        "resident_changed": "le profil résident du papier a changé",
+        "clc_changed": "une CLC a été refaite",
+        "first_pass_missing": "la charte de passe 1 a été supprimée",
+        "first_pass_print_unknown": "les conditions d'impression de la passe 1 ne sont pas connues"
+      }
+    },
+    "run": {
+      "title": "Profilage en deux passes · passe {{index}} sur {{total}}",
+      "run_id": "Profilage {{id}}",
+      "next": "Étape suivante :",
+      "pass1": "Passe 1 :",
+      "first_missing": "supprimée",
+      "chart_state": "{{patches}} patches, {{scans}} acquisition(s) incluse(s)",
+      "pass2_attempt": "Passe 2, tentative {{n}} :",
+      "made_from": "préconditionnée par la version du {{date}}",
+      "final_built": "profil final construit"
+    },
+    "intermediate": {
+      "title": "Profil intermédiaire",
+      "purpose": "Il sert uniquement à préparer la passe 2. Il n'est ni installé, ni rangé avec les profils, ni proposé pour imprimer.",
+      "state": {
+        "none": "Pas encore construit.",
+        "stale": "Périmé : les acquisitions incluses ont changé depuis sa construction ({{date}}).",
+        "other_settings": "Construit le {{date}} avec un autre lissage.",
+        "ready": "À jour (construit le {{date}})."
+      },
+      "state_short": {
+        "ready": "profil intermédiaire prêt",
+        "stale": "profil intermédiaire périmé"
+      },
+      "acquisitions": "Les {{n}} acquisitions incluses de cette charte sont moyennées.",
+      "prepare": "Préparer la passe 2",
+      "prepare_hint": "Construit d'abord le profil intermédiaire (aperçu ci-dessus), puis ouvre la composition de la passe 2.",
+      "needs_scan": "Mesure d'abord cette charte.",
+      "phase": {
+        "preparing": "Préparation…",
+        "building": "Construction du profil intermédiaire…"
+      }
+    },
+    "final": {
+      "title": "Profil final",
+      "made_from": "Charte répartie avec le profil intermédiaire de {{id}} (version du {{date}}).",
+      "variant": "Construire à partir de",
+      "variant_pass2_hint": "Par défaut : les mesures de la passe 2 seules.",
+      "variant_pass1_pass2_hint": "Réunit les mesures des deux passes, pour comparaison. Ce n'est pas présumé meilleur ; les deux profils restent comparables dans l'historique des versions.",
+      "variant_unavailable": "La variante passes 1 + 2 demande la charte de passe 1 et ses mesures.",
+      "planned": "Construction prévue : {{variant}}.",
+      "gamut": "Gamut source : {{alias}}, soit le fichier embarqué {{file}}. Il n'agit que sur les tables perceptuelle et saturation stockées.",
+      "viewing": "Conditions de visualisation : {{vin}} ({{din}}) vers {{vout}} ({{dout}}).",
+      "fwa": "Compenser les azurants optiques (FWA, -f)",
+      "fwa_refused": "La ligne demande -f, mais ces mesures ne le permettent pas : la construction sera refusée.",
+      "current": "profil courant"
+    },
+    "variant": {
+      "pass2": "Passe 2 seule",
+      "pass1_pass2": "Passes 1 + 2",
+      "custom": "Sources choisies à la main"
+    },
+    "fwa": {
+      "no_measurements": "Désactivé : aucune mesure à examiner.",
+      "identity_unknown": "Désactivé : l'instrument ou la condition de mesure n'est pas connu.",
+      "no_spectra": "Désactivé : ces mesures ne contiennent pas de spectres.",
+      "instrument_without_uv": "Désactivé : la lampe du ColorMunki n'émet pas d'ultraviolet ; ArgyllCMS ne peut pas compenser les azurants avec ses mesures.",
+      "instrument_not_supported": "Désactivé : ArgyllCMS n'a pas de modèle de lampe pour cet instrument.",
+      "condition_unknown": "Désactivé : la condition de mesure n'est pas connue, elle n'est pas présumée M0.",
+      "condition_not_m0": "Désactivé : mesures faites dans une autre condition que M0."
+    }
   }
 }

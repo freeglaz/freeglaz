@@ -33,6 +33,9 @@ export default function ProfileBuildPanel({
   chartId = null, onSelectionChange,                        // additional sources
   nameNotice = null,                                        // ASCII/length only (BELOW the field; collision → parent pop-up)
   preview = null,                                           // useBuildPreview state: shown, and gates the build
+  // two-pass profiling, final pass: the variant presets the sources ({extra_chart_ids, nameSuffix});
+  // the user still sees and can change them, and the preview says what will be built
+  presetSources = null,
 }) {
   const { t } = useTranslation();
 
@@ -57,6 +60,17 @@ export default function ProfileBuildPanel({
       .catch(() => { if (!cancelled) setSources({ extra_charts: [], profiles: [] }); });
     return () => { cancelled = true; };
   }, [chartId]);
+
+  // a new preset (or the same one on another chart, once its sources are known) is applied once;
+  // the user may change the selection afterwards (React's "adjust state on prop change")
+  const presetKey = presetSources && sources ? `${chartId}|${JSON.stringify(presetSources)}` : null;
+  const [appliedPreset, setAppliedPreset] = useState(null);
+  if (presetKey && presetKey !== appliedPreset) {
+    setAppliedPreset(presetKey);
+    const known = new Set((sources.extra_charts || []).map((c) => c.chart_id));
+    setSelCharts(new Set((presetSources.extra_chart_ids || []).filter((id) => known.has(id))));
+    setName((sources.suggested_name || '') + (presetSources.nameSuffix || ''));
+  }
 
   useEffect(() => {
     onSelectionChange?.({

@@ -34,6 +34,14 @@ import {
 import { openInLibrary } from '../../lib/libraryLink.js';
 import MeasurementBadge from './MeasurementBadge.jsx';
 import ExternalMeasurePanel from '../ExternalMeasure/ExternalMeasurePanel.jsx';
+import TwoPassCompose from './TwoPassCompose.jsx';
+import StrategyRunPanel from './StrategyRunPanel.jsx';
+import StrategyBadge from './StrategyBadge.jsx';
+import { usePrinttargEstimate } from '../../hooks/usePrinttargEstimate.js';
+import {
+  STRATEGY_TWO_PASS, activeRuns, currentPatches, formFromParams, offersQuasiRandomFallback,
+  paperTotal, paramsFromForm, printCheck, stepAction, strategyCreateRequest,
+} from '../../lib/profilingStrategy.js';
 
 /**
  * ArgyllProfileWizard — custom profiling (Argyll) as an ACTION ON THE SLOT, mirroring
@@ -100,8 +108,13 @@ function NSelect({ value, onChange, options, disabled = false }) {
   );
 }
 
-export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = 'print', onDone, profile, initialChart = null }) {
+export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: modeProp = 'print', onDone, profile, initialChart = null,
+                                              strategyContinuation = null }) {
   const { t } = useTranslation();
+  // A scan-mode wizard switches to composition for pass 2 of a two-pass profiling ("Prepare
+  // pass 2" on a scanned first pass): the effective mode, reset at each opening.
+  const [modeOverride, setModeOverride] = useState(null);
+  const mode = modeOverride || modeProp;
   const loadedPaper = useLoadedPaper();   // live status.paper → default chart format (roll if a roll is loaded)
   // Built-in spectro scan: Z9 only (the Z9 Pro firmware crashes on it). The backend
   // refuses it anyway (409 scan_unsupported_model); here we only hide the action
@@ -151,6 +164,20 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
   // printtarg -a / -h chosen for an external chart (made valid for the instrument below)
   const [layoutChoice, setLayoutChoice] = useState({ patchScale: null, highDensity: false });
   const [estimateRes, setEstimateRes] = useState(null);   // last paper estimate answer {key, …}
+  // ─── profiling strategy (print mode): one pass = the wizard as before; two passes = the
+  // two-pass adaptive profiling (lib/profilingStrategy.js; lines and checks are the server's)
+  const [strategyMode, setStrategyMode] = useState(strategyContinuation ? 'two' : 'one');   // one | two
+  const [stratDefs, setStratDefs] = useState(null);          // GET /api/profiling-strategies
+  const [twoForm, setTwoForm] = useState(() => formFromParams(null));
+  const [continuation, setContinuation] = useState(strategyContinuation);   // {run, buildId} → pass 2
+  const [stratRunRes, setStratRunRes] = useState({ run: null, data: null });   // the run continued (pass 2)
+  const [composed, setComposed] = useState(null);            // lines the server will run
+  const [composeErr, setComposeErr] = useState(null);
+  const [runsRes, setRunsRes] = useState({ key: null, runs: [] });   // resume card
+  const [fallbackOffer, setFallbackOffer] = useState(false); // targen failed: -Q offered, never applied alone
+  const [printConfirm, setPrintConfirm] = useState(null);    // later pass: warnings to confirm before printing
+  const [presetSources, setPresetSources] = useState(null);  // final pass: variant → build panel sources
+  const [finalLineFor, setFinalLineFor] = useState(null);    // chart whose final line was prefilled
 
   // ─── scan ───
   const [charts, setCharts] = useState(null);
@@ -202,7 +229,8 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
                             [nKeptBuild, profileBase, colprofFlags, extraSources]);
   const stateStamp = useMemo(() => chartStateStamp(chartDetail), [chartDetail]);
   const preview = useBuildPreview(selected?.chart_id, buildBody, {
-    enabled: phase === 'scanned' && !isValidate && !!chartDetail, stateStamp, nonce: previewNonce });
+    enabled: phase === 'scanned' && !isValidate && !!chartDetail && chartDetail?.identity?.strategy?.role !== 'preconditioning',
+    stateStamp, nonce: previewNonce });
 
   // reset on opening
   useEffect(() => {
@@ -211,14 +239,17 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
     // from Measurements) → we skip the filtered list, straight to scanready, at any
     // stage (bypasses the list's printed:true filter, without touching it).
     // ADDITIVE path: without initialChart, behavior UNCHANGED (select + list).
-    const directScan = mode === 'scan' && !!initialChart;
-    setPhase(directScan ? 'scanready' : (mode === 'scan' || isValidate) ? 'select' : 'compose');
+    const directScan = modeProp === 'scan' && !!initialChart;
+    setPhase(directScan ? 'scanready' : (modeProp === 'scan' || isValidate) ? 'select' : 'compose');
     setError(null); setBusy(false); setSelected(directScan ? initialChart : null); setResult(null);
     setScanInfo(null); setProfInfo(null); setPrintInfo(null); setConfirmPrint(false);
     setScanProg(null); setCooldownSec(0); setNScans(0);
     setQcScan({ key: null, loading: false, report: null, error: null }); setMeasuresOpen(false);
     setProfileBase('average'); setChartMovedAsk(false);
     setCChoice('zero');                 // reset precond default (Start from scratch) each open
+    setStrategyMode(strategyContinuation ? 'two' : 'one'); setContinuation(strategyContinuation);
+    setComposed(null); setComposeErr(null); setFallbackOffer(false); setPrintConfirm(null);
+    setPresetSources(null); setModeOverride(null);
     setMethodChoice(null); setInstrumentChoice(null);   // family default at each open, then the user's
     formatDefaultedRef.current = false; // re-arm the format default (applied once formats load)
     setClcWarn(null);
@@ -228,8 +259,9 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
     // Validation: INDEPENDENT distribution by default = quasi-random device (-q),
     // != the deterministic OFPS of creation + moderate count (we verify, we don't build).
     // Editable. The non-overlap vs creation is cross-checked in the report.
-    if (mode === 'validate') setFlags('-q -f 64');
-  }, [open, mode, initialChart]);
+    if (modeProp === 'validate') setFlags('-q -f 64');
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- isValidate follows modeProp
+  }, [open, modeProp, initialChart, strategyContinuation]);
 
   // Default chart format = the loaded media's REAL width (roll 17"→44" derived from
   // status.paper.width_mm, matched against the roll formats' physical width), never a
@@ -256,6 +288,65 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
     api.getTargenPresets().then((d) => setPresets(d.presets || [])).catch(() => {});
     api.getPrinttargOptions().then(setPtOptions).catch(() => setPtOptions(false));
   }, [open, mode]);
+
+  // Profiling strategies (print mode only; a validation chart is never a strategy pass).
+  useEffect(() => {
+    if (!open || mode !== 'print') return;
+    api.getProfilingStrategies().then((d) => {
+      setStratDefs(d);
+      const def = (d.strategies || []).find((x) => x.id === STRATEGY_TWO_PASS);
+      if (def && !strategyContinuation) setTwoForm(formFromParams(def.default_params));
+    }).catch(() => setStratDefs(false));
+  }, [open, mode, strategyContinuation]);
+
+  // Pass 2: the run continued (its frozen parameters, its first chart's instrument).
+  const stratRun = continuation?.run && stratRunRes.run === continuation.run ? stratRunRes.data : null;
+  useEffect(() => {
+    if (!open || !continuation?.run) return undefined;
+    let alive = true;
+    api.getStrategyRun(continuation.run).then((r) => {
+      if (!alive) return;
+      setStratRunRes({ run: continuation.run, data: r });
+      const params = r.first?.params || r.later?.[r.later.length - 1]?.params;
+      if (params) setTwoForm(formFromParams(params));
+      // the instrument is inherited and locked: the method follows the first chart's layout
+      if (r.first) {
+        setMethodChoice(r.first.layout === 'printtarg' ? METHOD_EXTERNAL : METHOD_INTEGRATED);
+        if (r.first.instrument) setInstrumentChoice(r.first.instrument);
+      }
+    }).catch((e) => { if (alive) setError(errorText(e, t)); });
+    return () => { alive = false; };
+  }, [open, continuation?.run, t]);
+
+  // Lines the server WILL run for the two-pass form (debounced; never rebuilt client-side).
+  const twoPassActive = strategyMode === 'two' && mode === 'print';
+  const passId = continuation ? 'pass2' : 'pass1';
+  const composeKey = twoPassActive && phase === 'compose'
+    ? JSON.stringify({ params: paramsFromForm(twoForm, passId), run: continuation?.run || null }) : null;
+  useEffect(() => {
+    if (!composeKey) return undefined;
+    let alive = true;
+    const timer = setTimeout(() => {
+      const { params, run } = JSON.parse(composeKey);
+      api.composeStrategy({ strategy: STRATEGY_TWO_PASS, params, run })
+        .then((d) => { if (alive) { setComposed(d.passes || null); setComposeErr(null); } })
+        .catch((e) => { if (alive) { setComposed(null); setComposeErr({ code: e?.detail?.code || null, message: errorText(e, t) }); } });
+    }, 300);
+    return () => { alive = false; clearTimeout(timer); };
+  }, [composeKey, t]);
+
+  // Resume card: runs of this paper still waiting for something (derived from the charts).
+  const runsKey = open && mode === 'print' && !continuation && phase === 'compose' && mediaid ? `${mediaid}|${geStr}` : null;
+  const runsInProgress = runsKey && runsRes.key === runsKey ? runsRes.runs : [];
+  useEffect(() => {
+    if (!runsKey) return undefined;
+    let alive = true;
+    api.getStrategyRuns({ paper: mediaid, ge: geStr })
+      .then((d) => { if (alive) setRunsRes({ key: runsKey, runs: activeRuns(d.runs) }); })
+      .catch(() => { if (alive) setRunsRes({ key: runsKey, runs: [] }); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mediaid/geStr are in runsKey
+  }, [runsKey]);
 
   // colprof: presets + opinionated default line (pre-filled, overridable). Loaded
   // on opening (both modes profile in the end; print chains into the scan).
@@ -354,15 +445,20 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
   const fmt = useMemo(() => formats.find((f) => f.key === effMediaKey), [formats, effMediaKey]);
   // honeycomb capacity only: the printtarg generator lays out any count on the roll
   const maxPatches = external ? null : (fmt?.max_patches ?? null);
-  const fCount = srcMode === 'targen' ? _extractF(flags) : null;
+  const fCount = twoPassActive ? currentPatches(twoForm, passId) : (srcMode === 'targen' ? _extractF(flags) : null);
   const fOver = fCount != null && maxPatches != null && fCount > maxPatches;
   const layoutOpts = external ? layoutOptionsFor(ptOptions || null, instrument) : null;
   const layout = resolveLayoutChoice(layoutChoice, layoutOpts);
   // Paper estimate BEFORE generating the TIFF: the backend runs printtarg's layout probes with
   // the chart's own preset and options (debounced; only the answer to the current request shows).
   const estimateReq = external && phase === 'compose'
-    ? estimateRequest({ instrument, mediaKey: effMediaKey, srcMode, fCount, ti1Text, choice: layout })
+    ? estimateRequest({ instrument, mediaKey: effMediaKey, srcMode: twoPassActive ? 'targen' : srcMode, fCount, ti1Text, choice: layout })
     : { skip: 'off' };
+  // two passes: the paper of the OTHER pass too (pass 2 planned with the same settings at pass 1)
+  const otherEstimateReq = external && phase === 'compose' && twoPassActive && passId === 'pass1'
+    ? estimateRequest({ instrument, mediaKey: effMediaKey, srcMode: 'targen', fCount: Number(twoForm.pass2Patches) || null, ti1Text: '', choice: layout })
+    : { skip: 'off' };
+  const otherEstimate = usePrinttargEstimate(otherEstimateReq.body || null, t);
   const estimateKey = estimateReq.body ? JSON.stringify(estimateReq.body) : null;
   useEffect(() => {
     if (!estimateKey) return undefined;
@@ -424,10 +520,42 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
   const canCreate = mediaid && !fOver && !busy && method != null
     && !(external && estimate?.state === 'error' && estimate.code === 'too_many_strips_for_sheet')
     && (!external || (instrument && effMediaKey && availability[METHOD_EXTERNAL].note !== 'printtarg_missing'))
-    && (srcMode === 'ti1' ? ti1Text.trim() : flags.trim());
+    && (twoPassActive ? (!!fCount && !composeErr && (!continuation || !!stratRun?.first))
+      : (srcMode === 'ti1' ? ti1Text.trim() : flags.trim()));
 
-  async function doCreate() {
-    setBusy(true); setError(null);
+  // Two passes, pass 2: opened from "Prepare pass 2" (Measurements, the scanned screen or the
+  // resume card) with the run and the exact intermediate version to precondition with.
+  function startPass2({ run, buildId }) {
+    if (mode !== 'print') setModeOverride('print');
+    setContinuation({ run, buildId }); setStrategyMode('two');
+    setResult(null); setSelected(null); setError(null); setFallbackOffer(false);
+    formatDefaultedRef.current = false;
+    setPhase('compose');
+  }
+
+  async function doCreate(formOverride = null) {
+    setBusy(true); setError(null); setFallbackOffer(false);
+    if (twoPassActive) {
+      const form = formOverride || twoForm;
+      try {
+        const body = {
+          media_key: effMediaKey, paper_mediaid: mediaid, paper_name: paperName, gloss_enhancer: geStr,
+          purpose: 'profiling',
+          strategy: strategyCreateRequest({ passId, form, run: continuation?.run, buildId: continuation?.buildId }),
+        };
+        if (external) {
+          body.layout = 'printtarg'; body.instrument = instrument;
+          body.patch_scale = layout.patchScale; body.high_density = layout.highDensity;
+        }
+        const created = await api.createChart(body);
+        setResult(created); setPhase('preview');
+      } catch (e) {
+        setFallbackOffer(offersQuasiRandomFallback(e));
+        setError(e?.detail?.code ? t(`strategy.error.${e.detail.code}`, { defaultValue: errorText(e, t) }) : errorText(e, t));
+        setPhase('compose');
+      } finally { setBusy(false); }
+      return;
+    }
     try {
       const body = {
         media_key: effMediaKey,   // cols derived on the backend (step-not-fixed model), no longer sent
@@ -449,7 +577,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
     finally { setBusy(false); }
   }
 
-  async function doPrint(skipClc = false) {
+  async function doPrint(skipClc = false, confirmWarnings = false) {
     // CLC safety net BEFORE printing the chart: calibration acts on what gets printed.
     // Printing under a non-fresh CLC = wasting paper/ink/scan on an already-drifted chart.
     // BEST-EFFORT (if reading clc is impossible → we don't block printing). skipClc=true =
@@ -465,9 +593,17 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
     }
     setConfirmPrint(false); setBusy(true); setError(null); setPhase('printing');
     try {
-      const info = await api.printChart(result.chart_id, { quality: 'HIGH' });
+      const info = await api.printChart(result.chart_id, { quality: 'HIGH', confirm_condition_warnings: confirmWarnings });
       setSelected(result); setPrintInfo(info); setPhase('printed');
-    } catch (e) { setError(errorText(e, t)); setPhase('preview'); }
+    } catch (e) {
+      // later pass of a two-pass profiling: conditions checked BEFORE any paper is used
+      const pc = printCheck(e);
+      if (pc?.kind === 'confirm') setPrintConfirm(pc);
+      else if (pc?.kind === 'blocked') {
+        setError(t('strategy.print.blocked', { list: pc.codes.map((c) => t(`strategy.print.code.${c}`, { defaultValue: c })).join(' · ') }));
+      } else setError(errorText(e, t));
+      setPhase('preview');
+    }
     finally { setBusy(false); }
   }
 
@@ -677,6 +813,47 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
   const activeDeltaChartId = concordanceDelta?._chartId || selected?.chart_id;
   // Number of KEPT scans (the toggle excludes) → drives the base selector + the average.
   const nKeptScanned = chartDetail ? chartDetail.scans.filter((s) => s.kept).length : nScans;
+  // ─── two-pass profiling (print mode): selector + resume card, and the composition of a pass ───
+  function resumeRun(r) {
+    const action = stepAction(r.next_step);
+    if (action === 'create_pass2' && r.first?.intermediate?.build_id) {
+      startPass2({ run: r.run, buildId: r.first.intermediate.build_id }); return;
+    }
+    const last = r.later?.length ? r.later[r.later.length - 1].chart_id : null;
+    const target = action === 'open_first' ? (r.first?.chart_id || last) : (last || r.first?.chart_id);
+    handleClose();
+    if (target) openInLibrary(target);
+  }
+  const twoPassAvailable = mode === 'print' && !!stratDefs && (stratDefs.strategies || []).some((x) => x.id === STRATEGY_TWO_PASS);
+  const strategyNode = twoPassAvailable ? (
+    <StrategySelector t={t} value={strategyMode} locked={!!continuation} runs={runsInProgress} onResume={resumeRun}
+                      onChange={(v) => { setStrategyMode(v); setError(null); setFallbackOffer(false); }}/>
+  ) : null;
+  const curRoll = estimate?.state === 'ok' ? estimate.data?.roll_length_mm : null;
+  const otherRoll = passId === 'pass1' ? (otherEstimate?.state === 'ok' ? otherEstimate.data?.roll_length_mm : null)
+    : (stratRun?.first?.roll_length_mm ?? null);
+  const totalRoll = paperTotal(curRoll, otherRoll);
+  const twoPassNode = twoPassActive ? (
+    <TwoPassCompose t={t} passId={passId} form={twoForm} setForm={setTwoForm} choices={stratDefs?.choices}
+      composed={composed} composeError={composeErr} run={stratRun} maxPatches={maxPatches} dev={DEV}
+      paperNode={external && estimate ? <PaperEstimate t={t} estimate={estimate}/> : null}
+      otherPaperNode={!external ? null : passId === 'pass1'
+        ? (otherEstimate ? <PaperEstimate t={t} estimate={otherEstimate}/> : null)
+        : (stratRun?.first ? <FirstPassPaper t={t} first={stratRun.first}/> : null)}
+      totalNode={external && totalRoll != null ? (
+        <p className="text-tiny font-semibold text-text-strong" data-strategy-total-roll={Math.round(totalRoll)}>
+          {t('strategy.paper.total', { m: (totalRoll / 1000).toLocaleString(undefined, { maximumFractionDigits: 2 }) })}
+        </p>) : null}/>
+  ) : null;
+  // the chart of the scanned screen belongs to a two-pass profiling (honeycomb charts)
+  const scannedStrategy = chartDetail?.identity?.strategy || null;
+  const scannedIsFirstPass = scannedStrategy?.id === STRATEGY_TWO_PASS && scannedStrategy.pass === 'pass1';
+  const scannedFinalLine = scannedStrategy?.role === 'final' ? scannedStrategy.lines?.colprof_flags : null;
+  if (scannedFinalLine && finalLineFor !== chartDetail.identity.chart_id) {
+    setFinalLineFor(chartDetail.identity.chart_id);          // the strategy's final line, still editable
+    setColprofFlags(scannedFinalLine);
+  }
+
   const kicker = isValidate ? t('chart_create.kicker_validate')
                : mode === 'scan' ? t('chart_create.kicker_scan') : t('chart_create.kicker');
   const title = isValidate ? t('chart_create.title_validate')
@@ -707,7 +884,21 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
         <div className="flex-1 min-h-0 px-6 py-5 overflow-y-auto space-y-5 text-sm text-text-strong">
           {error && (
             <div className="flex items-start gap-2 text-xs2 text-danger bg-danger/10 rounded-md px-3 py-2">
-              <AlertTriangle size={14} className="mt-0.5"/><span>{error}</span>
+              <AlertTriangle size={14} className="mt-0.5"/>
+              <span className="flex-1">{error}
+                {fallbackOffer && phase === 'compose' && (
+                  <span className="block mt-1.5 text-text-strong">
+                    {t('strategy.fallback.explain')}{' '}
+                    <button type="button" data-action="retry-quasi-random" disabled={busy}
+                            onClick={() => {
+                              const key = passId === 'pass2' ? 'pass2Ofps' : 'pass1Ofps';
+                              const next = { ...twoForm, [key]: 'Q' };
+                              setTwoForm(next); doCreate(next);
+                            }}
+                            className="underline font-semibold text-accent disabled:opacity-50">{t('strategy.fallback.retry')}</button>
+                  </span>
+                )}
+              </span>
             </div>
           )}
 
@@ -726,9 +917,11 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
               method={method} availability={availability} onMethod={setMethodChoice}
               ptOptions={ptOptions} instrument={instrument} onInstrument={setInstrumentChoice}
               extFormats={extFormats} mediaCheck={mediaCheck} extKey={effMediaKey}
-              layoutOpts={layoutOpts} layout={layout} onLayoutChoice={setLayoutChoice} estimate={estimate}/>
+              layoutOpts={layoutOpts} layout={layout} onLayoutChoice={setLayoutChoice} estimate={estimate}
+              strategyNode={strategyNode} twoPassNode={twoPassNode} methodLocked={!!continuation && twoPassActive}/>
           )}
 
+          {phase === 'preview' && result?.strategy && <StrategyCreatedNote t={t} strategy={result.strategy}/>}
           {phase === 'preview' && result && !resultExternal && (
             <PreviewView t={t} result={result} mediaKey={mediaKey} geStr={geStr} dev={DEV}/>
           )}
@@ -849,9 +1042,17 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
                 <ScanDeltaCard delta={scanDelta} onSeeAll={() => setDeltaAllOpen(true)}/>
               )}
 
+              {/* two-pass profiling: the run, and for its first pass the intermediate profile */}
+              {scannedStrategy && (
+                <StrategyRunPanel chartId={selected?.chart_id} identity={chartDetail?.identity} nIncluded={nKeptScanned}
+                  stateStamp={stateStamp} onPreparePass2={startPass2} onBuilt={_loadScanned}
+                  colprofFlags={colprofFlags} setColprofFlags={setColprofFlags} onVariant={setPresetSources}
+                  preview={preview}/>
+              )}
+
               {/* SHARED build controls (base + colprof + command). Button OMITTED here → the
                   wizard footer keeps its [Profile] (doProfile) unchanged (no regression). */}
-              <ProfileBuildPanel
+              {!scannedIsFirstPass && <ProfileBuildPanel
                 nIncluded={nKeptScanned}
                 base={profileBase} setBase={setProfileBase}
                 colprofFlags={colprofFlags} setColprofFlags={setColprofFlags}
@@ -861,7 +1062,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
                 loadColprofHelp={loadColprofHelp} showColprofHelp={showColprofHelp}
                 colprofHelp={colprofHelp}
                 chartId={selected?.chart_id} onSelectionChange={setExtraSources}
-                nameNotice={nameNotice} preview={preview}/>
+                nameNotice={nameNotice} preview={preview} presetSources={presetSources}/>}
 
               <div className="rounded-md border border-border-soft px-3 py-2 text-tiny text-text-faint leading-relaxed">
                 <Info size={12} className="inline mr-1 -mt-0.5"/>
@@ -885,9 +1086,10 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
           <div className="px-6 py-4 border-t border-border-soft flex items-center justify-end gap-2">
             <button type="button" onClick={handleClose}
                     className="text-xs2 text-text-muted hover:text-text-strong px-3 py-1.5">{t('common.cancel')}</button>
-            <button type="button" onClick={doCreate} disabled={!canCreate}
+            <button type="button" onClick={() => doCreate()} disabled={!canCreate} data-action="create-chart"
                     className="flex items-center gap-1.5 text-xs2 font-semibold bg-accent text-on-accent px-4 py-1.5 rounded-md disabled:opacity-40 hover:bg-accent-press">
-              <Grid3x3 size={14}/>{busy ? t('chart_create.creating') : t('chart_create.create')}
+              <Grid3x3 size={14}/>{busy ? t('chart_create.creating')
+                : twoPassActive ? t('strategy.compose.create_pass', { index: passId === 'pass2' ? 2 : 1 }) : t('chart_create.create')}
             </button>
           </div>
         )}
@@ -937,12 +1139,12 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
                 <ScanLine size={14}/>{t('scan.roll.scan_again')}
               </button>
             )}
-            <button type="button" onClick={() => (isValidate ? doValidate() : doProfile())} data-action="wizard-build"
+            {!scannedIsFirstPass && <button type="button" onClick={() => (isValidate ? doValidate() : doProfile())} data-action="wizard-build"
                     disabled={busy || (!isValidate && (preview.status !== 'ready' || !!preview.data?.would_be_refused))}
                     className="flex items-center gap-1.5 text-xs2 font-semibold bg-accent text-on-accent px-4 py-1.5 rounded-md hover:bg-accent-press disabled:opacity-50">
               {isValidate ? <ShieldCheck size={14}/> : <FlaskConical size={14}/>}
               {isValidate ? t('chart_create.validate_btn') : t('chart_create.profile_btn')}
-            </button>
+            </button>}
           </div>
         )}
 
@@ -973,6 +1175,17 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
           confirmKind="primary"
           onConfirm={() => doPrint()}
           onCancel={() => setConfirmPrint(false)}/>
+      )}
+
+      {/* Later pass of a two-pass profiling: the print conditions changed since the first pass */}
+      {printConfirm && (
+        <ConfirmModal open
+          icon={<AlertTriangle size={18} className="text-warn"/>}
+          title={t('strategy.print.confirm_title')}
+          message={t('strategy.print.confirm_body', { list: printConfirm.codes.map((c) => t(`strategy.print.code.${c}`, { defaultValue: c })).join(' · ') })}
+          confirmLabel={t('strategy.print.confirm_btn')} cancelLabel={t('common.cancel')} confirmKind="primary"
+          onConfirm={() => { setPrintConfirm(null); doPrint(true, true); }}
+          onCancel={() => setPrintConfirm(null)}/>
       )}
 
       {/* Chart deletion / lightening confirmation (manual, never auto) */}
@@ -1130,6 +1343,77 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode = '
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Profiling strategy selector (print mode) + the runs of this paper still in progress.
+function StrategySelector({ t, value, onChange, locked, runs = [], onResume }) {
+  return (
+    <div className="space-y-2" data-strategy-selector={value}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs font-semibold text-text-strong uppercase tracking-wide">{t('strategy.selector.title')}</span>
+        <span className="whitespace-nowrap">
+          <Segmented value={value} onChange={locked ? () => {} : onChange} options={[
+            { value: 'one', label: t('strategy.selector.one') },
+            { value: 'two', label: t('strategy.selector.two') },
+          ]}/>
+        </span>
+      </div>
+      <p className="text-tiny text-text-faint leading-snug">
+        {t(value === 'two' ? 'strategy.selector.two_desc' : 'strategy.selector.one_desc')}
+      </p>
+      {!locked && runs.length > 0 && (
+        <div className="space-y-1.5" data-resume-runs={runs.length}>
+          {runs.slice(0, 3).map((r) => (
+            <div key={r.run} data-resume-run={r.run}
+                 className="flex items-center gap-2 rounded-md border border-accent/30 bg-accent/[0.05] px-3 py-2 text-xs2">
+              <span className="flex-1 min-w-0">
+                <span className="font-semibold text-text-strong">{t('strategy.resume.title')}</span>{' '}
+                <span className="font-mono text-text-muted">{r.run}</span>
+                <span className="block text-tiny text-text-muted">{t('strategy.resume.next', { step: t(`strategy.step.${r.next_step}`) })}</span>
+              </span>
+              <button type="button" onClick={() => onResume(r)} data-action="resume-run"
+                      className="flex-shrink-0 text-xs2 font-semibold border border-accent/50 text-accent rounded-md px-3 py-1 hover:bg-accent/10">
+                {t('strategy.resume.btn')}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// After creating a pass: which pass, the targen line actually run, the preconditioner used.
+function StrategyCreatedNote({ t, strategy }) {
+  const argv = (strategy.targen_argv || []).map((a, i) => (i === 0 ? 'targen' : (/[\\/]/.test(a) ? a.split(/[\\/]/).pop() : a)));
+  return (
+    <div className="rounded-md border border-accent/30 bg-accent/[0.05] px-3 py-2 text-tiny leading-snug space-y-1" data-strategy-created={strategy.pass}>
+      <div className="flex items-center gap-2 text-xs2 font-semibold text-text-strong">
+        <StrategyBadge strategy={strategy}/>{t(`strategy.created.${strategy.pass}`, { defaultValue: strategy.pass })}
+      </div>
+      {strategy.precondition && (
+        <p className="text-text-muted">{t('strategy.created.precondition', { id: strategy.precondition.chart_id })}</p>
+      )}
+      {(strategy.notices || []).map((n) => (
+        <p key={n.code} className="text-warn" data-strategy-notice={n.code}>{t(`strategy.notice.${n.code}`, { defaultValue: n.code })}</p>
+      ))}
+      {argv.length > 0 && (
+        <p className="text-text-faint"><span>{t('strategy.created.argv')}</span>{' '}
+          <code className="font-mono break-all" data-line="targen_argv">{argv.join(' ')}</code></p>
+      )}
+    </div>
+  );
+}
+
+// Pass 2 composition: what the first pass actually took.
+function FirstPassPaper({ t, first }) {
+  return (
+    <p className="text-tiny text-text-muted leading-snug" data-first-pass-paper={first.roll_length_mm ?? ''}>
+      {first.roll_length_mm != null
+        ? t('strategy.paper.first_roll', { id: first.chart_id, n: first.patch_count ?? '—', mm: Math.round(first.roll_length_mm) })
+        : t('strategy.paper.first_sheet', { id: first.chart_id, n: first.patch_count ?? '—', format: first.format || '—' })}
+    </p>
+  );
+}
+
 function Section({ n, title, children }) {
   return (
     <div className="space-y-2">
@@ -1159,14 +1443,16 @@ function ComposeView({
   validate = false,
   method, availability, onMethod, ptOptions, instrument, onInstrument, extFormats = [], mediaCheck,
   extKey = null, layoutOpts = null, layout = null, onLayoutChoice = () => {}, estimate = null,
+  strategyNode = null, twoPassNode = null, methodLocked = false,
 }) {
   const external = method === METHOD_EXTERNAL;
   return (
     <>
+      {!validate && strategyNode}
       <Section n="1" title={t('measurement.method_title')}>
         <MethodChooser t={t} method={method} availability={availability} onMethod={onMethod}
                        ptOptions={ptOptions} instrument={instrument} onInstrument={onInstrument} mediaKey={extKey}
-                       layoutOpts={layoutOpts} layout={layout} onLayoutChoice={onLayoutChoice}/>
+                       layoutOpts={layoutOpts} layout={layout} onLayoutChoice={onLayoutChoice} locked={methodLocked}/>
       </Section>
 
       <Section n="2" title={t('chart_create.layer_format')}>
@@ -1179,8 +1465,9 @@ function ComposeView({
               <span className="text-tiny text-text-faint">{t('measurement.media.only', { formats: extFormats.map((f) => f.name || f.key).join(' / ') || '—' })}</span>
             </div>
             <MediaNotice t={t} check={mediaCheck}/>
-            {estimate ? <PaperEstimate t={t} estimate={estimate}/>
-              : <p className="text-tiny text-text-faint leading-snug">{t('measurement.dims_after_creation')}</p>}
+            {twoPassNode ? <p className="text-tiny text-text-faint leading-snug">{t('strategy.paper.see_composition')}</p>
+              : estimate ? <PaperEstimate t={t} estimate={estimate}/>
+                : <p className="text-tiny text-text-faint leading-snug">{t('measurement.dims_after_creation')}</p>}
           </div>
         ) : (
           <div className="flex items-center gap-3 flex-wrap">
@@ -1195,6 +1482,7 @@ function ComposeView({
       </Section>
 
       <Section n="3" title={t('chart_create.layer_composition')}>
+        {twoPassNode || (<>
         <Segmented value={srcMode} options={[
           { value: 'targen', label: t('chart_create.mode_targen') },
           { value: 'ti1', label: t('chart_create.mode_ti1') },
@@ -1286,6 +1574,7 @@ function ComposeView({
                       className="w-full bg-sunken rounded px-2.5 py-1.5 font-mono text-tiny text-text-strong"/>
           </div>
         )}
+        </>)}
       </Section>
 
       {dev && (
@@ -1300,7 +1589,7 @@ function ComposeView({
 // Measurement method: two cards (built-in HP / external) + the instrument list of the backend.
 // An unavailable method stays visible, disabled, with its reason (never silently dropped).
 function MethodChooser({ t, method, availability, onMethod, ptOptions, instrument, onInstrument, mediaKey = null,
-                         layoutOpts = null, layout = null, onLayoutChoice = () => {} }) {
+                         layoutOpts = null, layout = null, onLayoutChoice = () => {}, locked = false }) {
   const cards = [
     { value: METHOD_INTEGRATED, title: t('measurement.method.integrated'), desc: t('measurement.method.integrated_desc') },
     { value: METHOD_EXTERNAL, title: t('measurement.method.external'), desc: t('measurement.method.external_desc') },
@@ -1310,13 +1599,18 @@ function MethodChooser({ t, method, availability, onMethod, ptOptions, instrumen
   // the preset of the format the chart will be made for (the loaded paper's), else the first
   const preset = current?.presets?.find((p) => p.media_key === mediaKey) || current?.presets?.[0];
   return (
-    <div className="space-y-2" data-method={method || ''}>
+    <div className="space-y-2" data-method={method || ''} data-method-locked={locked ? '1' : '0'}>
+      {locked && (
+        <p className="text-tiny text-text-muted flex items-center gap-1" data-instrument-locked>
+          <ShieldCheck size={12} className="text-accent"/>{t('strategy.compose.instrument_locked')}
+        </p>
+      )}
       <div className="grid grid-cols-2 gap-2">
         {cards.map((c) => {
           const av = availability?.[c.value] || {};
           const on = method === c.value;
           return (
-            <button key={c.value} type="button" data-method-option={c.value} disabled={!av.available}
+            <button key={c.value} type="button" data-method-option={c.value} disabled={!av.available || (locked && !on)}
                     aria-pressed={on} onClick={() => onMethod(c.value)}
                     className={`text-left rounded-lg px-3 py-2 border transition-colors ${
                       on ? 'border-accent/50 bg-accent/[0.06]' : 'border-border-soft hover:border-border-strong'
@@ -1342,7 +1636,7 @@ function MethodChooser({ t, method, availability, onMethod, ptOptions, instrumen
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <span className="text-xs2 text-text-muted">{t('measurement.instrument_label')}</span>
-            <NSelect value={instrument || ''} onChange={onInstrument}
+            <NSelect value={instrument || ''} onChange={onInstrument} disabled={locked}
                      options={instruments.map((i) => ({ value: i.key, label: instrumentLabel(t, i.key) }))}/>
           </div>
           {preset && (
@@ -1697,6 +1991,7 @@ function SelectView({ t, charts, paperName, onPick, scannedMode = false, onCompo
       {charts.map((c) => (
         <ChartCard key={c.chart_id} chart={c} onClick={onPick}
           info={<>
+            {c.strategy && <><StrategyBadge strategy={c.strategy}/>{' '}</>}
             {c.patch_count != null && `${c.patch_count} ${t('chart_create.patches_short')} · `}
             {c.printed_at}{c.scanned && <span className="text-ok"> · {t('chart_create.already_scanned')}</span>}
             {c.lightened && <span className="text-text-faint"> · {t('chart_create.lightened_badge')}</span>}

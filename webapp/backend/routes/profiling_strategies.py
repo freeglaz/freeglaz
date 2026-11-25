@@ -24,6 +24,7 @@ chart). Here nothing is written: a run's state is DERIVED from its charts (``str
 Routes:
   GET  /api/profiling-strategies               definitions, default lines, choices
   POST /api/profiling-strategies/compose       parameters → bounded values + lines of every pass
+  POST /api/profiling-strategies/compose-one-pass   the one-pass wizard's guided form (no strategy)
   GET  /api/profiling-strategies/runs          runs (filter: paper, ge), with their next step
   GET  /api/profiling-strategies/runs/{run}    one run, with what its next pass needs
 """
@@ -57,7 +58,12 @@ def list_profiling_strategies() -> dict:
     for sdef in _ps.load_strategies().values():
         params = _ps.normalize_params(sdef)
         out.append({**sdef.to_dict(), "passes_composed": _ps.compose_all(sdef, params)})
+    one = _ps.one_pass_defaults()
     return {"strategies": out,
+            # the one-pass wizard's guided form (not a strategy): its values and its lines
+            "one_pass": None if one is None else {
+                "default_params": one,
+                "composed": _ps.compose_one_pass(_ps.normalize_one_pass(preconditioned=True))},
             "choices": {
                 "qualities": list(_ps.QUALITIES), "ofps": list(_ps.OFPS_CHOICES),
                 "viewing_conditions": [{"code": k, "description": v} for k, v in _ps.VIEWING_CONDITIONS.items()],
@@ -92,6 +98,23 @@ def compose_strategy(body: ComposeBody) -> dict:
     except _ps.StrategyError as e:
         raise HTTPException(422, detail=e.to_detail())
     return {"strategy": sdef.id, "params": params, "passes": _ps.compose_all(sdef, params)}
+
+
+class ComposeOnePassBody(BaseModel):
+    params: dict = {}
+    preconditioned: bool = True     # a -c is chosen (resident, built, custom): -N / -n apply
+
+
+@router.post("/compose-one-pass")
+def compose_one_pass(body: ComposeOnePassBody) -> dict:
+    """What the server WILL run for the one-pass wizard's guided form (no file, no binary):
+    the bounded parameters, the targen flags (the chart route adds -d2 and the -c of the
+    wizard's menu) and the colprof line the profile step starts from. 422 with a code otherwise."""
+    try:
+        params = _ps.normalize_one_pass(body.params, preconditioned=body.preconditioned)
+    except _ps.StrategyError as e:
+        raise HTTPException(422, detail=e.to_detail())
+    return {"params": params, **_ps.compose_one_pass(params)}
 
 
 # ── runs (derived from the charts) ───────────────────────────────────────────

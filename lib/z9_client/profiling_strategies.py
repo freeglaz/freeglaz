@@ -411,6 +411,68 @@ def compose_all(sdef: StrategyDef, params: Mapping) -> list[dict]:
     return [compose(sdef, p.id, params) for p in sdef.passes]
 
 
+# ── the one-pass wizard's guided form (not a strategy) ───────────────────────
+# No run, no pass, no ``strategy`` block: one chart and its profile, with the parameters,
+# bounds and composition of a final pass, from the [one_pass] values of the built-in file.
+# Its -c is the wizard's menu (resident, built by freeglaz, custom, or none), resolved by the
+# chart route; without one, targen cannot place the neutral axis, so -N / -n are left out.
+ONE_PASS_CHART = ("patches", "ofps", "grey_steps", "neutral_emphasis", "neutral_steps")
+ONE_PASS_PROFILE = ("quality", "source_gamut", "viewcond_in", "viewcond_out")
+
+
+def one_pass_defaults(path: Optional[Path] = None) -> Optional[dict]:
+    """{"chart": {…}, "profile": {…}} of the guided one-pass form, checked; None when the
+    built-in file (or its [one_pass] table) is absent: the wizard then only offers its free
+    line. Raises StrategyError on a malformed table (a shipped file is a code defect)."""
+    p = Path(path) if path else BUILTIN_TOML
+    if not p.is_file():
+        return None
+    with open(p, "rb") as f:
+        raw = tomllib.load(f).get("one_pass")
+    if raw is None:
+        return None
+    out = {}
+    for section, names, specs in (("chart", ONE_PASS_CHART, CHART_PARAMS),
+                                  ("profile", ONE_PASS_PROFILE, PROFILE_PARAMS)):
+        values = raw.get(section)
+        if not isinstance(values, Mapping) or set(values) != set(names):
+            raise StrategyError("invalid_definition", f"one_pass.{section} must give exactly {list(names)}")
+        out[section] = _check_section(values, specs, f"one_pass.{section}", allowed=names)
+    return out
+
+
+def normalize_one_pass(overrides: Optional[Mapping] = None, *, preconditioned: bool,
+                       path: Optional[Path] = None) -> dict:
+    """The guided form's values with the user's overrides, every value bounded; -N / -n are
+    dropped without a -c (``preconditioned`` False)."""
+    params = one_pass_defaults(path)
+    if params is None:
+        raise StrategyError("one_pass_unavailable", "the guided one-pass form is not shipped with this build")
+    for section, values in (overrides or {}).items():
+        if section not in ("chart", "profile") or not isinstance(values, Mapping):
+            raise StrategyError("unknown_param", f"one_pass.{section} is not a parameter section",
+                                param=f"one_pass.{section}")
+        names, specs = (ONE_PASS_CHART, CHART_PARAMS) if section == "chart" else (ONE_PASS_PROFILE, PROFILE_PARAMS)
+        params[section].update(_check_section(values, specs, f"one_pass.{section}", allowed=names))
+    if not preconditioned:
+        for k in _NEEDS_PRECONDITION:
+            params["chart"].pop(k, None)
+    return params
+
+
+def compose_one_pass(params: Mapping) -> dict:
+    """The targen flags (without -d2 and -c, like a pass) and the colprof flags of the guided
+    one-pass form, from normalized parameters."""
+    prof = params["profile"]
+    vc = None
+    if prof.get("source_gamut") not in (None, SOURCE_GAMUT_NONE):
+        vc = {k: {"code": prof[k], "description": VIEWING_CONDITIONS[prof[k]]}
+              for k in ("viewcond_in", "viewcond_out") if prof.get(k)}
+    return {"targen_flags": compose_targen(params), "colprof_flags": compose_colprof(params),
+            "patches": params["chart"]["patches"],
+            "source_gamut": describe_source_gamut(prof.get("source_gamut")), "viewing_conditions": vc}
+
+
 # ── targen flags given by hand for a strategy pass ───────────────────────────
 def check_free_targen_line(flags: str) -> None:
     """A strategy pass may run a hand-edited targen line, but its -c stays the server's (the

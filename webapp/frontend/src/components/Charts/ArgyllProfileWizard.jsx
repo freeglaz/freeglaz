@@ -37,10 +37,12 @@ import ExternalMeasurePanel from '../ExternalMeasure/ExternalMeasurePanel.jsx';
 import TwoPassCompose from './TwoPassCompose.jsx';
 import StrategyRunPanel from './StrategyRunPanel.jsx';
 import StrategyBadge from './StrategyBadge.jsx';
+import OnePassCompose from './OnePassCompose.jsx';
 import { usePrinttargEstimate } from '../../hooks/usePrinttargEstimate.js';
 import {
   STRATEGY_TWO_PASS, activeRuns, currentPatches, formFromParams, offersQuasiRandomFallback,
   paperTotal, paramsFromForm, printCheck, stepAction, strategyCreateRequest,
+  oneFormFromParams, oneParamsFromForm, plannedColprofLine,
 } from '../../lib/profilingStrategy.js';
 
 /**
@@ -140,7 +142,8 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
   // ─── compose (print) ───
   const [formats, setFormats] = useState([]);
   const [mediaKey, setMediaKey] = useState('a3');
-  const [srcMode, setSrcMode] = useState('targen');         // targen | ti1
+  // guided = the one-pass guided form (same layout as two passes); targen = free line; ti1 = a file
+  const [srcMode, setSrcMode] = useState(mode === 'print' ? 'guided' : 'targen');
   const [flags, setFlags] = useState('-G -f 200');
   const [ti1Text, setTi1Text] = useState('');
   const [ti1Name, setTi1Name] = useState('');
@@ -170,6 +173,8 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
   const [strategyMode, setStrategyMode] = useState(strategyContinuation ? 'two' : 'one');   // one | two
   const [stratDefs, setStratDefs] = useState(null);          // GET /api/profiling-strategies
   const [twoForm, setTwoForm] = useState(() => formFromParams(null));
+  const [oneForm, setOneForm] = useState(() => oneFormFromParams(null));   // one pass, guided form
+  const [oneComposedRes, setOneComposedRes] = useState({ key: null, data: null, error: null });
   const [continuation, setContinuation] = useState(strategyContinuation);   // {run, buildId} → pass 2
   const [stratRunRes, setStratRunRes] = useState({ run: null, data: null });   // the run continued (pass 2)
   const [composed, setComposed] = useState(null);            // lines the server will run
@@ -264,6 +269,8 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
     // != the deterministic OFPS of creation + moderate count (we verify, we don't build).
     // Editable. The non-overlap vs creation is cross-checked in the report.
     if (modeProp === 'validate') setFlags('-q -f 64');
+    // one pass: the guided form first (a validation chart keeps its own free line)
+    setSrcMode(modeProp === 'print' ? 'guided' : 'targen');
     // eslint-disable-next-line react-hooks/exhaustive-deps -- isValidate follows modeProp
   }, [open, modeProp, initialChart, strategyContinuation, printChartId]);
 
@@ -310,6 +317,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
       setStratDefs(d);
       const def = (d.strategies || []).find((x) => x.id === STRATEGY_TWO_PASS);
       if (def && !strategyContinuation) setTwoForm(formFromParams(def.default_params));
+      setOneForm(oneFormFromParams(d.one_pass?.default_params));
     }).catch(() => setStratDefs(false));
   }, [open, mode, strategyContinuation]);
 
@@ -335,6 +343,11 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
   // Lines the server WILL run for the two-pass form (debounced; never rebuilt client-side).
   const twoPassActive = strategyMode === 'two' && mode === 'print';
   const passId = continuation ? 'pass2' : 'pass1';
+  // One pass: the guided form (same layout and controls as two passes) unless this build has no
+  // [one_pass] values; then the free line, as before. A validation chart keeps its free line.
+  const guidedAvailable = mode === 'print' && stratDefs !== false && (stratDefs === null || !!stratDefs.one_pass);
+  const effSrcMode = srcMode === 'guided' && !guidedAvailable ? 'targen' : srcMode;
+  const guidedActive = mode === 'print' && !twoPassActive && effSrcMode === 'guided';
   const composeKey = twoPassActive && phase === 'compose'
     ? JSON.stringify({ params: paramsFromForm(twoForm, passId), run: continuation?.run || null }) : null;
   useEffect(() => {
@@ -461,14 +474,16 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
   const fmt = useMemo(() => formats.find((f) => f.key === effMediaKey), [formats, effMediaKey]);
   // honeycomb capacity only: the printtarg generator lays out any count on the roll
   const maxPatches = external ? null : (fmt?.max_patches ?? null);
-  const fCount = twoPassActive ? currentPatches(twoForm, passId) : (srcMode === 'targen' ? _extractF(flags) : null);
+  const fCount = twoPassActive ? currentPatches(twoForm, passId)
+    : guidedActive ? (Math.round(Number(oneForm.patches)) || null)
+      : (effSrcMode === 'targen' ? _extractF(flags) : null);
   const fOver = fCount != null && maxPatches != null && fCount > maxPatches;
   const layoutOpts = external ? layoutOptionsFor(ptOptions || null, instrument) : null;
   const layout = resolveLayoutChoice(layoutChoice, layoutOpts);
   // Paper estimate BEFORE generating the TIFF: the backend runs printtarg's layout probes with
   // the chart's own preset and options (debounced; only the answer to the current request shows).
   const estimateReq = external && phase === 'compose'
-    ? estimateRequest({ instrument, mediaKey: effMediaKey, srcMode: twoPassActive ? 'targen' : srcMode, fCount, ti1Text, choice: layout })
+    ? estimateRequest({ instrument, mediaKey: effMediaKey, srcMode: (twoPassActive || guidedActive) ? 'targen' : effSrcMode, fCount, ti1Text, choice: layout })
     : { skip: 'off' };
   // two passes: the paper of the OTHER pass too (pass 2 planned with the same settings at pass 1)
   const otherEstimateReq = external && phase === 'compose' && twoPassActive && passId === 'pass1'
@@ -503,6 +518,30 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
     if (cChoice === 'freeglaz') return cFreeglaz || 'none';
     return residentCurrent ? residentCurrent.id : 'none';   // affiner
   }
+
+  // One pass, guided form: the lines the server WILL run (debounced; never rebuilt client-side).
+  // -N / -n only apply with a -c from the menu (resident, built by freeglaz, custom).
+  const onePre = resolveCProfile() !== 'none';
+  const oneKey = guidedActive && phase === 'compose'
+    ? JSON.stringify({ params: oneParamsFromForm(oneForm, onePre), preconditioned: onePre }) : null;
+  useEffect(() => {
+    if (!oneKey) return undefined;
+    let alive = true;
+    const timer = setTimeout(() => {
+      api.composeOnePass(JSON.parse(oneKey))
+        .then((d) => { if (alive) setOneComposedRes({ key: oneKey, data: d, error: null }); })
+        .catch((e) => {
+          if (alive) setOneComposedRes({ key: oneKey, data: null, error: { code: e?.detail?.code || null, message: errorText(e, t) } });
+        });
+    }, 300);
+    return () => { alive = false; clearTimeout(timer); };
+  }, [oneKey, t]);
+  const oneComposed = oneKey && oneComposedRes.key === oneKey ? oneComposedRes.data : null;
+  const oneComposeErr = oneKey && oneComposedRes.key === oneKey ? oneComposedRes.error : null;
+  const cLabel = !onePre ? null
+    : cChoice === 'custom' ? (customs.find((p) => p.id === cCustom)?.name || cCustom)
+      : cChoice === 'freeglaz' ? (builtProfiles.find((p) => p.id === cFreeglaz)?.name || cFreeglaz)
+        : (residentCurrent?.name || residentCurrent?.id || null);
 
   function pickFormat(k) {
     setMediaKey(k);   // cols derived from the format (step-not-fixed model) — no more user choice
@@ -539,7 +578,8 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
     && !(external && estimate?.state === 'error' && estimate.code === 'too_many_strips_for_sheet')
     && (!external || (instrument && effMediaKey && availability[METHOD_EXTERNAL].note !== 'printtarg_missing'))
     && (twoPassActive ? (!!fCount && !composeErr && (!continuation || !!stratRun?.first))
-      : (srcMode === 'ti1' ? ti1Text.trim() : flags.trim()));
+      : guidedActive ? (!!fCount && !oneComposeErr)
+        : (effSrcMode === 'ti1' ? ti1Text.trim() : flags.trim()));
 
   // Two passes, pass 2: opened from "Prepare pass 2" (Measurements, the scanned screen or the
   // resume card) with the run and the exact intermediate version to precondition with.
@@ -561,8 +601,29 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
     } catch (e) { setError(errorText(e, t)); }
   }
 
-  async function doCreate(formOverride = null) {
+  async function doCreate(formOverride = null, oneOverride = null) {
     setBusy(true); setError(null); setFallbackOffer(false);
+    if (guidedActive) {
+      const cProfile = resolveCProfile();
+      try {
+        const body = {
+          media_key: effMediaKey, paper_mediaid: mediaid, paper_name: paperName, gloss_enhancer: geStr,
+          purpose: 'profiling', c_profile: cProfile,
+          guided: { params: oneParamsFromForm(oneOverride || oneForm, cProfile !== 'none') },
+        };
+        if (external) {
+          body.layout = 'printtarg'; body.instrument = instrument;
+          body.patch_scale = layout.patchScale; body.high_density = layout.highDensity;
+        }
+        const created = await api.createChart(body);
+        setResult(created); setPhase('preview');
+      } catch (e) {
+        setFallbackOffer(offersQuasiRandomFallback(e));
+        setError(e?.detail?.code ? t(`strategy.error.${e.detail.code}`, { defaultValue: errorText(e, t) }) : errorText(e, t));
+        setPhase('compose');
+      } finally { setBusy(false); }
+      return;
+    }
     if (twoPassActive) {
       const form = formOverride || twoForm;
       try {
@@ -597,7 +658,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
         body.layout = 'printtarg'; body.instrument = instrument;
         body.patch_scale = layout.patchScale; body.high_density = layout.highDensity;
       }
-      if (srcMode === 'ti1') body.ti1_text = ti1Text;
+      if (effSrcMode === 'ti1') body.ti1_text = ti1Text;
       else body.targen_flags = `-d2 ${flags}`.trim();
       const created = await api.createChart(body);
       setResult(created); setPhase('preview');
@@ -877,10 +938,40 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
           {t('strategy.paper.total', { m: (totalRoll / 1000).toLocaleString(undefined, { maximumFractionDigits: 2 }) })}
         </p>) : null}/>
   ) : null;
+  const startOptions = [
+    ...(residentCurrent ? [{ value: 'affiner', label: t('chart_create.start_refine') }] : []),
+    { value: 'zero', label: t('chart_create.start_zero') },
+    ...(builtProfiles.length ? [{ value: 'freeglaz', label: t('chart_create.start_built') }] : []),
+    ...(customs.length ? [{ value: 'custom', label: t('chart_create.start_custom') }] : []),
+  ];
+  const startHint = cChoice === 'affiner' && residentCurrent
+    ? `${t('chart_create.start_refine_desc')} ${t('chart_create.precond_with', { name: residentCurrent.name })}`
+    : t({ zero: 'chart_create.start_zero_desc', freeglaz: 'chart_create.start_built_desc', custom: 'chart_create.start_custom_desc' }[cChoice]
+        || 'chart_create.start_refine_desc');
+  const onePassNode = guidedActive ? (
+    <OnePassCompose t={t} form={oneForm} setForm={setOneForm} choices={stratDefs?.choices}
+      composed={oneComposed} composeError={oneComposeErr} maxPatches={maxPatches}
+      preconditioned={onePre} cLabel={cLabel} startHint={startHint}
+      startNode={(
+        <span className="flex items-center gap-2 flex-wrap" data-field="start" data-start={cChoice}>
+          <NSelect value={cChoice} onChange={setCChoice} options={startOptions}/>
+          {cChoice === 'freeglaz' && (
+            <NSelect value={cFreeglaz} onChange={setCFreeglaz}
+                     options={builtProfiles.map((p) => ({ value: p.id,
+                       label: [p.name, p.chart_id, (p.built_at || '').slice(0, 10)].filter(Boolean).join(' · ') }))}/>
+          )}
+          {cChoice === 'custom' && (
+            <NSelect value={cCustom} onChange={setCCustom} options={customs.map((p) => ({ value: p.id, label: p.name }))}/>
+          )}
+        </span>
+      )}
+      paperNode={external && estimate ? <PaperEstimate t={t} estimate={estimate}/> : null}
+      onEditLine={(line) => { setFlags(line); setSrcMode('targen'); }}/>
+  ) : null;
   // the chart of the scanned screen belongs to a two-pass profiling (honeycomb charts)
   const scannedStrategy = chartDetail?.identity?.strategy || null;
   const scannedIsFirstPass = scannedStrategy?.id === STRATEGY_TWO_PASS && scannedStrategy.pass === 'pass1';
-  const scannedFinalLine = scannedStrategy?.role === 'final' ? scannedStrategy.lines?.colprof_flags : null;
+  const scannedFinalLine = plannedColprofLine(chartDetail?.identity);   // two-pass final or guided one pass
   if (scannedFinalLine && finalLineFor !== chartDetail.identity.chart_id) {
     setFinalLineFor(chartDetail.identity.chart_id);          // the strategy's final line, still editable
     setColprofFlags(scannedFinalLine);
@@ -923,6 +1014,10 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
                     {t('strategy.fallback.explain')}{' '}
                     <button type="button" data-action="retry-quasi-random" disabled={busy}
                             onClick={() => {
+                              if (guidedActive) {
+                                const next = { ...oneForm, ofps: 'Q' };
+                                setOneForm(next); doCreate(null, next); return;
+                              }
                               const key = passId === 'pass2' ? 'pass2Ofps' : 'pass1Ofps';
                               const next = { ...twoForm, [key]: 'Q' };
                               setTwoForm(next); doCreate(next);
@@ -938,7 +1033,7 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
             <ComposeView
               t={t} formats={formats} mediaKey={mediaKey} pickFormat={pickFormat}
               maxPatches={maxPatches}
-              fmt={fmt} srcMode={srcMode} setSrcMode={setSrcMode} flags={flags} setFlags={setFlags}
+              fmt={fmt} srcMode={effSrcMode} setSrcMode={setSrcMode} flags={flags} setFlags={setFlags}
               fOver={fOver} fCount={fCount} ti1Text={ti1Text} setTi1Text={setTi1Text}
               ti1Name={ti1Name} onTi1File={onTi1File} presets={presets} presetKey={presetKey}
               setPresetKey={setPresetKey} savePreset={savePreset} loadHelp={loadHelp}
@@ -951,12 +1046,14 @@ export default function ArgyllProfileWizard({ open, onClose, paper, ge, mode: mo
               ptOptions={ptOptions} instrument={instrument} onInstrument={setInstrumentChoice}
               extFormats={extFormats} mediaCheck={mediaCheck} extKey={effMediaKey}
               layoutOpts={layoutOpts} layout={layout} onLayoutChoice={setLayoutChoice} estimate={estimate}
-              strategyNode={strategyNode} twoPassNode={twoPassNode} methodLocked={!!continuation && twoPassActive}/>
+              strategyNode={strategyNode} twoPassNode={twoPassNode} methodLocked={!!continuation && twoPassActive}
+              guidedAvailable={guidedAvailable && !twoPassActive} onePassNode={onePassNode}/>
           )}
 
           {phase === 'loading' && !error && <Spinner t={t} label={t('chart_print.loading')}/>}
           {phase === 'preview' && result?.existing && <ExistingChartNote t={t} result={result}/>}
           {phase === 'preview' && result?.strategy && !result.existing && <StrategyCreatedNote t={t} strategy={result.strategy}/>}
+          {phase === 'preview' && result?.guided && !result.existing && <GuidedCreatedNote t={t} guided={result.guided}/>}
           {phase === 'preview' && result && !resultExternal && (
             <PreviewView t={t} result={result} mediaKey={mediaKey} geStr={geStr} dev={DEV}/>
           )}
@@ -1448,6 +1545,24 @@ function StrategyCreatedNote({ t, strategy }) {
 
 // An existing chart about to be printed (again): when it was made and printed, and its
 // measurements, which a new print never replaces.
+// A one-pass chart made from the guided form: the line targen ran and the colprof line the
+// profile step will start from (still editable there).
+function GuidedCreatedNote({ t, guided }) {
+  const argv = (guided.targen_argv || []).map((a, i) => (i === 0 ? 'targen' : (/[\\/]/.test(a) ? a.split(/[\\/]/).pop() : a)));
+  return (
+    <div className="rounded-md border border-accent/30 bg-accent/[0.05] px-3 py-2 text-tiny leading-snug space-y-1" data-guided-created>
+      <p className="font-semibold text-text-strong">{t('chart_create.guided.created')}</p>
+      <p className="text-text-muted">{t('chart_create.guided.created_profile')}{' '}
+        <code className="font-mono text-text-strong" data-line="planned_colprof">colprof {guided.lines?.colprof_flags}</code>
+      </p>
+      {argv.length > 0 && (
+        <p className="text-text-faint"><span>{t('strategy.created.argv')}</span>{' '}
+          <code className="font-mono break-all">{argv.join(' ')}</code></p>
+      )}
+    </div>
+  );
+}
+
 function ExistingChartNote({ t, result }) {
   const ex = result.existing || {};
   const when = (iso) => (iso ? String(iso).replace('T', ' ').slice(0, 16) : '—');
@@ -1516,6 +1631,7 @@ function ComposeView({
   extKey = null, layoutOpts = null, layout = null, onLayoutChoice = () => {}, estimate = null,
   strategyNode = null, twoPassNode = null, methodLocked = false,
   builtProfiles = [], cFreeglaz = '', setCFreeglaz = () => {},
+  guidedAvailable = false, onePassNode = null,
 }) {
   const external = method === METHOD_EXTERNAL;
   return (
@@ -1538,6 +1654,7 @@ function ComposeView({
             </div>
             <MediaNotice t={t} check={mediaCheck}/>
             {twoPassNode ? <p className="text-tiny text-text-faint leading-snug">{t('strategy.paper.see_composition')}</p>
+              : onePassNode ? <p className="text-tiny text-text-faint leading-snug">{t('chart_create.guided.see_composition')}</p>
               : estimate ? <PaperEstimate t={t} estimate={estimate}/>
                 : <p className="text-tiny text-text-faint leading-snug">{t('measurement.dims_after_creation')}</p>}
           </div>
@@ -1555,12 +1672,16 @@ function ComposeView({
 
       <Section n="3" title={t('chart_create.layer_composition')}>
         {twoPassNode || (<>
-        <Segmented value={srcMode} options={[
-          { value: 'targen', label: t('chart_create.mode_targen') },
-          { value: 'ti1', label: t('chart_create.mode_ti1') },
-        ]} onChange={setSrcMode}/>
+        <div data-src-mode={srcMode}>
+          <Segmented value={srcMode} options={[
+            ...(guidedAvailable && !validate ? [{ value: 'guided', label: t('chart_create.mode_guided') }] : []),
+            { value: 'targen', label: t('chart_create.mode_targen') },
+            { value: 'ti1', label: t('chart_create.mode_ti1') },
+          ]} onChange={setSrcMode}/>
+        </div>
 
-        {srcMode === 'targen' ? (
+        {srcMode === 'guided' && onePassNode ? <div className="mt-2">{onePassNode}</div>
+        : srcMode === 'targen' ? (
           <div className="space-y-2 mt-2">
             <div className="flex items-center gap-1.5">
               <span className="font-mono text-xs2 bg-sunken-deep text-text-muted px-2 py-1 rounded">targen -d2</span>

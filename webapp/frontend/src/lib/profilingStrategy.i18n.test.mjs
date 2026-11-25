@@ -5,7 +5,8 @@
  *  3. every code the UI translates dynamically mirrors the backend (next steps, FWA refusals,
  *     print condition checks, creation refusals) and has a translation;
  *  4. static guarantees: the client never composes a -c nor a targen line for a strategy pass,
- *     the first pass never shows the installable build panel, the one-pass path keeps its line.
+ *     the first pass never shows the installable build panel, the one-pass path keeps its line;
+ *  7. the one-pass guided form: same fields as two passes, lines from the server, translated.
  *
  * Run: node webapp/frontend/src/lib/profilingStrategy.i18n.test.mjs
  */
@@ -34,6 +35,7 @@ assert(onlyEn.length === 0, `no key only in en ${onlyEn.join(', ')}`);
 
 console.log('2. static keys used by the components');
 const files = ['components/Charts/ArgyllProfileWizard.jsx', 'components/Charts/TwoPassCompose.jsx',
+  'components/Charts/OnePassCompose.jsx', 'components/Charts/ComposeFields.jsx',
   'components/Charts/StrategyRunPanel.jsx', 'components/Charts/StrategyBadge.jsx', 'components/Mesures/MesuresPage.jsx'];
 const used = new Set();
 for (const f of files) {
@@ -62,7 +64,9 @@ const ctxFn = charts.slice(charts.indexOf('def _precondition_version'), charts.i
 const backendCreate = new Set([...ctxFn.matchAll(/_refuse\(\d+, "([a-z0-9_]+)"/g)].map((m) => m[1]));
 const uiCreate = new Set(CREATE_ERROR_CODES);
 const notWorded = [...backendCreate].filter((c) => !uiCreate.has(c) && !['strategy_not_for_validation', 'strategy_pass_not_supported',
-  'strategy_composes_the_chart', 'precondition_is_the_strategy', 'strategy_run_not_expected', 'strategy_line_needs_count'].includes(c));
+  'strategy_composes_the_chart', 'precondition_is_the_strategy', 'strategy_run_not_expected', 'strategy_line_needs_count',
+  // the guided one-pass form is offered for profiling charts only, alone (never with a line, a .ti1 or a strategy)
+  'guided_is_not_a_strategy', 'guided_composes_the_chart', 'guided_not_for_validation'].includes(c));
 assert(notWorded.length === 0, `creation refusals reachable from the UI are worded ${notWorded.join(', ')}`);
 for (const [group, codes] of [['step', STEPS], ['fwa', FWA_REASONS], ['print.code', PRINT_CHECK_CODES],
   ['error', CREATE_ERROR_CODES], ['quality', FINAL_QUALITIES], ['variant', ['pass2', 'pass1_pass2', 'custom']],
@@ -124,6 +128,28 @@ assert(mesures.includes('printChartId={printWizard.chartId}') && wizard.includes
 assert(wizard.includes("action === 'print_first' || action === 'print_last'") && wizard.includes('printExisting(toPrint)'),
   'the resume card prints a pass never printed (no dead end)');
 assert(wizard.includes('(!!result?.existing && !result.existing.printable)'), 'a chart that cannot be printed keeps the print button disabled');
+
+console.log('7. one pass: the guided form (same layout and controls as two passes)');
+const one = read(join(src, 'components/Charts/OnePassCompose.jsx'));
+const gFr = new Set(flat(fr.chart_create.guided)), gEn = new Set(flat(en.chart_create.guided));
+assert(gFr.size > 15 && [...gFr].every((k) => gEn.has(k)) && [...gEn].every((k) => gFr.has(k)), 'chart_create.guided: same keys fr/en');
+const gUsed = new Set();
+for (const f of [one, wizard]) for (const m of f.matchAll(/'(chart_create\.(?:guided\.[A-Za-z0-9_]+|mode_guided|start_[a-z_]+|precond_with))'/g)) gUsed.add(m[1]);
+const gMissing = [...gUsed].filter((k) => !has(fr, k) || !has(en, k));
+assert(gUsed.size > 20 && gMissing.length === 0, `every guided key used exists in fr and en (${gUsed.size}) ${gMissing.join(', ')}`);
+assert(one.includes("from './ComposeFields.jsx'") && compose.includes("from './ComposeFields.jsx'"),
+  'both compositions are built from the same fields');
+const createGuided = wizard.slice(wizard.indexOf('if (guidedActive) {\n      const cProfile'), wizard.indexOf('if (twoPassActive) {\n      const form'));
+assert(createGuided.includes('guided: { params: oneParamsFromForm(') && !createGuided.includes('targen_flags'),
+  'a guided chart is created from its parameters: the server composes its line');
+assert(wizard.includes('api.composeOnePass(') && !one.includes('composeOnePass'), 'the lines shown come from the compose route');
+const cUses1 = [...one.matchAll(/-c \$\{([^}]*)\}/g)].map((m) => m[1]);
+assert(cUses1.length === 1 && cUses1[0] === 'cLabel', 'the -c shown is the name chosen in the menu, never a path built here');
+assert(/\[one_pass\]/.test(toml) && /patches = 200, ofps = "G"/.test(toml) && /quality = "h", source_gamut = "none"/.test(toml),
+  'the guided values give the lines the wizard always started from (-G -f 200, -v -qh)');
+assert(wizard.includes("setSrcMode(modeProp === 'print' ? 'guided' : 'targen')"), 'a validation chart keeps its free line');
+assert(mesures.includes('plannedColprofLine(detail?.identity)') && wizard.includes('plannedColprofLine(chartDetail?.identity)'),
+  'the profile step starts from the recorded line, in Measurements and in the wizard');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

@@ -1,44 +1,13 @@
 import { useState } from 'react';
-import { AlertTriangle, ChevronDown, ChevronRight, Info, Lock } from 'lucide-react';
+import { AlertTriangle, Info, Lock } from 'lucide-react';
 import Segmented from '../ui/Segmented.jsx';
+import { Collapsible, ComposeHeader, NumberField, Row } from './ComposeFields.jsx';
 import { FINAL_QUALITIES, NEUTRAL_CHOICES, SMOOTHING_CHOICES } from '../../lib/profilingStrategy.js';
 
 // Composition of one pass of the two-pass adaptive profiling, inside the existing wizard (the
 // method, instrument, format, density and patch size sections stay the wizard's own).
 // Essentials first; less common settings in "Advanced"; the Argyll lines the SERVER will run in
 // "Technical details" (returned by POST /api/profiling-strategies/compose, never rebuilt here).
-
-function NumberField({ value, onChange, min, max, step = 1, width = 'w-24', disabled = false, attr }) {
-  return (
-    <input type="number" value={value} min={min} max={max} step={step} disabled={disabled} data-field={attr}
-           onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))}
-           className={`${width} bg-sunken rounded px-2 py-1 text-xs2 text-text-strong font-mono disabled:opacity-50`}/>
-  );
-}
-
-function Row({ label, children, hint }) {
-  return (
-    <div className="space-y-0.5">
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs2 text-text-muted w-48 flex-shrink-0">{label}</span>
-        <span className="flex items-center gap-2 flex-wrap">{children}</span>
-      </div>
-      {hint && <p className="text-tiny text-text-faint leading-snug pl-[12.5rem] max-sm:pl-0">{hint}</p>}
-    </div>
-  );
-}
-
-function Collapsible({ title, open, onToggle, children, attr }) {
-  return (
-    <div className="rounded-md border border-border-soft" data-collapsible={attr} data-open={open ? '1' : '0'}>
-      <button type="button" onClick={onToggle}
-              className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-xs2 font-medium text-text-strong hover:bg-sunken/60">
-        {open ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}{title}
-      </button>
-      {open && <div className="px-2.5 pb-2.5 pt-1 space-y-2">{children}</div>}
-    </div>
-  );
-}
 
 export default function TwoPassCompose({
   t, passId, form, setForm, choices, composed, composeError = null, run = null,
@@ -63,12 +32,8 @@ export default function TwoPassCompose({
 
   return (
     <div className="space-y-3" data-two-pass-compose={passId}>
-      <div className="rounded-md bg-accent/[0.06] border border-accent/30 px-3 py-2 text-xs2 leading-snug">
-        <div className="font-semibold text-text-strong" data-pass-header={passId}>
-          {t(isPass2 ? 'strategy.compose.pass2_title' : 'strategy.compose.pass1_title')}
-        </div>
-        <p className="text-text-muted mt-0.5">{t(isPass2 ? 'strategy.compose.pass2_intro' : 'strategy.compose.pass1_intro')}</p>
-      </div>
+      <ComposeHeader attr={passId} title={t(isPass2 ? 'strategy.compose.pass2_title' : 'strategy.compose.pass1_title')}
+                     intro={t(isPass2 ? 'strategy.compose.pass2_intro' : 'strategy.compose.pass1_intro')}/>
 
       {/* essentials */}
       <div className="space-y-2">

@@ -48,6 +48,38 @@ export function formFromParams(params) {
 const int = (v) => Math.round(Number(v));
 const float = (v) => Number(v);
 
+/** Form state of the one-pass wizard's guided form (not a strategy), from its parameters
+ *  (GET /api/profiling-strategies → one_pass.default_params). */
+export function oneFormFromParams(params) {
+  const c = params?.chart || {};
+  const p = params?.profile || {};
+  return {
+    patches: num(c.patches, 200), ofps: c.ofps || 'G', grey: num(c.grey_steps, 0),
+    neutral: num(c.neutral_emphasis, 0.5), neutralSteps: num(c.neutral_steps, 0),
+    quality: p.quality || 'h', gamut: p.source_gamut || 'none', vcIn: p.viewcond_in || 'mt', vcOut: p.viewcond_out || 'pp',
+  };
+}
+
+/** Parameters of the guided one-pass form. -N / -n only with a -c: without one targen cannot
+ *  place the neutral axis (the server drops them too). */
+export function oneParamsFromForm(form, preconditioned) {
+  const chart = { patches: Math.round(Number(form.patches)), ofps: form.ofps, grey_steps: Math.round(Number(form.grey)) };
+  if (preconditioned) {
+    chart.neutral_emphasis = Number(form.neutral);
+    chart.neutral_steps = Math.round(Number(form.neutralSteps));
+  }
+  return { chart, profile: { quality: form.quality, source_gamut: form.gamut, viewcond_in: form.vcIn, viewcond_out: form.vcOut } };
+}
+
+/** The colprof line the profile step of a chart starts from: the final line of a two-pass
+ *  profiling, or the line of a guided one-pass chart; null otherwise (the default line). A
+ *  preconditioning pass has its own panel. */
+export function plannedColprofLine(identity) {
+  const st = identity?.strategy;
+  if (st) return st.role === 'final' ? (st.lines?.colprof_flags || null) : null;
+  return identity?.guided?.lines?.colprof_flags || null;
+}
+
 /** Parameters sent with a pass: the first pass freezes every pass; a later pass sends its own
  *  only (the server refuses changes to an earlier pass). */
 export function paramsFromForm(form, passId) {

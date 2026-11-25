@@ -1288,6 +1288,11 @@ export async function getProfilingStrategies() {
 export async function composeStrategy({ strategy, params = {}, run = null }) {
   return http('/api/profiling-strategies/compose', { method: 'POST', body: JSON.stringify({ strategy, params, run }) });
 }
+/** The one-pass wizard's guided form (not a strategy): {params, targen_flags, colprof_flags,
+ *  patches, source_gamut, viewing_conditions}. `preconditioned` = a -c is chosen. */
+export async function composeOnePass({ params = {}, preconditioned = true }) {
+  return http('/api/profiling-strategies/compose-one-pass', { method: 'POST', body: JSON.stringify({ params, preconditioned }) });
+}
 /** Runs derived from the charts (resume after closing freeglaz), with their next step. */
 export async function getStrategyRuns({ paper, ge } = {}) {
   const qs = new URLSearchParams();

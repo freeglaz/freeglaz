@@ -9,8 +9,10 @@
 # every value and composes the Argyll lines.
 #
 # Versioned with the code, like colprof_strategies_builtin.toml (never edit a
-# copy in the store). The one-pass wizard is NOT a strategy: it stays the free
-# targen line, the -c menu and the colprof presets.
+# copy in the store). The one-pass wizard is NOT a strategy (no run, no pass):
+# its guided form starts from [one_pass] at the end of this file and composes
+# its lines like a final pass; its free targen line, its .ti1 and the colprof
+# presets stay.
 #
 # Per pass:
 #   chart        what the chart is made from. A generation preset:
@@ -54,3 +56,15 @@ chart = { generator = "targen", patches = 2000, ofps = "G", neutral_emphasis = 0
 profile = { role = "final", quality = "h", source_gamut = "AdobeRGB", viewcond_in = "mt", viewcond_out = "pp", fwa = false }
 variants = [ { id = "pass2", default = true },
              { id = "pass1_pass2", sources = ["pass1", "pass2"] } ]
+
+# ----------------------------------------------------------------------------
+# The one-pass wizard's guided form (not a strategy)
+# ----------------------------------------------------------------------------
+# Its starting values, bounded like a pass and composed the same way. They give
+# the lines the wizard always started from: targen -d2 -G -f 200 (targen's own
+# -N 0.5, written out) and colprof -v -qh, no source gamut. The -c is the
+# wizard's menu (resident, a profile built by freeglaz, a custom one, or none);
+# without a -c, -N and -n are left out (targen cannot place the neutral axis).
+[one_pass]
+chart = { patches = 200, ofps = "G", grey_steps = 0, neutral_emphasis = 0.5, neutral_steps = 0 }
+profile = { quality = "h", source_gamut = "none", viewcond_in = "mt", viewcond_out = "pp" }

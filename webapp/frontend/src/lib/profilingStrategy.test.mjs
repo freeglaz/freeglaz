@@ -5,7 +5,7 @@
 import {
   STRATEGY_TWO_PASS, activeRuns, currentPatches, formFromParams, hasFwa, intermediateState, lastLater,
   offersQuasiRandomFallback, paperTotal, paramsFromForm, printCheck, stepAction, strategyBadge,
-  strategyCreateRequest, variantSources, withFwa,
+  strategyCreateRequest, variantSources, withFwa, oneFormFromParams, oneParamsFromForm, plannedColprofLine,
 } from './profilingStrategy.js';
 
 let pass = 0, fail = 0;
@@ -87,6 +87,28 @@ assert(blocked.kind === 'blocked' && eq(blocked.codes, ['quality_differs']), 'a 
 const confirm = printCheck({ status: 409, detail: { code: 'strategy_print_warnings', warnings: [{ code: 'resident_changed' }] } });
 assert(confirm.kind === 'confirm' && eq(confirm.codes, ['resident_changed']), 'warnings to confirm');
 assert(printCheck({ status: 409, detail: { code: 'chart_media_mismatch' } }) === null, 'other print refusals untouched');
+
+console.log('one pass, guided form');
+// the server's values (GET /api/profiling-strategies → one_pass.default_params)
+const ONE = { chart: { patches: 200, ofps: 'G', grey_steps: 0, neutral_emphasis: 0.5, neutral_steps: 0 },
+              profile: { quality: 'h', source_gamut: 'none', viewcond_in: 'mt', viewcond_out: 'pp' } };
+const of1 = oneFormFromParams(ONE);
+assert(eq(oneParamsFromForm(of1, true), ONE), 'the server values round-trip through the form');
+assert(eq(oneFormFromParams(null), of1), 'the same values before the server answers');
+const noC = oneParamsFromForm({ ...of1, neutral: 1.0, neutralSteps: 6 }, false);
+assert(!('neutral_emphasis' in noC.chart) && !('neutral_steps' in noC.chart), 'without a -c, no -N / -n sent');
+const typed = oneParamsFromForm({ ...of1, patches: '836', grey: '12', quality: 'u', gamut: 'AdobeRGB' }, true);
+assert(typed.chart.patches === 836 && typed.chart.grey_steps === 12 && typed.profile.quality === 'u'
+       && typed.profile.source_gamut === 'AdobeRGB', 'typed values sent as numbers, choices as they are');
+console.log('planned colprof line');
+assert(plannedColprofLine({ strategy: { role: 'final', lines: { colprof_flags: '-v -qh -S AdobeRGB' } } }) === '-v -qh -S AdobeRGB',
+       'final pass: the strategy line');
+assert(plannedColprofLine({ strategy: { role: 'preconditioning', lines: { colprof_flags: '-v -qm' } },
+                            guided: { lines: { colprof_flags: '-v -qu' } } }) === null, 'first pass: its own panel');
+assert(plannedColprofLine({ strategy: null, guided: { lines: { colprof_flags: '-v -qu' } } }) === '-v -qu',
+       'guided one pass: the line recorded with the chart');
+assert(plannedColprofLine({ strategy: null, guided: null }) === null && plannedColprofLine(null) === null,
+       'free line or .ti1: the default line');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

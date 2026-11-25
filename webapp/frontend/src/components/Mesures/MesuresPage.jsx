@@ -22,6 +22,7 @@ import IdentityRefusal from '../Charts/IdentityRefusal.jsx';
 import ExternalMeasurePanel from '../ExternalMeasure/ExternalMeasurePanel.jsx';
 import StrategyRunPanel from '../Charts/StrategyRunPanel.jsx';
 import StrategyBadge from '../Charts/StrategyBadge.jsx';
+import { plannedColprofLine } from '../../lib/profilingStrategy.js';
 import { chartMeasurement, identityRefusal } from '../../lib/measurementMethod.js';
 import { chartIdFromHash } from '../../lib/libraryLink.js';
 import { errorText } from '../../lib/errorText.js';
@@ -203,9 +204,10 @@ export default function MesuresPage({ offline }) {
   }, []);
 
   // A final pass of a two-pass profiling builds with the strategy's final line (frozen in the
-  // chart); any other chart with the wizard's default line. The line stays editable.
-  // Leaving such a chart gives back the line the user had (one-pass behaviour unchanged).
-  const strategyFinalLine = detail?.identity?.strategy?.role === 'final' ? detail.identity.strategy.lines?.colprof_flags : null;
+  // chart), a chart made from the one-pass guided form with the line it recorded; any other
+  // chart with the wizard's default line. The line stays editable.
+  // Leaving such a chart gives back the line the user had (free-line charts unchanged).
+  const strategyFinalLine = plannedColprofLine(detail?.identity);
   const flagsKey = detail ? `${detail.identity.chart_id}|${strategyFinalLine || ''}` : null;
   const [flagsFor, setFlagsFor] = useState({ key: null, saved: null });
   if (flagsKey && flagsKey !== flagsFor.key) {

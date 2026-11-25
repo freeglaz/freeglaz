@@ -27,9 +27,12 @@ redirected to a user-writable directory via ``FREEGLAZ_DATA_DIR`` — set here
 see ``webapp/backend/paths.py``). User-facing data (custom profiles, config)
 already lives in the home directory and is untouched.
 
-ArgyllCMS is NOT bundled: it stays an external dependency, auto-detected at
-runtime (Homebrew paths / ``FREEGLAZ_ARGYLL_ROOT``). The printing path works
-without it; only the open profiling path requires it.
+ArgyllCMS: a release build ships the official tools inside the bundle
+(``<bundle>/argyll``, see freeglaz.spec); this points ``FREEGLAZ_ARGYLL_ROOT``
+at them, as the Flatpak does with ``/app/argyll``, unless the variable is
+already set. A build without them keeps ArgyllCMS as an external dependency,
+auto-detected at runtime (Homebrew paths). The printing path works without it;
+only the open profiling path requires it.
 """
 import os
 import sys
@@ -37,11 +40,15 @@ from pathlib import Path
 
 
 def _prepare_frozen_env() -> None:
-    """Redirect writable state out of the read-only bundle when frozen."""
+    """Redirect writable state out of the read-only bundle when frozen, and use
+    the ArgyllCMS tools shipped in the bundle when there are any."""
     if not getattr(sys, "frozen", False):
         return
     data = Path.home() / "Library" / "Application Support" / "freeglaz"
     os.environ.setdefault("FREEGLAZ_DATA_DIR", str(data))
+    argyll = Path(getattr(sys, "_MEIPASS", "")) / "argyll"
+    if (argyll / "bin").is_dir():
+        os.environ.setdefault("FREEGLAZ_ARGYLL_ROOT", str(argyll))
 
 
 def main() -> int:

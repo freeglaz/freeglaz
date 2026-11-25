@@ -1,0 +1,27 @@
+ArgyllCMS in freeglaz.app
+=========================
+
+The programs in this folder (bin/) and the reference data (ref/) are copied
+unmodified from the official ArgyllCMS 3.5.0 binary archive for macOS on Apple
+Silicon:
+
+  https://www.argyllcms.com/Argyll_V3.5.0_macOS11_arm64_bin.tgz
+
+They are only re-signed (ad hoc) with the rest of the application bundle.
+ArgyllCMS is Copyright Graeme W. Gill and distributed under the GNU Affero
+General Public License version 3 (see License.txt in this folder). The
+programs it is built from (some files are under other licences compatible
+with it) are described in that archive's documentation.
+
+Corresponding source
+--------------------
+The source of these programs is the official ArgyllCMS 3.5.0 source archive:
+
+  https://www.argyllcms.com/Argyll_V3.5.0_src.zip
+  sha256 f8576ce5589fd15620abb73ff049ea31f55ddbd1bba6d1ffa87452658e7bc85f
+
+An unmodified copy of that archive ships inside this application, in the
+Corresponding Source archive of the chartread-fgK measurement engine:
+
+  ../chartread-fgK/source/chartread-fgK-3.5.0-fg3.1-src.tar.gz
+    -> upstream/Argyll_V3.5.0_src.zip

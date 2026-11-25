@@ -1,9 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec — freeglaz macOS .app (Phase 1, UNSIGNED).
 #
-# Bundles the Python interpreter, all dependencies, the built frontend and the
-# reference ICC assets into a double-clickable .app. ArgyllCMS is NOT bundled
-# (external system dependency, auto-detected at runtime).
+# Bundles the Python interpreter, all dependencies, the built frontend, the
+# reference ICC assets and the built-in definitions (lib/z9_client/data) into a
+# double-clickable .app. Two components are added only when the build is given
+# them (see "Components shipped inside the app" below): the official ArgyllCMS
+# tools and the chartread-fgK measurement engine. Without them, ArgyllCMS stays
+# an external dependency (Homebrew, auto-detected) and external measurement has
+# no engine.
 #
 # Build via packaging/macos/build_app.command (do not run pyinstaller by hand:
 # the driver script syncs deps and builds the frontend first).
@@ -13,6 +17,7 @@
 
 import glob
 import importlib.util
+import os
 import re
 import tomllib
 from pathlib import Path
@@ -57,6 +62,9 @@ if not _LIBVIPS:
 datas = [
     (str(ROOT / "webapp" / "frontend" / "dist"), "webapp/frontend/dist"),
     (str(ROOT / "lib" / "z9_client" / "assets"), "lib/z9_client/assets"),
+    # Built-in definitions read at runtime: the profiling strategies (one and two
+    # passes) and the colprof presets. Without them both lists are empty.
+    (str(ROOT / "lib" / "z9_client" / "data"), "lib/z9_client/data"),
     (str(ROOT / "webapp" / "icons"), "webapp/icons"),
 ]
 # Bundle the self-contained libvips at the support-dir root (Contents/Frameworks,
@@ -64,6 +72,48 @@ datas = [
 # pyvips' ABI-mode dlopen("libvips.42.dylib") resolves it.
 binaries = [(_LIBVIPS[0], ".")]
 hiddenimports = []
+
+# ── Components shipped inside the app (release builds) ────────────────────
+# Each one is given by build_app.command through an environment variable, and
+# checked here: a variable that is set but points at an incomplete component
+# stops the build (never a half-filled bundle).
+#
+# FREEGLAZ_BUNDLE_ARGYLL: the OFFICIAL ArgyllCMS macOS arm64 binary archive,
+#   extracted (its Argyll_V3.5.0/ folder: bin/, ref/, License.txt). The tools
+#   freeglaz runs go to <_MEIPASS>/argyll/bin as code (signed with the bundle),
+#   ref/ and the licence next to them; entry.py points FREEGLAZ_ARGYLL_ROOT at
+#   <_MEIPASS>/argyll. Its corresponding source is the official source zip,
+#   carried in the chartread-fgK source archive (ARGYLL_SOURCE.txt says so).
+# FREEGLAZ_BUNDLE_FGK: a folder with chartread-fgK (signed alone, before the
+#   bundle), chartread-fgK.manifest.json written after that signature, and
+#   source/ (the Corresponding Source archive). engine.py looks for the engine
+#   at <_MEIPASS>/chartread-fgK/; it is approved only when its sha256 is listed
+#   in TRUSTED_BUILDS (lib/z9_client/chartread_fgk/engine.py).
+ARGYLL_TOOLS = ("targen", "colprof", "spec2cie", "profcheck", "printtarg",
+                "collink", "cctiff", "tiffgamut", "xicclu", "iccdump")
+_argyll = os.environ.get("FREEGLAZ_BUNDLE_ARGYLL")
+if _argyll:
+    _argyll = Path(_argyll).resolve()
+    _missing = [t for t in ARGYLL_TOOLS if not (_argyll / "bin" / t).is_file()]
+    if _missing or not any((_argyll / "ref").glob("*.cht")) \
+            or not (_argyll / "License.txt").is_file():
+        raise SystemExit("FREEGLAZ_BUNDLE_ARGYLL=%s is not an ArgyllCMS binary "
+                         "archive (missing: %s)" % (_argyll, _missing or "ref/ or License.txt"))
+    binaries += [(str(_argyll / "bin" / t), "argyll/bin") for t in ARGYLL_TOOLS]
+    datas += [(str(_argyll / "ref"), "argyll/ref"),
+              (str(_argyll / "License.txt"), "argyll"),
+              (str(Path(SPECPATH) / "ARGYLL_SOURCE.txt"), "argyll")]
+
+_fgk = os.environ.get("FREEGLAZ_BUNDLE_FGK")
+if _fgk:
+    _fgk = Path(_fgk).resolve()
+    _need = [_fgk / "chartread-fgK", _fgk / "chartread-fgK.manifest.json"]
+    if not all(p.is_file() for p in _need) or not any((_fgk / "source").glob("*.tar.gz")):
+        raise SystemExit("FREEGLAZ_BUNDLE_FGK=%s must hold chartread-fgK, "
+                         "chartread-fgK.manifest.json and source/*.tar.gz" % _fgk)
+    binaries += [(str(_fgk / "chartread-fgK"), "chartread-fgK")]
+    datas += [(str(_fgk / "chartread-fgK.manifest.json"), "chartread-fgK"),
+              (str(_fgk / "source"), "chartread-fgK/source")]
 
 # Native/data-heavy or lazily-imported packages: collect libs + data + submodules.
 # skimage → lazy submodule loading defeats static analysis without this.

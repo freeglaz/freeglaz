@@ -10,9 +10,13 @@
 #   3. runs PyInstaller against packaging/macos/freeglaz.spec,
 #   4. leaves dist/freeglaz.app (and a plain dist/freeglaz.dmg).
 #
-# ArgyllCMS is NOT bundled: it stays an external dependency, installed
-# separately (Homebrew) and auto-detected at runtime. The printing path works
-# without it; only the open profiling path needs it.
+# Components shipped inside the app, each one optional (see freeglaz.spec):
+#   FREEGLAZ_BUNDLE_ARGYLL=<extracted official ArgyllCMS macOS arm64 archive>
+#   FREEGLAZ_BUNDLE_FGK=<folder: chartread-fgK signed alone + its manifest + source/>
+# Without FREEGLAZ_BUNDLE_ARGYLL, ArgyllCMS stays an external dependency,
+# installed separately (Homebrew) and auto-detected at runtime: the printing
+# path works without it, only the open profiling path needs it. Without
+# FREEGLAZ_BUNDLE_FGK, external measurement has no engine.
 #
 # The result is unsigned (no Apple Developer account required). After copying
 # freeglaz.app to /Applications, clear the quarantine flag ONCE:
@@ -96,6 +100,34 @@ xattr -cr "$APP"
 codesign -s - --force --deep "$APP"
 codesign --verify --deep --strict "$APP" && echo "   signature OK"
 
+# The engine is trusted by the sha256 of its bytes. Its manifest was written
+# before bundling and is sealed by the bundle signature: the engine in the
+# signed app must still be byte for byte the one the manifest describes (and
+# the input), otherwise freeglaz would refuse it. Checked here, never repaired.
+if [ -n "${FREEGLAZ_BUNDLE_FGK:-}" ]; then
+  echo "==> Checking the chartread-fgK engine in the signed app…"
+  ENG="$APP/Contents/Frameworks/chartread-fgK/chartread-fgK"
+  [ -f "$ENG" ] || { echo "!! $ENG missing" >&2; exit 1; }
+  IN_APP=$(shasum -a 256 "$ENG" | cut -d' ' -f1)
+  INPUT=$(shasum -a 256 "$FREEGLAZ_BUNDLE_FGK/chartread-fgK" | cut -d' ' -f1)
+  DECLARED=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sha256"])' \
+             "$APP/Contents/Frameworks/chartread-fgK/chartread-fgK.manifest.json")
+  if [ "$IN_APP" != "$INPUT" ] || [ "$IN_APP" != "$DECLARED" ]; then
+    echo "!! engine bytes changed by bundling: in app $IN_APP, input $INPUT, manifest $DECLARED" >&2
+    exit 1
+  fi
+  echo "   engine sha256 $IN_APP (unchanged by bundling and signing)"
+  if uv run python -c 'import sys; from lib.z9_client.chartread_fgk import engine as e; sys.exit(0 if e.trusted_build(sys.argv[1], "darwin", "arm64") else 1)' "$IN_APP"; then
+    echo "   listed in TRUSTED_BUILDS: measurements can be published"
+  else
+    echo "   !! NOT listed in TRUSTED_BUILDS: development engine, publication refused" >&2
+  fi
+fi
+if [ -n "${FREEGLAZ_BUNDLE_ARGYLL:-}" ]; then
+  echo "==> ArgyllCMS tools in the app:"
+  ls "$APP/Contents/Frameworks/argyll/bin" | sed 's/^/     /'
+fi
+
 # Place the signed artifacts in the repo's dist/ (gitignored). The signature
 # seals the bundle CONTENTS, so it survives the copy even though the folder
 # gets a fileprovider xattr back afterwards (verified: --verify still passes).
@@ -114,5 +146,7 @@ echo
 echo "   Install: drag freeglaz.app to /Applications, then once:"
 echo "     xattr -dr com.apple.quarantine /Applications/freeglaz.app"
 echo
-echo "   ArgyllCMS (for the open profiling path) is a separate install:"
-echo "     brew install argyll-cms"
+if [ -z "${FREEGLAZ_BUNDLE_ARGYLL:-}" ]; then
+  echo "   ArgyllCMS (for the open profiling path) is a separate install:"
+  echo "     brew install argyll-cms"
+fi

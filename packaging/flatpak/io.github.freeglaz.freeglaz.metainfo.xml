@@ -69,6 +69,25 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.1.17-rc.2" date="2026-11-25" type="development">
+      <description>
+        <p>
+          Release candidate, not a final release. Charts for a handheld
+          spectrophotometer (X-Rite ColorMunki, i1Pro 3 Plus), on a roll or an
+          A4 sheet, measured strip by strip with a checkpoint after each strip,
+          resumable after an interruption, and several measurements of one
+          chart averaged into a profile. A chart can be printed again, a
+          one-pass chart has guided settings, and a two-pass adaptive profiling
+          (a small chart, an intermediate profile, then a larger chart
+          preconditioned by it) is offered. All of this is experimental.
+        </p>
+        <p>
+          The handheld measurement engine is shipped only in the macOS app for
+          now: in this package the measurement wizard reports it as missing.
+          It also includes the Z9 Pro roll placement fix of 0.1.17-rc.1.
+        </p>
+      </description>
+    </release>
     <release version="0.1.17-rc.1" date="2026-11-23" type="development">
       <description>
         <p>

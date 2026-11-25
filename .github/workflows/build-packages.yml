@@ -1,0 +1,543 @@
+name: build-packages
+
+# Builds and verifies the two packages of a freeglaz version, each with its chartread-fgK
+# measurement engine: the macOS app (.dmg, Apple Silicon) and the Flatpak (x86_64). Called by
+# qualify.yml (push on release/**: no publication possible) and by release.yml (tag: strict,
+# then a draft release). Nothing here can publish: contents: read only.
+#
+# Trust (lib/z9_client/chartread_fgk/engine.py): the app approves an engine only when the
+# sha256 of the binary it finds where freeglaz ships it is in TRUSTED_BUILDS, which only a
+# reviewed commit changes. This workflow never pins anything. It builds each package TWICE,
+# on independent runners, measures the engine INSIDE each final package (after signing,
+# copying and packaging), and requires:
+#   - the same engine sha256 in the two builds of a platform (reproducible);
+#   - the packaged app to report trusted exactly when TRUSTED_BUILDS lists that sha256;
+#   - strict mode: every engine listed in TRUSTED_BUILDS (a release, or a check before tag).
+# report mode gives the candidate values to review; its packages are named -UNAPPROVED and
+# their app reports the engine as not trusted (no measurement is published with it).
+#
+# Pinned inputs (changing one changes the engine bytes: requalify, then a reviewed commit):
+#   Xcode 16.4 (16F6) on macos-15; GNOME SDK 50 at commit FLATPAK_SDK_COMMIT in the
+#   flatpak-github-actions container at a fixed digest; chartread-fgK at the commit named in
+#   the Flatpak manifest; ArgyllCMS archives by sha256; uv, Python (via uv), PyInstaller,
+#   Node and the GitHub actions by version or commit; uv.lock and package-lock.json.
+on:
+  workflow_call:
+    inputs:
+      ref_name:
+        description: "release/v<version> (qualification) or v<version> (tag)"
+        type: string
+        required: true
+      mode:
+        description: "report | strict | auto (strict when every platform has a pinned engine)"
+        type: string
+        required: true
+    outputs:
+      version:
+        value: ${{ jobs.prepare.outputs.version }}
+      mode:
+        value: ${{ jobs.prepare.outputs.mode }}
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "22.23.5"            # major = webapp/frontend/.nvmrc
+  UV_VERSION: "0.11.25"
+  FREEGLAZ_PYINSTALLER: "pyinstaller==6.22.3"
+  XCODE_VERSION: "16.4"
+  XCODE_BUILD: "16F6"
+  FLATPAK_SDK_COMMIT: 612defccb665c82ca47ea9b17f855317c8714fbfe6773f511bc1bcc3e97a21ab       # org.gnome.Sdk//50, 50.6-20, 2026-11-19
+  FLATPAK_PLATFORM_COMMIT: 586747ee14069a04d9cb8a39909501cd0f792e1718d244b32ce6d33c288184c6  # org.gnome.Platform//50, same build
+  ARGYLL_MACOS_URL: https://www.argyllcms.com/Argyll_V3.5.0_macOS11_arm64_bin.tgz
+  ARGYLL_MACOS_SHA256: b1f27d638ddca054db3f5ff866410d5b36f179770cee5591f116352b1853d957
+  FGK_PATCH: patches/fg-chartread-checkpoint.v3.1.patch
+  FGK_SRC: chartread-fgK-3.5.0-fg3.1-src.tar.gz
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  prepare:
+    name: Version, mode, engine source
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.p.outputs.version }}
+      pep440: ${{ steps.p.outputs.pep440 }}
+      mode: ${{ steps.p.outputs.mode }}
+      fgk_repo: ${{ steps.p.outputs.fgk_repo }}
+      fgk_commit: ${{ steps.p.outputs.fgk_commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: p
+        run: |
+          python3 packaging/ci/release_tool.py prepare --ref-name "${{ inputs.ref_name }}" \
+            --mode "${{ inputs.mode }}" | tee -a "$GITHUB_OUTPUT"
+
+  sources:
+    name: Sources (freeglaz tarball, Corresponding Source)
+    needs: prepare
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.prepare.outputs.fgk_repo }}
+          ref: ${{ needs.prepare.outputs.fgk_commit }}
+          path: _fgk
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Node is the major of .nvmrc
+        run: test "${NODE_VERSION%%.*}" = "$(tr -d ' \n' < webapp/frontend/.nvmrc)"
+
+      - name: Build the front
+        working-directory: webapp/frontend
+        run: |
+          npm ci
+          npm run build
+          test -f dist/index.html
+
+      # The TRACKED source + the built front (gitignored, so it only exists in this tarball).
+      # The end user, the macOS build and the Flatpak build all use this tarball.
+      - name: freeglaz tarball (tracked source + built front)
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          S="freeglaz-${VERSION}"
+          git archive --prefix="${S}/" HEAD | tar -x
+          mkdir -p "${S}/webapp/frontend/dist"
+          cp -R webapp/frontend/dist/. "${S}/webapp/frontend/dist/"
+          tar -czf "$RUNNER_TEMP/out/${S}.tar.gz" "${S}"
+          tar -tzf "$RUNNER_TEMP/out/${S}.tar.gz" | grep -q "/webapp/frontend/dist/index.html"
+          tar -tzf "$RUNNER_TEMP/out/${S}.tar.gz" | grep -q "/webapp/frontend/dist/assets/"
+
+      # chartread-fgK's Corresponding Source (deterministic tarball, with the unmodified
+      # official ArgyllCMS source zip inside), and that zip on its own: the source of the
+      # ArgyllCMS binaries shipped in both packages.
+      - name: Corresponding Source of chartread-fgK and ArgyllCMS
+        run: |
+          (cd _fgk/upstream && sha256sum -c ../upstream.sha256)
+          _fgk/tools/make-source-tarball.sh _fgk/upstream/Argyll_V3.5.0_src.zip "$RUNNER_TEMP/out"
+          cp _fgk/upstream/Argyll_V3.5.0_src.zip "$RUNNER_TEMP/out/"
+
+      - name: Report
+        run: |
+          O="$RUNNER_TEMP/out"; sha() { sha256sum "$1" | cut -d' ' -f1; }
+          python3 packaging/ci/release_tool.py report --out "$O/sources.json" \
+            --set freeglaz_commit="$(git rev-parse HEAD)" \
+            --set fgk_commit="$(git -C _fgk rev-parse HEAD)" \
+            --set freeglaz_tarball.file="freeglaz-${VERSION}.tar.gz" \
+            --set freeglaz_tarball.sha256="$(sha "$O/freeglaz-${VERSION}.tar.gz")" \
+            --set fgk_source.file="$FGK_SRC" --set fgk_source.sha256="$(sha "$O/$FGK_SRC")" \
+            --set argyll_source.file=Argyll_V3.5.0_src.zip \
+            --set argyll_source.sha256="$(sha "$O/Argyll_V3.5.0_src.zip")" \
+            --set toolchain.node="$(node --version)" --set toolchain.npm="$(npm --version)" \
+            --set toolchain.tar="$(tar --version | head -1)" --set toolchain.gzip="$(gzip --version | head -1)" \
+            --set toolchain.runner_image="${ImageOS:-?} ${ImageVersion:-?}"
+          test "$(git -C _fgk rev-parse HEAD)" = "${{ needs.prepare.outputs.fgk_commit }}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sources
+          path: |
+            ${{ runner.temp }}/out/*.tar.gz
+            ${{ runner.temp }}/out/*.zip
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: report-sources
+          path: ${{ runner.temp }}/out/sources.json
+          if-no-files-found: error
+          retention-days: 30
+
+  macos:
+    name: macOS arm64 (build ${{ matrix.build }})
+    needs: [prepare, sources]
+    runs-on: macos-15
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [a, b]
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      PEP440: ${{ needs.prepare.outputs.pep440 }}
+      MODE: ${{ needs.prepare.outputs.mode }}
+      FGK_COMMIT: ${{ needs.prepare.outputs.fgk_commit }}
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.prepare.outputs.fgk_repo }}
+          ref: ${{ needs.prepare.outputs.fgk_commit }}
+          path: _fgk
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sources
+          path: _ci/sources
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+
+      - name: Toolchain (pinned Xcode)
+        run: |
+          W="$RUNNER_TEMP/w"; mkdir -p "$W/out" "$W/logs"; echo "W=$W" >> "$GITHUB_ENV"
+          if [ ! -d "$DEVELOPER_DIR" ]; then
+            echo "::error::$DEVELOPER_DIR is not on this runner image: requalify with another Xcode"
+            ls -d /Applications/Xcode*.app; exit 1
+          fi
+          xcodebuild -version | tee "$W/logs/xcode.txt"
+          grep -qx "Xcode $XCODE_VERSION" "$W/logs/xcode.txt" \
+            && grep -qx "Build version $XCODE_BUILD" "$W/logs/xcode.txt" \
+            || { echo "::error::not Xcode $XCODE_VERSION ($XCODE_BUILD)"; exit 1; }
+          {
+            echo "TC_IMAGE=${ImageOS:-?} ${ImageVersion:-?}"
+            echo "TC_MACOS=$(sw_vers -productVersion) ($(sw_vers -buildVersion))"
+            echo "TC_XCODE=$XCODE_VERSION ($XCODE_BUILD)"
+            echo "TC_CLANG=$(clang --version | head -1)"
+            echo "TC_LD=$(ld -v 2>&1 | head -1)"
+            echo "TC_SDK=$(xcrun --show-sdk-version)"
+          } | tee -a "$GITHUB_ENV"
+
+      # Note 144: build, sign the engine ALONE (ad hoc, never -i), then write its manifest.
+      # PyInstaller and the bundle's codesign --deep leave these bytes unchanged; the
+      # sha256 is measured again in the final .dmg below.
+      - name: chartread-fgK (build, sign alone, manifest)
+        run: |
+          F="$GITHUB_WORKSPACE/_fgk"; G="$W/stage"
+          test "$(git -C "$F" rev-parse HEAD)" = "$FGK_COMMIT"
+          (cd "$F/upstream" && shasum -a 256 -c ../upstream.sha256)
+          "$F/build/build-chartread-fgK.sh" --zip "$F/upstream/Argyll_V3.5.0_src.zip" \
+            --patch "$F/$FGK_PATCH" --out "$W/engine" | tee "$W/logs/engine-build.txt"
+          mkdir -p "$G/source"
+          cp "$W/engine/chartread-fgK" "$G/chartread-fgK"; chmod 755 "$G/chartread-fgK"
+          codesign -s - --force "$G/chartread-fgK"
+          codesign --verify --strict "$G/chartread-fgK"
+          codesign -dvvv "$G/chartread-fgK" 2>&1 | tee "$W/logs/engine-codesign.txt"
+          cp "_ci/sources/$FGK_SRC" "$G/source/"
+          python3 "$F/tools/make_manifest.py" "$G/chartread-fgK" --patch "$F/$FGK_PATCH" \
+            --platform darwin --arch arm64 --usb-only --source-zip "$F/upstream/Argyll_V3.5.0_src.zip" \
+            --toolchain "$TC_CLANG; $TC_LD; Xcode $XCODE_VERSION; macOS SDK $TC_SDK"
+          echo "BUILT_SHA=$(shasum -a 256 "$W/engine/chartread-fgK" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "SIGNED_SHA=$(shasum -a 256 "$G/chartread-fgK" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "CDHASH=$(sed -n 's/^CDHash=//p' "$W/logs/engine-codesign.txt")" >> "$GITHUB_ENV"
+
+      - name: ArgyllCMS (official macOS arm64 binaries, by sha256)
+        run: |
+          curl -fsSL --retry 3 -o "$W/argyll.tgz" "$ARGYLL_MACOS_URL"
+          echo "$ARGYLL_MACOS_SHA256  $W/argyll.tgz" | shasum -a 256 -c -
+          mkdir -p "$W/argyll" && tar -xzf "$W/argyll.tgz" -C "$W/argyll"
+          test -x "$W/argyll/Argyll_V3.5.0/bin/colprof"
+
+      - name: freeglaz.app and .dmg (from the tarball of this run)
+        run: |
+          mkdir -p "$W/src"
+          tar -xzf "_ci/sources/freeglaz-${VERSION}.tar.gz" -C "$W/src"
+          cd "$W/src/freeglaz-${VERSION}"
+          FREEGLAZ_BUNDLE_ARGYLL="$W/argyll/Argyll_V3.5.0" FREEGLAZ_BUNDLE_FGK="$W/stage" \
+            ./packaging/macos/build_app.command 2>&1 | tee "$W/logs/build_app.txt"
+          echo "TC_PYTHON=$(UV_PYTHON_PREFERENCE=only-managed uv run --no-sync python -V)" >> "$GITHUB_ENV"
+          test -f dist/freeglaz.dmg
+
+      - name: The engine in the final .dmg
+        run: |
+          DMG="$W/src/freeglaz-${VERSION}/dist/freeglaz.dmg"; M="$W/mnt"; mkdir -p "$M" "$W/run"
+          hdiutil attach -readonly -nobrowse -mountpoint "$M" "$DMG"
+          A="$M/freeglaz.app/Contents/Frameworks"
+          codesign --verify --deep --strict "$M/freeglaz.app"
+          IN_PKG=$(shasum -a 256 "$A/chartread-fgK/chartread-fgK" | cut -d' ' -f1)
+          DECLARED=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sha256"])' \
+                     "$A/chartread-fgK/chartread-fgK.manifest.json")
+          SRC_IN_PKG=$(shasum -a 256 "$A/chartread-fgK/source/$FGK_SRC" | cut -d' ' -f1)
+          for f in argyll/License.txt argyll/ARGYLL_SOURCE.txt lib/z9_client/data; do
+            test -e "$A/$f" || { echo "::error::$f missing from the app"; exit 1; }; done
+          ditto "$M/freeglaz.app" "$W/run/freeglaz.app"
+          hdiutil detach "$M"
+          echo "engine: built $BUILT_SHA, signed alone $SIGNED_SHA, in the .dmg $IN_PKG, manifest $DECLARED"
+          if [ "$IN_PKG" != "$SIGNED_SHA" ] || [ "$IN_PKG" != "$DECLARED" ]; then
+            echo "::error::the engine bytes changed between signing and the final .dmg"; exit 1; fi
+          PINNED=$(python3 packaging/ci/release_tool.py pinned --platform darwin --arch arm64 --sha "$IN_PKG")
+          echo "pinned in TRUSTED_BUILDS: $PINNED"
+          if [ "$MODE" = strict ] && [ "$PINNED" != yes ]; then
+            echo "::error::strict: engine $IN_PKG is not in TRUSTED_BUILDS (darwin, arm64)"; exit 1; fi
+          { echo "IN_PKG=$IN_PKG"; echo "PINNED=$PINNED"; echo "SRC_IN_PKG=$SRC_IN_PKG"; } >> "$GITHUB_ENV"
+
+      # The real app, copied out of the .dmg, in an empty HOME, with no network but loopback
+      # (sandbox-exec), probed through its own API (GET only): ArgyllCMS and the engine
+      # resolved inside the app, built-in definitions present, engine trust as listed.
+      - name: Run the packaged app (offline) and probe it
+        run: |
+          R="$W/run"; mkdir -p "$R/home/tmp" "$R/home/Documents" "$R/home/Library/Application Support"
+          PROFILE='(version 1)(allow default)(deny network-outbound (remote ip "*:*"))(allow network-outbound (remote ip "localhost:*"))'
+          sandbox-exec -p "$PROFILE" /usr/bin/curl -sS -m 5 -o /dev/null http://192.0.2.1/ > "$W/logs/net_probe.txt" 2>&1 || true
+          grep -qi "not permitted" "$W/logs/net_probe.txt" \
+            || { cat "$W/logs/net_probe.txt"; echo "::error::sandbox-exec does not block the network"; exit 1; }
+          env -i HOME="$R/home" TMPDIR="$R/home/tmp" PATH=/usr/bin:/bin:/usr/sbin:/sbin LANG=en_US.UTF-8 \
+            sandbox-exec -p "$PROFILE" "$R/freeglaz.app/Contents/MacOS/freeglaz" > "$W/logs/app_stdout.txt" 2>&1 &
+          PID=$!; PORT=""
+          for i in $(seq 180); do
+            PORT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["port"])' "$R/home/tmp/freeglaz-instance.json" 2>/dev/null || true)
+            [ -n "$PORT" ] && curl -sf "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1 && break
+            kill -0 $PID 2>/dev/null || { tail -40 "$W/logs/app_stdout.txt"; echo "::error::the app exited during start-up"; exit 1; }
+            sleep 1
+          done
+          [ -n "$PORT" ] || { kill $PID; tail -40 "$W/logs/app_stdout.txt"; echo "::error::no instance advert"; exit 1; }
+          EXPECT=no; [ "$PINNED" = yes ] && EXPECT=yes
+          rc=0
+          python3 packaging/ci/check_app_api.py --base "http://127.0.0.1:$PORT" --package-root "$R/freeglaz.app" \
+            --version "$PEP440" --engine-sha "$IN_PKG" --expect-trusted "$EXPECT" --desktop \
+            --out "$W/out/app_check.json" || rc=1
+          B="$R/freeglaz.app/Contents/Frameworks/argyll/bin"
+          ( cd "$R/home/tmp" && sandbox-exec -p "$PROFILE" "$B/targen" -v -d2 -G -f 60 ci \
+            && sandbox-exec -p "$PROFILE" "$B/printtarg" -v -ii1 -pA4 ci && ls -l ci.ti1 ci.ti2 ci.ps ) \
+            > "$W/logs/argyll_run.txt" 2>&1 || { echo "::error::the bundled targen/printtarg failed"; rc=1; }
+          kill -TERM $PID 2>/dev/null || true
+          for i in $(seq 20); do kill -0 $PID 2>/dev/null || break; sleep 1; done
+          kill -0 $PID 2>/dev/null && kill -KILL $PID
+          cp "$R/home/Library/Application Support/freeglaz/freeglaz.log" "$W/logs/" 2>/dev/null || true
+          exit $rc
+
+      - name: Report
+        run: |
+          NAME="freeglaz-${VERSION}-macos-arm64.dmg"
+          [ "$PINNED" = yes ] || NAME="freeglaz-${VERSION}-macos-arm64-UNAPPROVED.dmg"
+          cp "$W/src/freeglaz-${VERSION}/dist/freeglaz.dmg" "$W/out/$NAME"
+          python3 packaging/ci/release_tool.py report --out "$W/out/report.json" \
+            --set ok=true --set kind=macos --set build=${{ matrix.build }} \
+            --set platform=darwin --set arch=arm64 \
+            --set fgk_commit="$FGK_COMMIT" \
+            --set engine.built_sha256="$BUILT_SHA" --set engine.signed_alone_sha256="$SIGNED_SHA" \
+            --set engine.in_package_sha256="$IN_PKG" --set engine.cdhash="$CDHASH" \
+            --set engine.pinned="$([ "$PINNED" = yes ] && echo true || echo false)" \
+            --set engine_source_archive.sha256="$SRC_IN_PKG" \
+            --set package.file="$NAME" --set package.sha256="$(shasum -a 256 "$W/out/$NAME" | cut -d' ' -f1)" \
+            --set toolchain.runner_image="$TC_IMAGE" --set toolchain.macos="$TC_MACOS" \
+            --set toolchain.xcode="$TC_XCODE" --set toolchain.clang="$TC_CLANG" --set toolchain.ld="$TC_LD" \
+            --set toolchain.sdk="$TC_SDK" --set toolchain.deployment_target=14.0 \
+            --set toolchain.uv="$(uv --version)" --set toolchain.python="$TC_PYTHON" \
+            --set toolchain.pyinstaller="$FREEGLAZ_PYINSTALLER" \
+            --json app_check="$W/out/app_check.json"
+          python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); r["app_check"]={k:r["app_check"][k] for k in ("ok","trusted_reported","engine_sha256_reported")}; json.dump(r,open(sys.argv[1],"w"),indent=1)' "$W/out/report.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-${{ matrix.build }}
+          path: ${{ runner.temp }}/w/out/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: report-macos-${{ matrix.build }}
+          path: |
+            ${{ runner.temp }}/w/out/report.json
+            ${{ runner.temp }}/w/out/app_check.json
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ always() }}
+        with:
+          name: logs-macos-${{ matrix.build }}
+          path: ${{ runner.temp }}/w/logs/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  flatpak:
+    name: Flatpak x86_64 (build ${{ matrix.build }})
+    needs: [prepare, sources]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    container:
+      # flatpak-github-actions:gnome-50, fixed digest (Flatpak 1.18.1, flatpak-builder 1.4.9)
+      image: ghcr.io/flathub-infra/flatpak-github-actions@sha256:1de59efef01a946d9f28f1ec3458bf6f61dcee3507d7fecdd473f8134da4ec77
+      options: --privileged
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [a, b]
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      PEP440: ${{ needs.prepare.outputs.pep440 }}
+      MODE: ${{ needs.prepare.outputs.mode }}
+      FGK_COMMIT: ${{ needs.prepare.outputs.fgk_commit }}
+      APP_ID: io.github.freeglaz.freeglaz
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sources
+          path: _ci/sources
+
+      - name: GNOME 50 SDK and Platform at the pinned commits
+        run: |
+          W="$RUNNER_TEMP/w"; mkdir -p "$W/out" "$W/logs"; echo "W=$W" >> "$GITHUB_ENV"
+          mkdir -p -m 700 /run/user/0 && echo "XDG_RUNTIME_DIR=/run/user/0" >> "$GITHUB_ENV"
+          flatpak --version; flatpak-builder --version
+          flatpak update -y --noninteractive --system --commit="$FLATPAK_SDK_COMMIT" org.gnome.Sdk//50
+          flatpak update -y --noninteractive --system --commit="$FLATPAK_PLATFORM_COMMIT" org.gnome.Platform//50
+          test "$(flatpak info --system -c org.gnome.Sdk//50)" = "$FLATPAK_SDK_COMMIT"
+          test "$(flatpak info --system -c org.gnome.Platform//50)" = "$FLATPAK_PLATFORM_COMMIT"
+
+      # No --install-deps-from: flatpak-builder must use the pinned SDK, never update it.
+      - name: Build (freeglaz from the tarball of this run, chartread-fgK at its commit)
+        run: |
+          python3 packaging/ci/release_tool.py ci-manifest \
+            --tarball "_ci/sources/freeglaz-${VERSION}.tar.gz" --version "$VERSION"
+          flatpak-builder --disable-rofiles-fuse --force-clean --default-branch=master \
+            --state-dir="$W/state" --repo="$W/repo" "$W/build" packaging/flatpak/.ci-manifest.yaml \
+            2>&1 | tee "$W/logs/flatpak-builder.txt"
+          flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
+            "$W/repo" "$W/bundle.flatpak" "$APP_ID" master
+
+      - name: The engine in the final bundle
+        run: |
+          flatpak install -y --noninteractive --user --bundle "$W/bundle.flatpak"
+          LOC=$(flatpak info --user --show-location "$APP_ID")
+          E="$LOC/files/chartread-fgK"
+          IN_PKG=$(sha256sum "$E/chartread-fgK" | cut -d' ' -f1)
+          BUILT=$(sha256sum "$W/build/files/chartread-fgK/chartread-fgK" | cut -d' ' -f1)
+          DECLARED=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sha256"])' "$E/chartread-fgK.manifest.json")
+          TOOLCHAIN=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["build"]["toolchain"])' "$E/chartread-fgK.manifest.json")
+          read -r SDK_USED FGK_USED < <(python3 -c 'import json,sys; m=json.load(open(sys.argv[1]))
+          fgk=[s.get("commit","") for x in m.get("modules",[]) if isinstance(x,dict) and x.get("name")=="chartread-fgK" for s in x.get("sources",[])]
+          print(m.get("sdk-commit","?"), (fgk or ["?"])[0])' "$LOC/files/manifest.json")
+          flatpak info --user --show-permissions "$APP_ID" | tee "$W/logs/permissions.txt"
+          echo "engine: built $BUILT, in the bundle $IN_PKG, manifest $DECLARED; SDK $SDK_USED"
+          if [ "$IN_PKG" != "$BUILT" ] || [ "$IN_PKG" != "$DECLARED" ]; then
+            echo "::error::the engine bytes changed between the build and the bundle"; exit 1; fi
+          if [ "$SDK_USED" != "$FLATPAK_SDK_COMMIT" ]; then
+            echo "::error::built with SDK $SDK_USED, not the pinned $FLATPAK_SDK_COMMIT"; exit 1; fi
+          if [ "$FGK_USED" != "$FGK_COMMIT" ]; then
+            echo "::error::chartread-fgK built from $FGK_USED, not $FGK_COMMIT"; exit 1; fi
+          # the engine's Corresponding Source: the release one, or at least the same files
+          SRC_IN_PKG=$(sha256sum "$E/source/$FGK_SRC" | cut -d' ' -f1); SAME=false
+          if [ "$SRC_IN_PKG" = "$(sha256sum "_ci/sources/$FGK_SRC" | cut -d' ' -f1)" ]; then SAME=true
+          else
+            mkdir -p "$W/cmp/pkg" "$W/cmp/rel"
+            tar -xzf "$E/source/$FGK_SRC" -C "$W/cmp/pkg"; tar -xzf "_ci/sources/$FGK_SRC" -C "$W/cmp/rel"
+            diff -r "$W/cmp/pkg" "$W/cmp/rel" && SAME=true
+          fi
+          PINNED=$(python3 packaging/ci/release_tool.py pinned --platform linux --arch x86_64 --sha "$IN_PKG")
+          echo "pinned in TRUSTED_BUILDS: $PINNED"
+          if [ "$MODE" = strict ] && [ "$PINNED" != yes ]; then
+            echo "::error::strict: engine $IN_PKG is not in TRUSTED_BUILDS (linux, x86_64)"; exit 1; fi
+          { echo "IN_PKG=$IN_PKG"; echo "BUILT_SHA=$BUILT"; echo "PINNED=$PINNED"; echo "SDK_USED=$SDK_USED"
+            echo "TOOLCHAIN=$TOOLCHAIN"; echo "SRC_IN_PKG=$SRC_IN_PKG"; echo "SRC_SAME=$SAME"; } >> "$GITHUB_ENV"
+
+      # Inside the installed app's own sandbox: engine origin, permissions, lock scope,
+      # /app read-only, sources and licences (D1 checks); then its backend, probed through
+      # its API (the window needs a display: the backend is the same code), and the
+      # bundled ArgyllCMS tools.
+      - name: Run the packaged app and probe it
+        run: |
+          EXPECT=no; [ "$PINNED" = yes ] && EXPECT=yes
+          CI="$GITHUB_WORKSPACE/packaging/ci"; rc=0
+          flatpak run --user --command=python3 --env=PYTHONPATH=/app/share/freeglaz \
+            --filesystem="$CI:ro" "$APP_ID" "$CI/flatpak_inside_checks.py" --expect-trusted "$EXPECT" \
+            > "$W/out/inside_checks.json" || rc=1
+          cat "$W/out/inside_checks.json"
+          flatpak run --user --command=sh "$APP_ID" -c '
+            export PYTHONPATH=/app/share/freeglaz FREEGLAZ_ARGYLL_ROOT=/app/argyll
+            export FREEGLAZ_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/freeglaz"
+            exec python3 /app/share/freeglaz/freeglaz web --no-browser --port 18765' \
+            > "$W/logs/backend.txt" 2>&1 &
+          PID=$!
+          for i in $(seq 120); do
+            curl -sf http://127.0.0.1:18765/api/health >/dev/null 2>&1 && break
+            kill -0 $PID 2>/dev/null || { tail -40 "$W/logs/backend.txt"; echo "::error::the backend exited"; exit 1; }
+            sleep 1
+          done
+          python3 "$CI/check_app_api.py" --base http://127.0.0.1:18765 --package-root /app \
+            --version "$PEP440" --engine-sha "$IN_PKG" --expect-trusted "$EXPECT" \
+            --out "$W/out/app_check.json" || rc=1
+          kill -TERM $PID 2>/dev/null || true; wait $PID 2>/dev/null || true
+          flatpak run --user --command=sh "$APP_ID" -c 'cd "$(mktemp -d)" && /app/argyll/bin/targen -v -d2 -G -f 60 ci \
+            && /app/argyll/bin/printtarg -v -ii1 -pA4 ci && ls -l ci.ti1 ci.ti2 ci.ps' \
+            > "$W/logs/argyll_run.txt" 2>&1 || { echo "::error::the bundled targen/printtarg failed"; rc=1; }
+          [ "$SRC_SAME" = true ] || { echo "::error::the engine source archive in the bundle differs from the release one"; rc=1; }
+          exit $rc
+
+      - name: Report
+        run: |
+          NAME="freeglaz-${VERSION}-x86_64.flatpak"
+          [ "$PINNED" = yes ] || NAME="freeglaz-${VERSION}-x86_64-UNAPPROVED.flatpak"
+          cp "$W/bundle.flatpak" "$W/out/$NAME"
+          CC=${TOOLCHAIN%%; *}; LD=${TOOLCHAIN#*; }
+          python3 packaging/ci/release_tool.py report --out "$W/out/report.json" \
+            --set ok=true --set kind=flatpak --set build=${{ matrix.build }} \
+            --set platform=linux --set arch=x86_64 \
+            --set fgk_commit="$FGK_COMMIT" \
+            --set engine.built_sha256="$BUILT_SHA" --set engine.in_package_sha256="$IN_PKG" \
+            --set engine.pinned="$([ "$PINNED" = yes ] && echo true || echo false)" \
+            --set engine_source_archive.sha256="$SRC_IN_PKG" --set engine_source_archive.same_content="$SRC_SAME" \
+            --set package.file="$NAME" --set package.sha256="$(sha256sum "$W/out/$NAME" | cut -d' ' -f1)" \
+            --set toolchain.container_image="flatpak-github-actions@sha256:1de59efef01a946d9f28f1ec3458bf6f61dcee3507d7fecdd473f8134da4ec77" \
+            --set toolchain.sdk_commit="$SDK_USED" --set toolchain.platform_commit="$FLATPAK_PLATFORM_COMMIT" \
+            --set toolchain.cc="$CC" --set toolchain.ld="$LD" \
+            --set toolchain.flatpak="$(flatpak --version)" --set toolchain.flatpak_builder="$(flatpak-builder --version)" \
+            --json app_check="$W/out/app_check.json" --json inside_checks="$W/out/inside_checks.json"
+          python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); r["app_check"]={k:r["app_check"][k] for k in ("ok","trusted_reported","engine_sha256_reported")}; r["inside_checks"]={"ok":r["inside_checks"]["ok"],"origin":r["inside_checks"]["origin"]}; json.dump(r,open(sys.argv[1],"w"),indent=1)' "$W/out/report.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: flatpak-${{ matrix.build }}
+          path: ${{ runner.temp }}/w/out/*.flatpak
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: report-flatpak-${{ matrix.build }}
+          path: |
+            ${{ runner.temp }}/w/out/report.json
+            ${{ runner.temp }}/w/out/app_check.json
+            ${{ runner.temp }}/w/out/inside_checks.json
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ always() }}
+        with:
+          name: logs-flatpak-${{ matrix.build }}
+          path: ${{ runner.temp }}/w/logs/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  qualify:
+    name: Qualification (${{ needs.prepare.outputs.mode }})
+    needs: [prepare, sources, macos, flatpak]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: report-*
+          path: _ci/reports
+      - name: Compare the builds, check trust, list the deliverables
+        run: |
+          rc=0
+          python3 packaging/ci/release_tool.py qualify --mode "${{ needs.prepare.outputs.mode }}" \
+            --version "${{ needs.prepare.outputs.version }}" --reports _ci/reports --out _ci/qualification || rc=$?
+          cat _ci/qualification/qualification.md >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ always() }}
+        with:
+          name: qualification
+          path: _ci/qualification/
+          if-no-files-found: error
+          retention-days: 30

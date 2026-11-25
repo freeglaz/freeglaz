@@ -1,174 +1,99 @@
 name: release
 
-# Builds the front with a pinned Node, assembles a tarball made of the TRACKED
-# source + the freshly built webapp/frontend/dist (which is gitignored, so it
-# only exists inside the release artifact), and attaches it to a GitHub Release.
-# The end user downloads this tarball and never needs Node/npm.
+# A tag v<version> builds both packages with build-packages.yml in STRICT mode: each engine
+# measured in its final package must be in TRUSTED_BUILDS (pinned by a reviewed commit,
+# after qualify.yml), the same in two independent builds, and reported trusted by the app.
+# Only when everything passed does the last job create a DRAFT release with every file
+# attached, then download them again and check them against SHA256SUMS. The maintainer
+# reviews the draft and makes it public by hand: nothing becomes public here.
+#
+# Attached: the freeglaz tarball (tracked source + built front: the end user needs no
+# Node), the macOS .dmg (Apple Silicon), the Flatpak bundle (x86_64), the Corresponding
+# Source of chartread-fgK (with the official ArgyllCMS source zip inside), that ArgyllCMS
+# source zip on its own, SHA256SUMS, and the qualification report (provenance: toolchains,
+# commits, engine sha256). A release candidate tag (v0.1.17-rc.2) is a pre-release that never
+# becomes "Latest".
 on:
   push:
     tags: ['v*']
 
 permissions:
-  contents: write   # create/attach the Release
+  contents: read
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  packages:
+    uses: ./.github/workflows/build-packages.yml
+    permissions:
+      contents: read
+    with:
+      ref_name: ${{ github.ref_name }}
+      mode: strict
+
+  draft:
+    name: Draft release (every file verified)
+    needs: packages
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write   # create the draft release and attach its files
+    env:
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.packages.outputs.version }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v5
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          node-version-file: webapp/frontend/.nvmrc
-
-      - name: Build front
-        working-directory: webapp/frontend
+          pattern: '{qualification,sources,macos-a,flatpak-a}'
+          path: _ci
+      - name: Strict qualification passed, files match it
         run: |
-          npm ci
-          npm run build
-          test -f dist/index.html   # guard: build must not be empty
-
-      - name: Assemble tarball (tracked source + injected dist)
+          set -euo pipefail
+          test "${{ needs.packages.outputs.mode }}" = strict
+          python3 - <<'PY'
+          import json, sys
+          q = json.load(open("_ci/qualification/qualification.json"))
+          ok = q["mode"] == "strict" and q["verdict"] == "pass" and q["approved"] is True
+          ok = ok and not any("UNAPPROVED" in f for f in q["deliverables"])
+          print(json.dumps({k: q[k] for k in ("version", "mode", "verdict", "approved", "problems")}, indent=1))
+          sys.exit(0 if ok else 1)
+          PY
+          mkdir rel
+          while read -r _ file; do
+            src=$(find _ci -type f -name "$file" | head -1)
+            [ -n "$src" ] || { echo "::error::$file not found in the artifacts"; exit 1; }
+            cp "$src" "rel/$file"
+          done < _ci/qualification/SHA256SUMS
+          cp _ci/qualification/SHA256SUMS rel/SHA256SUMS
+          cp _ci/qualification/qualification.json "rel/freeglaz-${VERSION}-build-provenance.json"
+          (cd rel && sha256sum -c SHA256SUMS)
+          ls -l rel
+      - name: Create the draft release
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          STAGING="freeglaz-${VERSION}"
-          # git archive ships ONLY tracked files → excludes .git/, node_modules/,
-          # .venv/ and the gitignored webapp/frontend/dist. We then inject the
-          # built dist at the exact relative path FRONTEND_DIST expects
-          # (webapp/frontend/dist, next to webapp/backend/main.py).
-          git archive --prefix="${STAGING}/" HEAD | tar -x
-          mkdir -p "${STAGING}/webapp/frontend/dist"
-          cp -R webapp/frontend/dist/. "${STAGING}/webapp/frontend/dist/"
-          tar -czf "${STAGING}.tar.gz" "${STAGING}"
-          echo "TARBALL=${STAGING}.tar.gz" >> "$GITHUB_ENV"
-
-      - name: Verify the built front is in the tarball
-        run: |
-          tar -tzf "$TARBALL" | grep -q "/webapp/frontend/dist/index.html" \
-            || { echo "::error::built front missing from tarball"; exit 1; }
-          tar -tzf "$TARBALL" | grep -q "/webapp/frontend/dist/assets/" \
-            || { echo "::error::built assets missing from tarball"; exit 1; }
-
-      - name: Publish GitHub Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # A release candidate tag (v0.1.17-rc.1) is published as a pre-release that
-        # never becomes "Latest". Stable tags keep the exact command they always had.
-        run: |
-          case "$GITHUB_REF_NAME" in
-            v*-rc.*) gh release create "$GITHUB_REF_NAME" "$TARBALL" --generate-notes --prerelease --latest=false ;;
-            *)       gh release create "$GITHUB_REF_NAME" "$TARBALL" --generate-notes ;;
+          set -euo pipefail
+          n=$(gh api "repos/$GH_REPO/releases?per_page=100" --jq "[.[] | select(.tag_name == \"$TAG\")] | length")
+          if [ "$n" != 0 ]; then
+            echo "::error::a release or draft for $TAG already exists: nothing is replaced"; exit 1; fi
+          case "$TAG" in
+            v*-rc.*) gh release create "$TAG" rel/* --draft --verify-tag --generate-notes --prerelease --latest=false ;;
+            *)       gh release create "$TAG" rel/* --draft --verify-tag --generate-notes ;;
           esac
-
-  # Standalone macOS app (Apple Silicon), attached to the same Release so Mac
-  # users can download a .dmg and skip the Homebrew/uv/Terminal setup. Runs
-  # AFTER the Release exists (needs: release), then uploads the .dmg to it.
-  # Unsigned + ad-hoc signed (no Apple Developer account, no secrets); the user
-  # clears the quarantine flag once (see Docs/INSTALL_app_macos.md).
-  macos-app:
-    name: macOS .app (arm64)
-    needs: release
-    runs-on: macos-latest   # Apple Silicon (arm64)
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: astral-sh/setup-uv@v6
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version-file: webapp/frontend/.nvmrc
-
-      # Syncs deps, builds the frontend, runs PyInstaller, ad-hoc signs, and
-      # leaves dist/freeglaz.app + dist/freeglaz.dmg.
-      - name: Build the standalone .app + .dmg
-        run: ./packaging/macos/build_app.command
-
-      - name: Name the artifact (version + arch)
+      - name: Download the draft's files again and check them
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          DMG="freeglaz-${VERSION}-macos-arm64.dmg"
-          cp dist/freeglaz.dmg "$DMG"
-          echo "DMG=$DMG" >> "$GITHUB_ENV"
-
-      - name: Attach the .dmg to the Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" "$DMG" --clobber
-
-  # Self-contained Linux Flatpak bundle (deps + libvips + ArgyllCMS), attached to
-  # the same Release so Linux users can `flatpak install` a single file without
-  # building it. Runs AFTER the Release exists; points the manifest at this tag's
-  # tarball, builds in the Flatpak GNOME container, then uploads the bundle.
-  flatpak:
-    name: Flatpak bundle (x86_64)
-    needs: release
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
-      options: --privileged
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Point the manifest at this release's tarball
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/freeglaz-${VERSION}.tar.gz"
-          curl -fsSL -o /tmp/fg.tgz "$URL"
-          SHA=$(sha256sum /tmp/fg.tgz | cut -d' ' -f1)
-          python3 - "$URL" "$SHA" <<'PY'
-          import re, sys
-          url, sha = sys.argv[1], sys.argv[2]
-          p = "packaging/flatpak/io.github.freeglaz.freeglaz.yaml"
-          s = open(p).read()
-          # Replace the freeglaz release-tarball url + the sha256 on the next line
-          # (the Argyll source has an argyllcms.com url, so it is not matched).
-          s = re.sub(
-              r"(url:\s*)https://github\.com/\S+/releases/\S+(\s*\n\s*sha256:\s*)[0-9a-f]{64}",
-              lambda m: m.group(1) + url + m.group(2) + sha, s)
-          open(p, "w").write(s)
-          PY
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-
-      # AppStream advertises the version from metainfo.xml, NOT from the tarball.
-      # Left alone it goes stale and every bundle reports an old version to the
-      # software centres. A hand-written <release> entry is preferred (it carries
-      # real release notes); this only injects a placeholder when one is missing,
-      # so a release can never ship a wrong version.
-      - name: Ensure metainfo.xml declares this release
-        run: |
-          python3 - "${GITHUB_REF_NAME#v}" <<'PY'
-          import re, sys, datetime
-          version = sys.argv[1]
-          p = "packaging/flatpak/io.github.freeglaz.freeglaz.metainfo.xml"
-          s = open(p).read()
-          if re.search(r'<release version="%s"' % re.escape(version), s):
-              print("metainfo.xml already declares %s" % version)
-              raise SystemExit
-          entry = (
-              '  <releases>\n'
-              '    <release version="%s" date="%s">\n'
-              '      <description>\n'
-              '        <p>See the release notes on GitHub.</p>\n'
-              '      </description>\n'
-              '    </release>' % (version, datetime.date.today().isoformat())
-          )
-          s, n = re.subn(r"  <releases>", entry, s, count=1)
-          assert n == 1, "no <releases> block in metainfo.xml"
-          open(p, "w").write(s)
-          print("::warning::metainfo.xml had no entry for %s; injected a placeholder" % version)
-          PY
-
-      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
-        with:
-          bundle: freeglaz-${{ env.VERSION }}-x86_64.flatpak
-          manifest-path: packaging/flatpak/io.github.freeglaz.freeglaz.yaml
-          cache: false
-          upload-artifact: false
-
-      - name: Attach the .flatpak to the Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          command -v gh >/dev/null 2>&1 || dnf install -y gh
-          gh release upload "$GITHUB_REF_NAME" "freeglaz-${VERSION}-x86_64.flatpak" \
-            --clobber --repo "$GITHUB_REPOSITORY"
+          set -euo pipefail
+          id=$(gh api "repos/$GH_REPO/releases?per_page=50" \
+               --jq ".[] | select(.draft and .tag_name == \"$TAG\") | .id" | head -1)
+          [ -n "$id" ] || { echo "::error::draft release $TAG not found"; exit 1; }
+          mkdir back
+          gh api "repos/$GH_REPO/releases/$id/assets?per_page=100" --jq '.[] | "\(.id) \(.name)"' |
+          while read -r aid name; do
+            gh api -H "Accept: application/octet-stream" "repos/$GH_REPO/releases/assets/$aid" > "back/$name"
+          done
+          (cd back && sha256sum -c SHA256SUMS)
+          test "$(ls back | wc -l)" = "$(ls rel | wc -l)"
+          {
+            echo "### Draft release $TAG ready"
+            echo
+            echo "Every file was downloaded again and matches SHA256SUMS. Review the draft, edit its"
+            echo "notes, then make it public by hand."
+            echo; echo '```'; cat rel/SHA256SUMS; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

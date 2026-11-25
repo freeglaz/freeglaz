@@ -1,0 +1,36 @@
+name: qualify
+
+# Builds and verifies both packages (build-packages.yml) WITHOUT publishing anything: this
+# workflow has read access only, so it cannot create a release, a tag or a commit. Its
+# packages are artifacts of the run (14 days); while the engines are not in TRUSTED_BUILDS
+# they are named -UNAPPROVED and the app reports their engine as not trusted.
+#
+# Push on release/v<version>: mode auto, i.e. report while an engine is not pinned (gives
+# the candidate sha256 to review), strict once every platform has a pinned engine (the full
+# check before the tag). workflow_dispatch (once this file is on the default branch) picks
+# the mode.
+on:
+  push:
+    branches: ['release/**']
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [auto, report, strict]
+        default: auto
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qualify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  packages:
+    uses: ./.github/workflows/build-packages.yml
+    permissions:
+      contents: read
+    with:
+      ref_name: ${{ github.ref_name }}
+      mode: ${{ inputs.mode || 'auto' }}

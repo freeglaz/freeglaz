@@ -7,7 +7,7 @@ name: ci
 # brew libvips, masking whether the bundled wheel actually works standalone).
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/**']
   pull_request:
 
 jobs:

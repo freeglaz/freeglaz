@@ -21,6 +21,8 @@ webapp/dist/
 *.dmg
 *.log
 .cache/
+# written by packaging/ci/release_tool.py ci-manifest (release workflow)
+packaging/flatpak/.ci-manifest.yaml
 
 # Env & secrets
 .env

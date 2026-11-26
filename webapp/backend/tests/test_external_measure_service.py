@@ -224,11 +224,13 @@ def test_start_is_refused_without_the_chart_instrument(lab, status):
 
 class Listing:
     """A presence provider the test controls: answers at once, fails, or hangs until released.
-    Counts the listings and how many ran at the same time."""
+    Counts the listings and how many ran at the same time; ``started`` is set once a listing
+    has begun (on the probe's own thread)."""
 
     def __init__(self, status="present"):
         self.status, self.hang, self.release = status, False, threading.Event()
         self.calls = self.active = self.max_active = 0
+        self.started = threading.Event()
         self._lock = threading.Lock()
 
     def __call__(self, model):
@@ -236,6 +238,7 @@ class Listing:
             self.calls += 1
             self.active += 1
             self.max_active = max(self.max_active, self.active)
+        self.started.set()
         try:
             if self.hang:
                 self.release.wait(30)
@@ -930,6 +933,9 @@ def test_a_hung_listing_never_blocks_the_event_loop(lab):
             took_health = time.monotonic() - t0
         assert first and first[0]["context"]["presence"]["status"] == "checking"
         assert took_sse < 1.0 and took_health < 0.5, (took_sse, took_health)
+        # the listing the snapshot asked for runs on the probe's thread, which a loaded machine
+        # may not have scheduled yet: wait (bounded) for it to begin, then check it is alone
+        assert lst.started.wait(5), "the USB listing never started"
         assert lst.max_active == 1
     finally:
         lst.release.set()

@@ -45,10 +45,12 @@ comes from: whoever can write the binary can write its manifest, and a shipped l
 only a folder. So an engine is a TRUSTED BUILD only when the sha256 of its bytes is listed in
 :data:`TRUSTED_BUILDS`, which is part of freeglaz's own code (replacing it means replacing
 freeglaz). The origin derived from it (``approved`` only for a trusted build found where
-freeglaz ships it) is decided in :class:`~.session.EngineSpec`. The list is empty until a
-reproducible build is approved: until then no engine is approved and nothing is published.
-Tests inject entries by monkeypatching the list, in their own process only; no environment
-variable, configuration key or file can add one.
+freeglaz ships it) is decided in :class:`~.session.EngineSpec`. The list holds only the
+builds the release workflow made and qualified, and the maintainer approved: one per packaged
+platform, the engine shipped inside the macOS app and inside the Flatpak of this version. Any
+other engine is a development one, and nothing measured with it is published. Tests inject
+entries by monkeypatching the list, in their own process only; no environment variable,
+configuration key or file can add one.
 """
 from __future__ import annotations
 
@@ -102,9 +104,48 @@ PLATFORM_MARKERS = {
 }
 
 # The builds freeglaz trusts as its own, by (platform, arch) → sha256 of the binary. Part of
-# freeglaz's code: the trust anchor, independent of any manifest (see the module doc). Empty
-# until a reproducible build is approved (distribution work, D1).
-TRUSTED_BUILDS: dict[tuple[str, str], frozenset[str]] = {}
+# freeglaz's code: the trust anchor, independent of any manifest (see the module doc). One
+# value per packaged platform; adding, changing or removing one is a reviewed change of this
+# list AND of the guard test that names it, never an automatic one.
+#
+# Both values: chartread-fgK 3.5.0-fg3.1, i.e. the official ArgyllCMS 3.5.0 source zip
+# (f8576ce5589fd15620abb73ff049ea31f55ddbd1bba6d1ffa87452658e7bc85f) plus the checkpoint patch
+# v3.1 (7c3dcdc6676f5ad1c7613cf1be9bb929845eaba39ff153f628aca748dba6b5c4), USB instruments only,
+# from https://github.com/freeglaz/chartread-fgK at commit
+# f5f5ed9d79b08d8c5eee741c1cf32af76a41668e. Corresponding Source shipped next to each engine:
+# chartread-fgK-3.5.0-fg3.1-src.tar.gz, sha256
+# 3dd6fd90fb3c08552a63a0473f639193860ab7c2bea86309460c97303db91e72.
+# Built by GitHub Actions (.github/workflows/build-packages.yml), twice per platform on separate
+# runners, from freeglaz 59e8eb3de3821dd7b58c4735ee3caaa288cb33d3: qualification run 45714416947
+# (https://github.com/freeglaz/freeglaz/actions/runs/45714416947), 2026-11-25, verdict pass.
+# Each value is the sha256 measured in the FINAL package of both builds a and b, and reported
+# by the packaged app itself; approved by the maintainer on 2026-11-26.
+#
+# darwin/arm64, inside freeglaz.app (the .dmg): runner image macos15 20261118.0550.1, macOS
+# 15.8.2 (24H232), Xcode 16.4 (16F6), Apple clang 17.0.0 (clang-1700.0.13.5), ld-1167.5, SDK
+# 15.5, MACOSX_DEPLOYMENT_TARGET 14.0. Built binary
+# ee6dbe487e06e869b4c20e9cb95166903956a8365d2e5b5b85177619e7b070da, then signed ad hoc ALONE
+# (`codesign -s - --force`, no -i) before bundling, which gives the value below (CDHash
+# 604bc0695fbb7bf7132b5905c3ccffb7ad6d1cff), unchanged by PyInstaller and by the app's
+# `codesign --deep`. The sha256 depends on the toolchain: another Xcode or Command
+# Line Tools gives other bytes, which are not trusted.
+#
+# linux/x86_64, inside the Flatpak (/app/chartread-fgK): flatpak-builder 1.4.9 in container
+# ghcr.io/flathub-infra/flatpak-github-actions@sha256:
+#   1de59efef01a946d9f28f1ec3458bf6f61dcee3507d7fecdd473f8134da4ec77,
+# org.gnome.Sdk//50 at commit 612defccb665c82ca47ea9b17f855317c8714fbfe6773f511bc1bcc3e97a21ab
+# (GCC 15.3.0, binutils 2.47.20260726), org.gnome.Platform//50 at commit
+# 586747ee14069a04d9cb8a39909501cd0f792e1718d244b32ce6d33c288184c6; module built without
+# stripping or debuginfo. The same bytes as the D1 build and the local replay of the job (same
+# SDK); another SDK commit gives other bytes, which are not trusted.
+TRUSTED_BUILDS: dict[tuple[str, str], frozenset[str]] = {
+    ("darwin", "arm64"): frozenset({
+        "a6838f62a0d47ea05289490a517ea24d027f42c95f9ff42c81e2ee43b9c4bee3",
+    }),
+    ("linux", "x86_64"): frozenset({
+        "7b354be3d2460ef0a8e4d0df3a01109bc0d61a0da0166fe72e85114e68437c98",
+    }),
+}
 
 # chartread port: the engine is built for USB instruments only, so port 1 is the first USB
 # instrument and never a serial port. Which instrument is plugged in is checked elsewhere,

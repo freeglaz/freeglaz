@@ -226,10 +226,27 @@ def test_a_valid_manifest_is_not_trust(monkeypatch, tmp_path):
     assert E.trusted_build(st.binary_sha256) is False
 
 
-def test_no_build_is_trusted_before_one_is_approved():
-    """Guard: nothing is approved until a reproducible build is (distribution, D1). Adding an
-    entry is a reviewed change of this list, with the build's provenance."""
-    assert E.TRUSTED_BUILDS == {}
+MAC_ARM64 = "a6838f62a0d47ea05289490a517ea24d027f42c95f9ff42c81e2ee43b9c4bee3"
+LINUX_X86_64 = "7b354be3d2460ef0a8e4d0df3a01109bc0d61a0da0166fe72e85114e68437c98"
+
+
+def test_only_the_approved_builds_are_trusted():
+    """Guard: exactly the builds qualified by GitHub Actions (run 45714416947, freeglaz 59e8eb3,
+    chartread-fgK f5f5ed9d) and approved by the maintainer, with their provenance in engine.py.
+    Adding, changing or removing one is a reviewed change of the list AND of this test."""
+    assert E.TRUSTED_BUILDS == {
+        ("darwin", "arm64"): frozenset({MAC_ARM64}),
+        ("linux", "x86_64"): frozenset({LINUX_X86_64}),
+    }
+    assert E.trusted_build(MAC_ARM64, "darwin", "arm64")
+    assert E.trusted_build(LINUX_X86_64, "linux", "x86_64")
+    # Each value only for its own platform and architecture.
+    for sha in (MAC_ARM64, LINUX_X86_64):
+        for plat, arch in (("darwin", "x86_64"), ("linux", "aarch64"), ("win32", "x86_64")):
+            assert not E.trusted_build(sha, plat, arch)
+    assert not E.trusted_build(MAC_ARM64, "linux", "x86_64")
+    assert not E.trusted_build(LINUX_X86_64, "darwin", "arm64")
+    assert not E.trusted_build("", "darwin", "arm64")
 
 
 def test_binary_changed_after_its_manifest(monkeypatch, tmp_path):

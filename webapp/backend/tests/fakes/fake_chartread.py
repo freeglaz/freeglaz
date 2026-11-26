@@ -122,12 +122,24 @@ def key_prompt(kind, step):
     return key
 
 
+def _acknowledged(work, validated):
+    """The backend acknowledged the last checkpoint: its validated copy holds the work file's
+    bytes (it commits the work file by a hard link or a byte copy; each write of this fake is
+    unique, its CREATED line has a nanosecond clock)."""
+    try:
+        with open(work, "rb") as a, open(validated, "rb") as b:
+            return a.read() == b.read()
+    except OSError:
+        return False
+
+
 def ready(step):
     suffix = " (!! ALL ROWS READ !!)" if step.get("all_read") else \
         " (This row has been read)" if step.get("read_before") else ""
     save = "(passes read so far are saved)" if step.get("checkpointing", True) else "without saving"
     out(TEXT["ready"].format(**{"pass": step.get("pass", "A"), "suffix": suffix, "save": save}))
     button_at = time.monotonic() + step["button_ms"] / 1000 if "button_ms" in step else None
+    ack = step.get("await_ack")                         # (work file, validated copy) or None
     while True:                                         # the driver's read_strip waiting loop
         key = poll_con_char()
         if key:
@@ -136,7 +148,7 @@ def ready(step):
             if cls == "command":                        # chartread: printf("\n") for a command
                 out("\n")
             return key
-        if button_at is not None and time.monotonic() >= button_at:
+        if button_at is not None and time.monotonic() >= button_at and (ack is None or _acknowledged(*ack)):
             log_key("ready", b"", "button")
             return b""
         time.sleep(0.05)
@@ -250,11 +262,18 @@ def measure(cfg):
 
     cur = next((i for i, lab in enumerate(labels) if unread(lab)), 0)
     trig = nck = 0
+    saved = False                                        # a checkpoint was written by this run
     while True:
         lab, all_done = labels[cur], not any(unread(x) for x in labels)
         step = {"pass": lab, "all_read": all_done, "read_before": not unread(lab)}
         if "button_ms" in cfg and not all_done and trig < cfg.get("button_limit", 10 ** 6):
             step["button_ms"] = cfg["button_ms"]        # the user presses the instrument's button
+            # button_after_ack: not before the backend acknowledged the last checkpoint (a user
+            # who waits for the interface to show the strip saved); the backend's layout: the
+            # work file in <session>/work/, its validated copy in <session>/.
+            if cfg.get("button_after_ack") and saved:
+                step["await_ack"] = (base + ".ti3", os.path.join(os.path.dirname(base), os.pardir,
+                                                                 "validated.ti3"))
         key = ready(step)
         if key and key[0] in COMMAND_KEYS:
             c = key.lower()
@@ -314,6 +333,7 @@ def measure(cfg):
             n = write(crash={"crash_during_write": "during_write",
                              "crash_after_rename": "after_rename"}.get(mode))
             out(CHECKPOINT[mode if mode in CHECKPOINT else "full"].format(n=n, path=base + ".ti3"))
+            saved = True
             if mode == "crash_after_line":
                 os.kill(os.getpid(), signal.SIGKILL)
         cur = next_unread(cur)

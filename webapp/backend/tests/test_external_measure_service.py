@@ -6,6 +6,7 @@ Offline: throw-away store, the fake chartread as a "shipped" engine, no USB."""
 import json
 import logging
 import os
+import re
 import signal
 import socket
 import sys
@@ -108,7 +109,10 @@ def run_to_end(lb, base=None):
 
 
 def complete_session(lb, base=None):
-    create_and_start(lb, base, button_ms=20)
+    # each strip read only once the backend acknowledged the previous checkpoint: a fake 20 ms
+    # ahead of a stalled backend makes it refuse the unannounced pass, by design (see
+    # test_a_checkpoint_the_engine_has_overtaken_is_refused_and_the_session_stays_resumable)
+    create_and_start(lb, base, button_ms=20, button_after_ack=True)
     calibrate(lb, base)
     s = run_to_end(lb, base)
     assert s["state"] == "complete", s
@@ -612,15 +616,20 @@ def test_resume_against_abandon(lab):
     lab.engine(button_ms=20, button_limit=1)
     s = lab.client.post(lab.base, json={}).json()
     st, ab = _race(lambda: post(lab, "/start", s), lambda: post(lab, "/abandon", s))
-    assert sorted([st.status_code, ab.status_code]) == [200, 409], (st.text, ab.text)
     if st.status_code == 200:
-        assert code(ab) in ("stale_command", "instrument_busy")
+        assert ab.status_code == 409 and code(ab) in ("stale_command", "instrument_busy"), ab.text
         s2 = wait(lab, lambda x: x["state"] == "calibration")
         post(lab, "/command", s2, command="pause")
         run_to_end(lab)
         assert S.Session.find_open(lab.chart.dir) is not None
     else:
-        assert code(st) in ("stale_command", "session_not_found") and not snap(lab)["running"]
+        # the abandon won: start is refused as stale (409) or, when the abandon lands between
+        # its first check and its read of the session, finds no open session any more (404;
+        # test_resume_finds_no_session_when_an_abandon_lands_between_its_checks)
+        assert ab.status_code == 200, (st.text, ab.text)
+        assert (st.status_code, code(st)) in ((409, "stale_command"), (404, "session_not_found")), st.text
+        assert not snap(lab)["running"] and lab.svc._active is None
+        assert S.Session.find_open(lab.chart.dir) is None
         assert S.Session.sessions(lab.chart.dir)[-1].data["status"] == "abandoned"
 
 
@@ -635,6 +644,71 @@ def test_pause_against_finalize_and_double_commands(lab):
     assert pa.status_code == 200 and fi.status_code == 409 and code(fi) == "command_not_allowed"
     s = run_to_end(lab)
     assert s["state"] == "idle" and code(post(lab, "/finalize", s)) == "command_not_allowed"
+
+
+def test_resume_finds_no_session_when_an_abandon_lands_between_its_checks(lab, monkeypatch):
+    """The interleaving behind test_resume_against_abandon's 404: the abandon completes after
+    start's first state check, before start reads the session. Start is refused (404), the
+    session is abandoned and no run starts. Controlled: the abandon runs inside start's read."""
+    lab.engine(button_ms=20, button_limit=1)
+    s = lab.client.post(lab.base, json={}).json()
+    svc, cid = lab.svc, lab.chart.chart_id
+    orig, other = svc._open_session, {}
+
+    def read_after_abandon(chart_id):
+        if not other:                                    # once: the other window wins now
+            other["abandon"] = None
+            other["abandon"] = svc.abandon(chart_id, s["state"], s["state_seq"])
+        return orig(chart_id)
+    monkeypatch.setattr(svc, "_open_session", read_after_abandon)
+    with pytest.raises(em.ExternalMeasureError) as e:
+        svc.start(cid, s["state"], s["state_seq"])
+    assert (e.value.status, e.value.code) == (404, "session_not_found")
+    assert other["abandon"]["state"] == "abandoned" and svc._active is None
+    assert S.Session.sessions(lab.chart.dir)[-1].data["status"] == "abandoned"
+
+
+def _sets(path) -> int:
+    try:
+        m = re.search(rb"NUMBER_OF_SETS (\d+)", path.read_bytes())
+    except OSError:
+        return 0
+    return int(m.group(1)) if m else 0
+
+
+def test_a_checkpoint_the_engine_has_overtaken_is_refused_and_the_session_stays_resumable(lab, monkeypatch):
+    """The next strip is read before the backend handles the previous checkpoint line (a stalled
+    machine): the work file then holds a pass that line did not announce. The run refuses it,
+    suspends (checkpoint_invalid) and the session stays open with what was validated (what
+    test_finalize_against_abandon met on a loaded CI runner). The next start recovers the
+    strips chartread saved, once they validate, and the session resumes to the end.
+    Controlled: the backend handles its 2nd checkpoint line once the fake has saved a 3rd strip."""
+    orig, calls = R.Run._checkpoint, {"n": 0}
+
+    def overtaken(self, ev, now):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            end = time.monotonic() + 10
+            while _sets(self.session.work_ti3) <= ev.data["n"] and time.monotonic() < end:
+                time.sleep(0.005)
+        return orig(self, ev, now)
+    monkeypatch.setattr(R.Run, "_checkpoint", overtaken)
+    create_and_start(lab, button_ms=20, button_limit=3)  # three strips read, then the user waits
+    calibrate(lab)
+    s = run_to_end(lab)
+    assert (s["state"], s["actions"]) == ("idle", ["start", "abandon", "correct"]), s
+    sm = s["session"]
+    assert sm["passes_saved"] == 1 and sm["suspended"]["reason"] == "checkpoint_invalid"
+    assert sm["last_run_end"] == "suspended:checkpoint_invalid"
+    monkeypatch.setattr(R.Run, "_checkpoint", orig)
+    lab.engine(button_ms=20, button_after_ack=True)
+    r = post(lab, "/start", s)
+    assert r.status_code == 200, r.text
+    s = wait(lab, lambda x: x["state"] in ("calibration", "ready") or not x["running"])
+    if s["state"] == "calibration":
+        calibrate(lab)
+    s = run_to_end(lab)
+    assert s["state"] == "complete" and s["session"]["patches_saved"] == 130, s
 
 
 class _WatchedLock:

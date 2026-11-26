@@ -192,6 +192,94 @@ def test_scan_error_closes_session_anti_orphan(tmp_path, monkeypatch):
     assert sess.active_session() is None
 
 
+def _hold(monkeypatch, name):
+    """Hold scan_session.<name> inside the job thread until released: a controlled interleaving
+    at the point where the ending scan updates its session."""
+    entered, release = threading.Event(), threading.Event()
+    orig = getattr(sess, name)
+
+    def held(*a, **k):
+        entered.set()
+        release.wait(5)
+        return orig(*a, **k)
+    monkeypatch.setattr(sess, name, held)
+    return entered, release
+
+
+class _CooldownInvariantLock:
+    """Stands in for job._lock and checks, at every release, that a terminal state is never
+    visible while the cooldown is still unarmed (the job is reset before each test)."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.violations = []
+
+    def __enter__(self):
+        self._lock.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        cur = job._current
+        if cur and cur.get("state") in ("done", "error") and job._last_end_monotonic is None:
+            self.violations.append(dict(cur))
+        self._lock.release()
+
+
+def test_scan_error_closes_session_before_publishing_error(tmp_path, monkeypatch):
+    """Regression: the failed scan reads "running" until its session is closed and the cooldown
+    armed, so no scan starts in between, and it never closes the session of a newer scan."""
+    def _fail(host, fields=None, on_status=None):
+        raise RuntimeError("measurement failed: OperationStatus = OP_CANCELLED")
+    monkeypatch.setattr("lib.z9_client.sol_native.measure", _fail)
+    in_close, release = _hold(monkeypatch, "close_session")
+    lock = _CooldownInvariantLock()
+    monkeypatch.setattr(job, "_lock", lock)
+    s = sess.create_session(serial=SERIAL, chart_id="CHT-A", stage=sess.STAGE_SCANNING)
+    job.start(host="h", chart_id="CHT-A", fields=[], desc={}, meas_dir=tmp_path,
+              session_id=s["session_id"])
+    assert in_close.wait(5)
+    # the session is being closed: the job still reads running, a new scan is refused
+    assert job.status()["state"] == "running" and job.is_busy()
+    with pytest.raises(job.ScanBusyError):
+        job.start(host="h", chart_id="CHT-A", fields=[], desc={}, meas_dir=tmp_path,
+                  session_id=s["session_id"])
+    release.set()
+    final = _wait_terminal()
+    # error is visible only once the session is closed AND the cooldown armed
+    assert final["state"] == "error"
+    assert sess.read_session(s["session_id"])["stage"] == sess.STAGE_CLOSED
+    assert job.cooldown_remaining() > 0 and lock.violations == []
+    with pytest.raises(job.ScanCooldownError):
+        job.start(host="h", chart_id="CHT-A", fields=[], desc={}, meas_dir=tmp_path,
+                  session_id=s["session_id"])
+
+
+def test_scan_success_records_scan_before_publishing_done(tmp_path, monkeypatch):
+    """Regression, success path: done is visible only once the scan is recorded in its session
+    and the cooldown armed; until then a new scan is refused."""
+    _ti3_ok_mocks(monkeypatch)
+    in_add, release = _hold(monkeypatch, "add_scan")
+    lock = _CooldownInvariantLock()
+    monkeypatch.setattr(job, "_lock", lock)
+    s = sess.create_session(serial=SERIAL, chart_id="CHT-A", stage=sess.STAGE_SCANNING)
+    job.start(host="h", chart_id="CHT-A", fields=[], desc={}, meas_dir=tmp_path,
+              session_id=s["session_id"])
+    assert in_add.wait(5)
+    assert job.status()["state"] == "running" and job.is_busy()
+    with pytest.raises(job.ScanBusyError):
+        job.start(host="h", chart_id="CHT-A", fields=[], desc={}, meas_dir=tmp_path,
+                  session_id=s["session_id"])
+    release.set()
+    final = _wait_terminal()
+    assert final["state"] == "done"
+    r = sess.read_session(s["session_id"])
+    assert r["stage"] == sess.STAGE_AWAITING_NEXT and r["scans"][0]["ti3"] == final["ti3"]
+    assert job.cooldown_remaining() > 0 and lock.violations == []
+    with pytest.raises(job.ScanCooldownError):
+        job.start(host="h", chart_id="CHT-A", fields=[], desc={}, meas_dir=tmp_path,
+                  session_id=s["session_id"])
+
+
 def test_scan_success_keeps_session_open_for_multiscan(tmp_path, monkeypatch):
     """A successful scan keeps the session `awaiting_next` (deliberate multi-scan not broken)."""
     _ti3_ok_mocks(monkeypatch)

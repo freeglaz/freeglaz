@@ -31,6 +31,11 @@ HARD guards on the server side (not just cosmetic UI — design ref §1/§3):
   (OP_FINISHED_OK / error status / disconnection). A scan of any size runs to its
   end — the Z9 concludes, never a client clock (cf. sol_native.measure). On
   failure/error we CLOSE the session (no orphan lock left behind).
+
+The terminal state (done/error) is published LAST, in the same critical section that arms the
+cooldown: until then the job reads "running", so a new scan is refused while the session is
+still being updated or closed, and once it reads done/error the cooldown is already armed. An
+ending scan therefore never closes the session of a scan started after it.
 """
 from __future__ import annotations
 
@@ -119,12 +124,6 @@ def start(*, host: str, chart_id: str, fields: list, desc: dict,
     return snapshot
 
 
-def _set(**kw) -> None:
-    with _lock:
-        if _current is not None:
-            _current.update(**kw)
-
-
 def _run(host: str, chart_id: str, fields: list, desc: dict,
          meas_dir: Path, session_id: Optional[str]) -> None:
     global _last_end_monotonic
@@ -140,6 +139,9 @@ def _run(host: str, chart_id: str, fields: list, desc: dict,
                 if pct is not None and pct > _current.get("percent", 0):
                     _current["percent"] = pct
 
+    # Terminal state, published only in `finally` (see the module docstring). The default covers
+    # an exception that is not an Exception, so the job never stays "running" forever.
+    outcome: dict = {"state": "error", "error": "scan ended unexpectedly"}
     try:
         # ⚠️ HARDWARE ACT: NO duration timeout, zero kill — we wait for the Z9 to
         # conclude (OP_FINISHED_OK / error / disconnection). cf. sol_native.measure.
@@ -162,11 +164,11 @@ def _run(host: str, chart_id: str, fields: list, desc: dict,
                                            n_patches=res.n_patches)
             except Exception:  # noqa: BLE001
                 logger.exception("scan_session.add_scan failed (%s)", session_id)
-        _set(state="done", phase="done", percent=100, ti3=ti3_path.name,
-             n_patches=res.n_patches, bands=res.n_spectral_bands)
+        outcome = dict(state="done", phase="done", percent=100, ti3=ti3_path.name,
+                       n_patches=res.n_patches, bands=res.n_spectral_bands)
     except Exception as e:  # noqa: BLE001 — failure/OP_CANCELLED/disconnection: NO ti3 written
         logger.exception("chart scan failed (%s)", chart_id)
-        _set(state="error", error=str(e))
+        outcome = {"state": "error", "error": str(e)}
         # Anti-orphan: a failed scan must NOT leave its session active (else the
         # "only one active" lock blocks every future scan). The ti3 of any prior
         # successful scan stays on disk (measurements/ = durable truth).
@@ -177,5 +179,8 @@ def _run(host: str, chart_id: str, fields: list, desc: dict,
             except Exception:  # noqa: BLE001
                 logger.exception("scan_session.close_session on error failed (%s)", session_id)
     finally:
+        # ONE critical section: arm the cooldown (success OR failure), THEN publish done/error.
         with _lock:
-            _last_end_monotonic = time.monotonic()   # arm the cooldown (success OR failure)
+            _last_end_monotonic = time.monotonic()
+            if _current is not None:
+                _current.update(outcome)

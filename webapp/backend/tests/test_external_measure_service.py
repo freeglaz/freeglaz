@@ -8,6 +8,7 @@ import logging
 import os
 import signal
 import socket
+import sys
 import threading
 import time
 
@@ -634,6 +635,122 @@ def test_pause_against_finalize_and_double_commands(lab):
     assert pa.status_code == 200 and fi.status_code == 409 and code(fi) == "command_not_allowed"
     s = run_to_end(lab)
     assert s["state"] == "idle" and code(post(lab, "/finalize", s)) == "command_not_allowed"
+
+
+class _WatchedLock:
+    """Stands in for the service's _lock (an RLock). ``settled`` is set when the ``watched``
+    thread finds the lock held by another thread (it waits for it), or by that thread itself."""
+
+    def __init__(self, inner):
+        self.inner, self.watched, self.settled = inner, None, threading.Event()
+
+    def __enter__(self):
+        if not self.inner.acquire(blocking=False):
+            if threading.current_thread() is self.watched:
+                self.settled.set()
+            self.inner.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.inner.release()
+
+
+def _hold_after_publish_announce(svc, monkeypatch, when):
+    """Hold the thread running _publish right after it announced a new seq (the first time
+    ``when()`` is true), until released: the point where the old code had announced a view it had
+    not stored yet. Returns (announced, release, info) with info["seq"] the announced seq."""
+    announced, release, info = threading.Event(), threading.Event(), {}
+    orig = svc.broadcast.bump
+
+    def bump(chart_id, notices=()):
+        seq = orig(chart_id, notices)
+        if sys._getframe(1).f_code.co_name == "_publish" and not announced.is_set() and when():
+            info["seq"] = seq
+            announced.set()
+            release.wait(10)
+        return seq
+    monkeypatch.setattr(svc.broadcast, "bump", bump)
+    return announced, release, info
+
+
+def _woken_reader(svc, lock, chart_id, seq, *steps):
+    """A reader woken by ``seq`` (what the SSE route and a window's command do), run on its own
+    thread; returns (thread, results). Each step is (name, fn); an exception is a result."""
+    got = {}
+
+    def reader():
+        try:
+            got["woken"] = svc.broadcast.wait(chart_id, seq - 1, 0) >= seq
+            for name, fn in steps:
+                try:
+                    got[name] = fn()
+                except Exception as e:                   # noqa: BLE001 — the result under test
+                    got[name] = e
+        finally:
+            lock.settled.set()
+    t = threading.Thread(target=reader)
+    lock.watched = t
+    t.start()
+    return t, got
+
+
+def test_a_run_becomes_visible_only_with_its_first_view(lab, monkeypatch):
+    """Regression (rc.2): start makes the run active, stores its first view and announces it in
+    ONE critical section. Before, a snapshot taken in between had no state, and a command then
+    failed with HTTP 500 instead of 409. Controlled: start is held right after the announcement;
+    a reader then waits for the view instead of reading a run without one."""
+    lab.engine(button_ms=20, button_limit=0)
+    s = lab.client.post(lab.base, json={}).json()
+    svc, cid = lab.svc, lab.chart.chart_id
+    lock = _WatchedLock(svc._lock)
+    monkeypatch.setattr(svc, "_lock", lock)
+    announced, release, info = _hold_after_publish_announce(svc, monkeypatch, lambda: True)
+    starter = threading.Thread(target=lambda: info.update(start=post(lab, "/start", s)))
+    starter.start()
+    try:
+        assert announced.wait(10)
+        reader, got = _woken_reader(svc, lock, cid, info["seq"],
+                                    ("command", lambda: svc.command(cid, "pause", "starting", 0)),
+                                    ("snap", lambda: svc.snapshot(cid, 0.0)))
+        assert lock.settled.wait(10)                     # it read, or it waits for the view
+    finally:
+        release.set()
+    reader.join(10)
+    starter.join(10)
+    assert info["start"].status_code == 200, info["start"].text
+    err = got["command"]
+    assert isinstance(err, em.ExternalMeasureError) and (err.status, err.code) == (409, "stale_command"), err
+    snap_ = got["snap"]
+    assert snap_["running"] is True and snap_["state"] and snap_["state_seq"] >= info["seq"]
+    assert snap_["seq"] >= info["seq"]
+
+
+def test_a_reader_woken_by_a_new_seq_reads_the_view_of_that_seq(lab, monkeypatch):
+    """Regression (rc.2): _publish stores the view and announces its seq in ONE critical
+    section. Before, a reader woken by the seq (the SSE route) could read the previous view
+    under the new seq and was not woken again: the window stayed on a past state. Controlled:
+    the pump is held right after announcing the change that follows the calibration key."""
+    create_and_start(lab, button_ms=20, button_limit=0)
+    svc, cid = lab.svc, lab.chart.chart_id
+    s = wait(lab, lambda x: x["state"] == "calibration")
+    lock = _WatchedLock(svc._lock)
+    monkeypatch.setattr(svc, "_lock", lock)
+    announced, release, info = _hold_after_publish_announce(
+        svc, monkeypatch, lambda: svc._active is not None and svc._active.run.phase != "calibration")
+    sender = threading.Thread(target=lambda: info.update(cmd=post(lab, "/command", s, command="calibrate")))
+    sender.start()
+    try:
+        assert announced.wait(10)
+        reader, got = _woken_reader(svc, lock, cid, info["seq"], ("snap", lambda: svc.snapshot(cid, 0.0)))
+        assert lock.settled.wait(10)                     # it read, or it waits for the view
+    finally:
+        release.set()
+    reader.join(10)
+    sender.join(10)
+    assert info["cmd"].status_code == 200, info["cmd"].text
+    seen = got["snap"]
+    assert got["woken"] and seen["seq"] >= info["seq"]
+    assert seen["state"] != "calibration" and seen["state_seq"] >= info["seq"], seen
 
 
 # ─── events ─────────────────────────────────────────────────────────────────

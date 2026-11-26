@@ -192,7 +192,7 @@ class _Active:
     run: Run
     commands: "queue.Queue" = field(default_factory=queue.Queue)
     thread: Optional[threading.Thread] = None
-    view: dict = field(default_factory=dict)            # replaced whole by the pump thread only
+    view: dict = field(default_factory=dict)            # replaced whole by _publish, under _lock
     prompt_key: Optional[tuple] = None
 
 
@@ -444,10 +444,7 @@ class ExternalMeasureService:
             except SessionError as e:
                 raise ExternalMeasureError(409, e.code, e.message) from None
             act = _Active(chart_id, s, run)
-            with self._lock:
-                self._active = act
-                self._idle_state.pop(chart_id, None)
-            self._publish(act, [])
+            self._publish(act, [], activate=True)        # visible only with its initial view
             act.thread = threading.Thread(target=self._pump, args=(act,), name="external-measure", daemon=True)
             act.thread.start()
             logger.info("external measure: run %d started on %s (resume=%s)", run.k, chart_id,
@@ -584,7 +581,13 @@ class ExternalMeasureService:
             self.broadcast.bump(act.chart_id, [{"kind": "run_ended", "end": (run.ended or {}).get("end"),
                                                 "t": time.monotonic()}])
 
-    def _publish(self, act: _Active, notices: list) -> None:
+    def _publish(self, act: _Active, notices: list, *, activate: bool = False) -> None:
+        """The run's view, built first, then stored and announced (a new seq) in ONE critical
+        section: self._lock, then the broadcast's condition, the order _idle_seq and _state
+        already take them in. A reader woken by that seq reads the view under self._lock, so it
+        gets this view, never the previous one, and a view never goes out without its state.
+        ``activate`` (start) makes the run the active one in that same section: never visible
+        without its initial view."""
         snap = act.run.snapshot()
         p = act.run.gate.prompt
         if snap["stopping"]:
@@ -596,16 +599,21 @@ class ExternalMeasureService:
         public = [_scrub(n) for n in notices]
         if key == act.prompt_key and not public and act.view:
             return
-        seq = self.broadcast.bump(act.chart_id, public)
-        state_seq = seq if key != act.prompt_key else act.view.get("state_seq", seq)
-        act.prompt_key = key
-        act.view = {"state": state, "state_seq": state_seq, "actions": actions,
-                    "prompt": {"kind": p.kind, **_scrub(dict(p.data))} if p else None,
-                    "pass": snap["pass"], "acquired_not_saved": snap["acquired_not_saved"],
-                    "error": _scrub(snap["error"]), "session": _scrub(snap["session"]),
-                    "publishable": session_publishable(act.session),
-                    "lock_scope": self.lock_scope(), "presence": self._presence_note.get(act.chart_id),
-                    "notices": self.broadcast.recent(act.chart_id)[-20:]}
+        view = {"state": state, "state_seq": None, "actions": actions,
+                "prompt": {"kind": p.kind, **_scrub(dict(p.data))} if p else None,
+                "pass": snap["pass"], "acquired_not_saved": snap["acquired_not_saved"],
+                "error": _scrub(snap["error"]), "session": _scrub(snap["session"]),
+                "publishable": session_publishable(act.session),
+                "lock_scope": self.lock_scope(), "presence": self._presence_note.get(act.chart_id),
+                "notices": None}
+        with self._lock:
+            if activate:
+                self._active = act
+                self._idle_state.pop(act.chart_id, None)
+            seq = self.broadcast.bump(act.chart_id, public)
+            view["state_seq"] = seq if key != act.prompt_key else act.view.get("state_seq", seq)
+            view["notices"] = self.broadcast.recent(act.chart_id)[-20:]
+            act.prompt_key, act.view = key, view
 
     # ─── backend life ───────────────────────────────────────────────────────
     def boot_reconcile(self) -> list[dict]:
